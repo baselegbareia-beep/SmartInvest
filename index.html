@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>SmartInvest - Financial Charts</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0d1117;
+            color: #e6edf3;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #161b22 0%, #1a2332 100%);
+            padding: 16px 20px;
+            border-bottom: 1px solid #30363d;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .header h1 {
+            font-size: 20px;
+            font-weight: 700;
+            background: linear-gradient(90deg, #58a6ff, #3fb950, #d2a8ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .header p {
+            font-size: 12px;
+            color: #8b949e;
+            margin-top: 4px;
+        }
+
+        .chart-container {
+            position: relative;
+            width: 100%;
+            padding: 12px 8px;
+            height: calc(100vh - 220px);
+            min-height: 350px;
+        }
+
+        .legend-bar {
+            display: flex;
+            justify-content: center;
+            gap: 16px;
+            padding: 10px 16px;
+            flex-wrap: wrap;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            padding: 4px 10px;
+            border-radius: 16px;
+            background: #161b22;
+            border: 1px solid #30363d;
+            transition: opacity 0.2s;
+        }
+
+        .legend-item.disabled {
+            opacity: 0.35;
+        }
+
+        .legend-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+
+        .info-bar {
+            display: flex;
+            justify-content: space-around;
+            padding: 12px 16px;
+            background: #161b22;
+            border-top: 1px solid #30363d;
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+        }
+
+        .info-item {
+            text-align: center;
+        }
+
+        .info-item .label {
+            font-size: 10px;
+            color: #8b949e;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .info-item .value {
+            font-size: 16px;
+            font-weight: 700;
+            margin-top: 2px;
+        }
+
+        .info-item .value.vix { color: #f85149; }
+        .info-item .value.sp500 { color: #58a6ff; }
+        .info-item .value.gold { color: #d29922; }
+
+        .loading {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: calc(100vh - 120px);
+            gap: 16px;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid #30363d;
+            border-top-color: #58a6ff;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .loading-text {
+            font-size: 14px;
+            color: #8b949e;
+        }
+
+        .error-msg {
+            text-align: center;
+            padding: 40px 20px;
+            color: #f85149;
+        }
+
+        .error-msg h2 { margin-bottom: 8px; font-size: 18px; }
+        .error-msg p { font-size: 13px; color: #8b949e; }
+
+        .method-note {
+            text-align: center;
+            font-size: 11px;
+            color: #484f58;
+            padding: 4px 16px 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>SmartInvest</h1>
+        <p>VIX &middot; S&amp;P 500 &middot; Gold &mdash; Monthly since Jan 1995</p>
+    </div>
+
+    <div id="loading" class="loading">
+        <div class="spinner"></div>
+        <div class="loading-text">Fetching financial data...</div>
+    </div>
+
+    <div id="main-content" style="display:none;">
+        <div class="legend-bar" id="legend-bar"></div>
+        <div class="chart-container">
+            <canvas id="chart"></canvas>
+        </div>
+        <div class="method-note" id="method-note"></div>
+    </div>
+
+    <div class="info-bar" id="info-bar" style="display:none;">
+        <div class="info-item">
+            <div class="label">VIX (Latest)</div>
+            <div class="value vix" id="latest-vix">--</div>
+        </div>
+        <div class="info-item">
+            <div class="label">S&amp;P 500</div>
+            <div class="value sp500" id="latest-sp500">--</div>
+        </div>
+        <div class="info-item">
+            <div class="label">Gold</div>
+            <div class="value gold" id="latest-gold">--</div>
+        </div>
+    </div>
+
+    <div id="error" class="error-msg" style="display:none;">
+        <h2>Unable to Load Data</h2>
+        <p>Please run <code>python3 fetch_data.py</code> to generate data, then reload.</p>
+    </div>
+
+    <script>
+    const SERIES = [
+        { key: 'vix',   label: 'VIX',     color: '#f85149', symbol: '^VIX',  yAxisID: 'yVix' },
+        { key: 'sp500', label: 'S&P 500',  color: '#58a6ff', symbol: '^GSPC', yAxisID: 'ySP' },
+        { key: 'gold',  label: 'Gold',     color: '#d29922', symbol: 'GC=F',  yAxisID: 'yGold' }
+    ];
+
+    let chart = null;
+    let chartData = null;
+
+    /* ── Data Loading Strategy ────────────────────────────── */
+
+    async function loadData() {
+        // Strategy 1: Try pre-generated JSON file
+        try {
+            const resp = await fetch('data/chart_data.json');
+            if (resp.ok) {
+                const data = await resp.json();
+                if (data.labels && data.labels.length > 0) {
+                    return { data, source: 'Pre-generated data (chart_data.json)' };
+                }
+            }
+        } catch (e) { /* continue to next strategy */ }
+
+        // Strategy 2: Fetch from Yahoo Finance API (works in browsers)
+        try {
+            const data = await fetchFromYahoo();
+            if (data.labels.length > 0) {
+                return { data, source: 'Live data from Yahoo Finance' };
+            }
+        } catch (e) {
+            console.warn('Yahoo Finance fetch failed:', e);
+        }
+
+        // Strategy 3: Try via CORS proxy
+        try {
+            const data = await fetchFromYahooViaProxy();
+            if (data.labels.length > 0) {
+                return { data, source: 'Live data via CORS proxy' };
+            }
+        } catch (e) {
+            console.warn('CORS proxy fetch failed:', e);
+        }
+
+        return null;
+    }
+
+    async function fetchYahooChart(symbol, proxy = '') {
+        const start = Math.floor(new Date('1995-01-01').getTime() / 1000);
+        const end = Math.floor(Date.now() / 1000);
+        const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${start}&period2=${end}&interval=1d`;
+        const fetchUrl = proxy ? `${proxy}${encodeURIComponent(url)}` : url;
+
+        const resp = await fetch(fetchUrl, {
+            headers: proxy ? {} : { 'User-Agent': 'Mozilla/5.0' }
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+        if (proxy) {
+            const wrapper = await resp.json();
+            return JSON.parse(wrapper.contents);
+        }
+        return resp.json();
+    }
+
+    function parseYahooResponse(json) {
+        const result = json.chart.result[0];
+        const timestamps = result.timestamp;
+        const closes = result.indicators.quote[0].close;
+        const data = {};
+        for (let i = 0; i < timestamps.length; i++) {
+            if (closes[i] != null) {
+                const d = new Date(timestamps[i] * 1000);
+                const key = d.toISOString().split('T')[0];
+                data[key] = closes[i];
+            }
+        }
+        return data;
+    }
+
+    /**
+     * For each month, find the highest VIX day.
+     * Then among days AFTER that highest VIX day, pick the 3rd highest VIX day.
+     * Return the list of selected dates sorted chronologically.
+     */
+    function selectMonthlyDates(vixData) {
+        // Group by month
+        const months = {};
+        for (const [date, val] of Object.entries(vixData)) {
+            const monthKey = date.substring(0, 7); // YYYY-MM
+            if (!months[monthKey]) months[monthKey] = [];
+            months[monthKey].push({ date, val });
+        }
+
+        const selected = [];
+        for (const entries of Object.values(months)) {
+            if (entries.length < 4) continue;
+
+            // Find highest VIX day
+            entries.sort((a, b) => b.val - a.val);
+            const maxDate = entries[0].date;
+
+            // Days after the highest VIX day
+            const afterMax = entries.filter(e => e.date > maxDate);
+            afterMax.sort((a, b) => b.val - a.val);
+
+            if (afterMax.length >= 3) {
+                selected.push(afterMax[2].date);
+            } else {
+                // Fallback: 3rd highest overall
+                if (entries.length >= 3) {
+                    selected.push(entries[2].date);
+                }
+            }
+        }
+
+        return selected.sort();
+    }
+
+    function buildChartData(selectedDates, vixData, spData, goldData) {
+        const labels = [];
+        const vix = [];
+        const sp500 = [];
+        const gold = [];
+
+        for (const date of selectedDates) {
+            if (vixData[date] != null && spData[date] != null) {
+                labels.push(date);
+                vix.push(Math.round(vixData[date] * 100) / 100);
+                sp500.push(Math.round(spData[date] * 100) / 100);
+                gold.push(goldData[date] != null ? Math.round(goldData[date] * 100) / 100 : null);
+            }
+        }
+
+        return { labels, vix, sp500, gold };
+    }
+
+    async function fetchFromYahoo() {
+        const [vixJson, spJson, goldJson] = await Promise.all([
+            fetchYahooChart('^VIX'),
+            fetchYahooChart('^GSPC'),
+            fetchYahooChart('GC=F')
+        ]);
+
+        const vixData = parseYahooResponse(vixJson);
+        const spData = parseYahooResponse(spJson);
+        const goldData = parseYahooResponse(goldJson);
+        const selectedDates = selectMonthlyDates(vixData);
+        return buildChartData(selectedDates, vixData, spData, goldData);
+    }
+
+    async function fetchFromYahooViaProxy() {
+        const proxy = 'https://api.allorigins.win/get?url=';
+        const [vixJson, spJson, goldJson] = await Promise.all([
+            fetchYahooChart('^VIX', proxy),
+            fetchYahooChart('^GSPC', proxy),
+            fetchYahooChart('GC=F', proxy)
+        ]);
+
+        const vixData = parseYahooResponse(vixJson);
+        const spData = parseYahooResponse(spJson);
+        const goldData = parseYahooResponse(goldJson);
+        const selectedDates = selectMonthlyDates(vixData);
+        return buildChartData(selectedDates, vixData, spData, goldData);
+    }
+
+    /* ── Chart Rendering ─────────────────────────────────── */
+
+    function renderChart(data) {
+        chartData = data;
+        const ctx = document.getElementById('chart').getContext('2d');
+
+        const datasets = [
+            {
+                label: 'VIX',
+                data: data.vix,
+                borderColor: '#f85149',
+                backgroundColor: 'rgba(248,81,73,0.08)',
+                yAxisID: 'yVix',
+                borderWidth: 1.5,
+                pointRadius: 0,
+                pointHitRadius: 8,
+                tension: 0.3,
+                fill: false
+            },
+            {
+                label: 'S&P 500',
+                data: data.sp500,
+                borderColor: '#58a6ff',
+                backgroundColor: 'rgba(88,166,255,0.08)',
+                yAxisID: 'ySP',
+                borderWidth: 1.5,
+                pointRadius: 0,
+                pointHitRadius: 8,
+                tension: 0.3,
+                fill: false
+            },
+            {
+                label: 'Gold',
+                data: data.gold,
+                borderColor: '#d29922',
+                backgroundColor: 'rgba(210,153,34,0.08)',
+                yAxisID: 'yGold',
+                borderWidth: 1.5,
+                pointRadius: 0,
+                pointHitRadius: 8,
+                tension: 0.3,
+                fill: false
+            }
+        ];
+
+        chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: data.labels,
+                datasets
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    mode: 'index',
+                    intersect: false,
+                },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: '#1c2128',
+                        borderColor: '#30363d',
+                        borderWidth: 1,
+                        titleColor: '#e6edf3',
+                        bodyColor: '#e6edf3',
+                        titleFont: { size: 13 },
+                        bodyFont: { size: 12 },
+                        padding: 10,
+                        displayColors: true,
+                        callbacks: {
+                            title: function(items) {
+                                if (!items.length) return '';
+                                const d = new Date(items[0].label);
+                                return d.toLocaleDateString('en-US', {
+                                    year: 'numeric', month: 'short', day: 'numeric'
+                                });
+                            },
+                            label: function(ctx) {
+                                const val = ctx.parsed.y;
+                                if (val == null) return null;
+                                const name = ctx.dataset.label;
+                                if (name === 'VIX') return ` VIX: ${val.toFixed(2)}`;
+                                if (name === 'S&P 500') return ` S&P 500: ${val.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+                                return ` Gold: $${val.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        type: 'time',
+                        time: {
+                            unit: 'year',
+                            displayFormats: { year: 'yyyy' }
+                        },
+                        grid: { color: 'rgba(48,54,61,0.5)', drawBorder: false },
+                        ticks: { color: '#8b949e', font: { size: 11 }, maxTicksLimit: 10 }
+                    },
+                    yVix: {
+                        type: 'linear',
+                        position: 'right',
+                        title: { display: true, text: 'VIX', color: '#f85149', font: { size: 11 } },
+                        grid: { display: false },
+                        ticks: { color: '#f85149', font: { size: 10 } }
+                    },
+                    ySP: {
+                        type: 'linear',
+                        position: 'left',
+                        title: { display: true, text: 'S&P 500', color: '#58a6ff', font: { size: 11 } },
+                        grid: { color: 'rgba(48,54,61,0.3)', drawBorder: false },
+                        ticks: { color: '#58a6ff', font: { size: 10 } }
+                    },
+                    yGold: {
+                        type: 'linear',
+                        position: 'right',
+                        title: { display: true, text: 'Gold ($)', color: '#d29922', font: { size: 11 } },
+                        grid: { display: false },
+                        ticks: { color: '#d29922', font: { size: 10 } }
+                    }
+                }
+            }
+        });
+
+        // Build custom legend
+        buildLegend();
+        updateLatestValues(data);
+    }
+
+    function buildLegend() {
+        const bar = document.getElementById('legend-bar');
+        bar.innerHTML = '';
+        SERIES.forEach((s, i) => {
+            const item = document.createElement('div');
+            item.className = 'legend-item';
+            item.innerHTML = `<span class="legend-dot" style="background:${s.color}"></span>${s.label}`;
+            item.addEventListener('click', () => {
+                const meta = chart.getDatasetMeta(i);
+                meta.hidden = !meta.hidden;
+                item.classList.toggle('disabled', meta.hidden);
+
+                // Also toggle the y-axis
+                const axis = chart.options.scales[s.yAxisID];
+                axis.display = !meta.hidden;
+
+                chart.update();
+            });
+            bar.appendChild(item);
+        });
+    }
+
+    function updateLatestValues(data) {
+        const last = data.labels.length - 1;
+        if (last < 0) return;
+
+        const vix = data.vix[last];
+        const sp = data.sp500[last];
+        const gold = data.gold[last];
+
+        document.getElementById('latest-vix').textContent = vix != null ? vix.toFixed(2) : '--';
+        document.getElementById('latest-sp500').textContent = sp != null ? sp.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '--';
+        document.getElementById('latest-gold').textContent = gold != null ? '$' + gold.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '--';
+    }
+
+    /* ── Init ─────────────────────────────────────────────── */
+
+    async function init() {
+        const result = await loadData();
+
+        document.getElementById('loading').style.display = 'none';
+
+        if (!result || !result.data.labels.length) {
+            document.getElementById('error').style.display = 'block';
+            return;
+        }
+
+        document.getElementById('main-content').style.display = 'block';
+        document.getElementById('info-bar').style.display = 'flex';
+        document.getElementById('method-note').textContent =
+            `${result.data.labels.length} data points · ${result.source} · Day = 3rd highest VIX after month's peak VIX day`;
+
+        renderChart(result.data);
+    }
+
+    init();
+    </script>
+</body>
+</html>
