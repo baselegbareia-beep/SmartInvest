@@ -198,7 +198,7 @@
 
     <div id="error" class="error-msg" style="display:none;">
         <h2>Unable to Load Data</h2>
-        <p>Please run <code>python3 fetch_data.py</code> to generate data, then reload.</p>
+        <p>Could not fetch data from Yahoo Finance. Please try refreshing the page.</p>
     </div>
 
     <script>
@@ -211,7 +211,20 @@
     let chart = null;
     let chartData = null;
 
+    /* ── CORS Proxies (tried in order) ───────────────────── */
+
+    const CORS_PROXIES = [
+        (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+        (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+        (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
+    ];
+
     /* ── Data Loading Strategy ────────────────────────────── */
+
+    function updateLoadingText(text) {
+        const el = document.querySelector('.loading-text');
+        if (el) el.textContent = text;
+    }
 
     async function loadData() {
         // Strategy 1: Try pre-generated JSON file
@@ -223,47 +236,53 @@
                     return { data, source: 'Pre-generated data (chart_data.json)' };
                 }
             }
-        } catch (e) { /* continue to next strategy */ }
+        } catch (e) { /* continue */ }
 
-        // Strategy 2: Fetch from Yahoo Finance API (works in browsers)
+        // Strategy 2: Direct Yahoo Finance (works if no CORS block)
+        updateLoadingText('Fetching live data from Yahoo Finance...');
         try {
-            const data = await fetchFromYahoo();
+            const data = await fetchAllSymbols(null);
             if (data.labels.length > 0) {
                 return { data, source: 'Live data from Yahoo Finance' };
             }
         } catch (e) {
-            console.warn('Yahoo Finance fetch failed:', e);
+            console.warn('Direct Yahoo Finance failed:', e.message);
         }
 
-        // Strategy 3: Try via CORS proxy
-        try {
-            const data = await fetchFromYahooViaProxy();
-            if (data.labels.length > 0) {
-                return { data, source: 'Live data via CORS proxy' };
+        // Strategy 3: Try each CORS proxy
+        for (let i = 0; i < CORS_PROXIES.length; i++) {
+            updateLoadingText(`Trying proxy ${i + 1} of ${CORS_PROXIES.length}...`);
+            try {
+                const data = await fetchAllSymbols(CORS_PROXIES[i]);
+                if (data.labels.length > 0) {
+                    return { data, source: `Live data via CORS proxy` };
+                }
+            } catch (e) {
+                console.warn(`Proxy ${i + 1} failed:`, e.message);
             }
-        } catch (e) {
-            console.warn('CORS proxy fetch failed:', e);
         }
 
         return null;
     }
 
-    async function fetchYahooChart(symbol, proxy = '') {
+    async function fetchYahooChart(symbol, proxyFn) {
         const start = Math.floor(new Date('1995-01-01').getTime() / 1000);
         const end = Math.floor(Date.now() / 1000);
-        const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${start}&period2=${end}&interval=1d`;
-        const fetchUrl = proxy ? `${proxy}${encodeURIComponent(url)}` : url;
+        const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${start}&period2=${end}&interval=1d&includePrePost=false`;
+        const fetchUrl = proxyFn ? proxyFn(yahooUrl) : yahooUrl;
 
-        const resp = await fetch(fetchUrl, {
-            headers: proxy ? {} : { 'User-Agent': 'Mozilla/5.0' }
-        });
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 30000);
 
-        if (proxy) {
-            const wrapper = await resp.json();
-            return JSON.parse(wrapper.contents);
+        try {
+            const resp = await fetch(fetchUrl, { signal: controller.signal });
+            clearTimeout(timeout);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            return resp.json();
+        } catch (e) {
+            clearTimeout(timeout);
+            throw e;
         }
-        return resp.json();
     }
 
     function parseYahooResponse(json) {
@@ -287,10 +306,9 @@
      * Return the list of selected dates sorted chronologically.
      */
     function selectMonthlyDates(vixData) {
-        // Group by month
         const months = {};
         for (const [date, val] of Object.entries(vixData)) {
-            const monthKey = date.substring(0, 7); // YYYY-MM
+            const monthKey = date.substring(0, 7);
             if (!months[monthKey]) months[monthKey] = [];
             months[monthKey].push({ date, val });
         }
@@ -338,26 +356,11 @@
         return { labels, vix, sp500, gold };
     }
 
-    async function fetchFromYahoo() {
+    async function fetchAllSymbols(proxyFn) {
         const [vixJson, spJson, goldJson] = await Promise.all([
-            fetchYahooChart('^VIX'),
-            fetchYahooChart('^GSPC'),
-            fetchYahooChart('GC=F')
-        ]);
-
-        const vixData = parseYahooResponse(vixJson);
-        const spData = parseYahooResponse(spJson);
-        const goldData = parseYahooResponse(goldJson);
-        const selectedDates = selectMonthlyDates(vixData);
-        return buildChartData(selectedDates, vixData, spData, goldData);
-    }
-
-    async function fetchFromYahooViaProxy() {
-        const proxy = 'https://api.allorigins.win/get?url=';
-        const [vixJson, spJson, goldJson] = await Promise.all([
-            fetchYahooChart('^VIX', proxy),
-            fetchYahooChart('^GSPC', proxy),
-            fetchYahooChart('GC=F', proxy)
+            fetchYahooChart('^VIX', proxyFn),
+            fetchYahooChart('^GSPC', proxyFn),
+            fetchYahooChart('GC=F', proxyFn)
         ]);
 
         const vixData = parseYahooResponse(vixJson);
