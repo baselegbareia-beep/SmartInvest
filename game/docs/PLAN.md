@@ -55,7 +55,7 @@ Statuses used: not started, in progress, built (the automated exit check passes)
 
 ## Phase 6. Review and release
 - **Builds:** a full review (code, levels, originality of every name and picture, checked against the list in `docs/LEVELS.md`, rule 11), the fixes it asks for, and the published link.
-- **Exit check:** `npm run check` and `npm run e2e` pass on the released build; the `check` job has passed on GitHub for the pull request; the Pages source is "GitHub Actions" (Phase 0, owner's step 3); the link opens the game and the finance chart at the site's root still opens.
+- **Exit check:** `npm run check` and `npm run e2e` pass on the released build; the `check` job has passed on GitHub for the pull request; the Pages source is "GitHub Actions" (Phase 0, owner's step 2); the link opens the game and the finance chart at the site's root still opens.
 - **Owner's phone playtest:** the final sign-off. Play the whole game from the published link.
 
 ## Later (not in version 1)
