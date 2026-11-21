@@ -1,0 +1,765 @@
+# Architecture
+
+The reference for how the game is put together. `src/core/types.ts` is the same contract in code: where the two disagree, that is a bug in one of them.
+
+Topics owned by other documents: Phaser 4 API usage and the verified boot, scaling and rendering recipes are in `docs/PHASER4-NOTES.md`; palette, sprites, font, HUD layout, screens and sound recipes are in `docs/ART-AND-SOUND.md`; level design rules, the curriculum and review checklists are in `docs/LEVELS.md`.
+
+## 1. Layers
+
+| Layer | Folder | May import | Holds |
+|---|---|---|---|
+| Core | `src/core/**` | `src/core/**`, `src/tuning.ts` (tests also `vitest`, `node:`) | Every game rule. Pure, deterministic, integers only. No Phaser, DOM, clock or randomness |
+| Tuning | `src/tuning.ts` | `src/core/types.ts` (types only) | Every feel number, owner-facing, in px and frames |
+| Shell | `src/shell/**`, `src/input/**`, `src/audio/**`, `src/art/**`, `src/main.ts` | core, tuning, Phaser, DOM | Presentation only: draws the state, plays events, feeds input. Never decides a rule |
+
+The ESLint rule `core/imports` (in `eslint.config.js`) enforces the first row, together with bans on `window`, `document`, `performance`, `Math.random` and `Date.now` inside `src/core`.
+
+Determinism rules for `src/core`:
+- State and `Phys` hold integers and booleans only. Allowed arithmetic: `+ - *`, comparisons, shifts, masks, `Math.min/max/abs/sign/floor/trunc/imul`, and division only as `Math.trunc(a / b)` or `Math.floor(a / b)` on integers.
+- Fractional numbers and `Math.round` appear only in `compileTuning.ts` and `validate/handicap.ts`.
+- Forbidden everywhere in the core: every transcendental `Math.*`, `**`, `for...in`, `sort()` without a comparator, any frame delta, any module-level mutable state that outlives a call.
+- The core never reads `TUNING` directly: `compileTuning(tuning)` is called by the shell and the tests, and `Phys` is passed in. That is what makes the handicapped comfort proof possible.
+
+Who enforces them. Lint enforces only the five bans named above. The rest is enforced by **`src/core/purity.test.ts`**, written with the first core module in Phase 1: it reads the text of every file under `src/core` that is not a test and fails, naming file and line, on `**`; `for (... in ...)`; `Math.` followed by anything outside the allowed list above; `Math.round` outside `compileTuning.ts` and `validate/handicap.ts`; `.sort()` with no argument; and an import of `tuning` in a file that is neither a test nor `testkit.ts`. `determinism.test.ts` adds the run-time half (state stays integral, same input gives same state). The same bans should also be added to the `src/core` block of `eslint.config.js` (`no-restricted-properties` for the `Math` functions, `no-restricted-syntax` for `**` and `for...in`) so that an editor shows them while typing; the test is the gate either way.
+
+## 2. Module map
+
+### src/core (binding: several agents implement these files in parallel)
+
+| File | Exports | Responsibility |
+|---|---|---|
+| `types.ts` | all types, unit constants | The contract. No logic |
+| `compileTuning.ts` | `compileTuning`, `TuningError` | `Tuning` (px, frames) to integer `Phys`; rejects unsafe values (section 3) |
+| `level.ts` | `parseLevel`, `withoutItem`, `LevelError` | Level text to `LevelData` with exact error messages (section 8) |
+| `tiles.ts` | `tileAt`, `isSolid(level, col, row)`, `boxHitsSolid(level, x, y, w, h)` | Tile lookup, the out-of-grid policy, box-against-solid test in sub-pixels |
+| `player.ts` | `stepPlayer(game, input, events?)` | Steps 4 to 11: presses, timers, run, jump, thrust, gravity, move and collide |
+| `enemies.ts` | `stepEnemies(game)` | Step 12: Cinderpeg and Arc Moth patrol |
+| `bolt.ts` | `stepBolt(game, events?)` | Step 13: fire, fly, hit walls and enemies, pay score |
+| `contact.ts` | `resolveContacts(game, events?)` | Steps 14 to 17: pickups, trophy, door, hazards, falling out, enemy touch |
+| `run.ts` | `createRun(level, phys)`, `respawnRun(run, level, phys, readyTicks)` | Build a fresh `RunState`; the partial reset after a death (section 6) |
+| `testkit.ts` | `REFERENCE_TUNING`, `REFERENCE_PHYS`, small level builders | Test support only (section 12): the frozen numbers every golden value in this document was measured with. Never imported by game code |
+| `game.ts` | `createSession`, `startLevel`, `step`, `restartLevel`, `holdReady`, `cloneGame`, `copyGame` | Phases, lives, score, level change; the one public step |
+| `script.ts` | `inputFromBits`, `bitsFromInput`, `scriptTicks`, `inputAtTick` | Run-length input scripts |
+| `save.ts` | `defaultSave`, `parseSave`, `applyEvents` | Pure save reducers; no storage access |
+| `validate/options.ts` | `DEFAULT_OPTIONS`, `COMFORT_OPTIONS`, `REQUIRES_OPTIONS`, `LEVELS_STEP_BUDGET` | Search constants and budgets (not feel numbers) |
+| `validate/handicap.ts` | `handicap` | The comfort proof's derated tuning |
+| `validate/successors.ts` | internal | Manoeuvre generator: ground holds, jumps, flight, fire (9.2) |
+| `validate/heuristic.ts` | internal | Flood-fill distance to the trophy and the door, in ticks (9.4) |
+| `validate/map.ts` | internal | Exhaustive enemy-free map and cost-to-go (9.4) |
+| `validate/search.ts` | internal | Quick pass and guided search with enemies; builds the script |
+| `validate/index.ts` | `validateLevel`, `replayScript` | Orchestration, verdicts, replay |
+
+Unit tests sit beside their module as `*.test.ts` (list in section 12).
+
+### Shell (planned layout; the Phase 0 `src/scenes/` folder moves to `src/shell/scenes/`)
+
+| File | Responsibility |
+|---|---|
+| `src/main.ts` | Entry: first layout, `new Phaser.Game`, installs viewport watcher, lifecycle, audio unlock, test hook |
+| `src/meta.ts` | `GAME_TITLE`, `GAME_ID`: the only place the name is spelled |
+| `src/levels.ts` | Imports `levels/*.txt?raw`, parses them; exports `CAMPAIGN` (level-01 to level-10 in order) and `DEV_LEVELS` (`test`, `debug`) |
+| `src/shell/config.ts` | The Phaser game config (see `docs/PHASER4-NOTES.md`) |
+| `src/shell/singletons.ts` | The shell's module-level singletons shared by `main.ts` and the scenes: `app`, `safeProbe`, `controls`, `sfx`, `pad`, `onPadPause` (`docs/PHASER4-NOTES.md`, section 3) |
+| `src/shell/chooseView.ts` | Pure: window size, device pixel ratio, safe insets and `TUNING.view` to `{ zoom, viewW, viewH, cssLeft, cssTop }` |
+| `src/shell/menuLayout.ts` | Pure: view size and CSS px per art px to menu row heights and hit areas of at least 44 CSS px (11.5) |
+| `src/shell/applyLayout.ts` | DOM: canvas CSS transform `scale(zoom / dpr)`, `game.scale.resize`, pillarbox offsets; viewport watcher |
+| `src/shell/FixedStepper.ts` | Pure fixed-timestep accumulator (11.1) |
+| `src/shell/camera.ts` | Pure `snapCamera` and `stepCamera` (11.4) |
+| `src/shell/interpolation.ts` | Pure: the 'auto' on/off decision from measured frame intervals; lerp and teleport snap |
+| `src/shell/frames.ts` | Pure: state to frame name for hero, enemies, door, pickups |
+| `src/shell/WorldView.ts` | State to Phaser objects: tile layer, Images by id, overlays, mini fuel bar |
+| `src/shell/TileLayer.ts` | `LevelData` to tilemap data: wall variants, hazards, decoration; built on `levelStarted` |
+| `src/shell/Effects.ts` | The one particle emitter, flashes, shake, score pop-ups |
+| `src/shell/EventRouter.ts` | Drains `GameEvent[]` each tick into audio, effects, HUD, storage and scene changes (11.3) |
+| `src/shell/storage.ts` | `loadJson` / `saveJson` that never throw; the two storage keys |
+| `src/shell/lifecycle.ts` | `installTouchMode` and `installRotateGuard` only (`docs/PHASER4-NOTES.md`, section 17). The blur, hidden and pagehide listeners live in `PlayScene.create` (same document, section 11), because they call the scene's `pauseGame` and must be removed with the scene |
+| `src/shell/pwa.ts` | Phase 5: guarded service worker registration (11.7) |
+| `src/shell/e2eHook.ts` | The `window.__E2E__` test hook (11.6) |
+| `src/shell/scenes/BootScene.ts` | Builds textures and the font, then starts Title |
+| `src/shell/scenes/TitleScene.ts` | Title, Continue / New game, sound toggle; the first tap unlocks audio and asks for fullscreen (11.5) |
+| `src/shell/scenes/PlayScene.ts` | Owns the `GameState`, the stepper, the world view and the camera |
+| `src/shell/scenes/HudScene.ts` | Lives, level, score, cog, items, fuel pips, toasts, level intro and clear banners |
+| `src/shell/scenes/PauseScene.ts` | Resume, Restart level, Quit, Sound, Vibration |
+| `src/shell/scenes/EndScene.ts` | Game over and win screens |
+| `src/input/Controls.ts` | Pure: held state per source, press latch, last-pressed-wins for left and right; `consume()` gives one `Input` per tick |
+| `src/input/keyboard.ts` | Phaser keys to `Controls` |
+| `src/input/touchLayout.ts` | Pure `layoutControls` and `hitTest` in CSS px from `TUNING.touch` |
+| `src/input/TouchPad.ts` | DOM overlay with Pointer Events to `Controls`; shows FIRE and THRUST only while the item is held |
+| `src/input/haptics.ts` | `navigator.vibrate` wrapper honouring the setting |
+| `src/audio/Sfx.ts` | Private `AudioContext`, unlock, master gain, mute, voice cap, thrust loop |
+| `src/audio/recipes.ts` | Effect recipes as data |
+| `src/audio/synth.ts` | `(ctx: BaseAudioContext, dest, at, recipe)` schedules one effect; renders offline in tests |
+| `src/art/palette.ts`, `src/art/sprites/*.ts`, `src/art/font.ts` | Palette-indexed text grids |
+| `src/art/makeSheet.ts` | Grids to one canvas texture with named frames |
+| `index.html` | The page skeleton: `#app` holding `#game` (canvas parent), the touch pad overlay and the rotate message |
+| `src/pwa/sw.template.js`, `src/pwa/manifest.template.json`, a build step in `vite.config.ts`, `scripts/make-icons.mjs` | Phase 5: hand-written service worker and web app manifest, completed at build time (11.7); icons rendered from the `icon` grid |
+
+### Tests and levels
+
+| Path | Responsibility |
+|---|---|
+| `levels/level-01.txt` to `level-10.txt` | The game, in that order |
+| `levels/test.txt`, `levels/debug.txt` | Movement room and all-items room; opened with `?level=test` or `?level=debug` |
+| `tests/levels.test.ts` | Reads every file in `levels/` with `node:fs`; the three required validator suites and the style checks of the game's own levels (9.6) |
+| `e2e/smoke.spec.ts` | Phase 0: boot on WebGL, title, no console errors; saves `e2e/screenshots/title.png` |
+| `e2e/touch.spec.ts` | Phase 1: slide LEFT to RIGHT, hold RIGHT and tap JUMP, cancel and blur release everything |
+| `e2e/frame.spec.ts` | Phase 1: inside a tall frame on a phone held sideways there is no rotate message and the game runs; inside a sandboxed frame the game boots with no error (storage and, later, the service worker are guarded) |
+| `e2e/rooms.spec.ts`, `e2e/scripts/*.json` | Phases 2 and 3, before the validator exists: replays an input script kept beside the test through `window.__E2E__.replay` and expects a win. Phase 2: `test.txt`, start to cog to airlock. Phase 3: `debug.txt` (blaster, thruster, both enemies). The scripts are written by hand or found with a throwaway search; a core unit test replays the same files in Node |
+| `e2e/replay.spec.ts` | Phase 4: replays level 1's validator script in the browser; same `winTick` as Node (11.6) |
+| `e2e/level1.spec.ts` | Phase 4, kept through Phase 5: loads the game, starts level 1 from the title the way a player does, waits for the ready gate and saves `e2e/screenshots/level-01.png` |
+| `e2e/offline.spec.ts`, `e2e/subpath.spec.ts` | Phase 5: second load with the network off; the build served from a sub-folder (11.7) |
+
+## 3. Units and compiled tuning
+
+1 art px = 256 sub-pixels (`SUB`), 1 tile = 16 px = 4096 sub-pixels (`TILE = 1 << TILE_SHIFT`, shift 12), 1 tick = 1/60 s. Positions are top-left corners; +y is down. The tile of a coordinate is `v >> TILE_SHIFT` (correct for negatives). The shell draws at `v >> SUB_SHIFT`.
+
+`compileTuning(t)` conversions: `sub(px) = Math.round(px * 256)`; frame counts are copied and must be whole.
+
+| `Phys` field | From `Tuning` |
+|---|---|
+| `heroW`, `heroH` | `sub(hero.heroHitboxW)`, `sub(hero.heroHitboxH)` |
+| `runMax`, `groundAccel`, `groundDecel`, `groundTurn`, `airAccel`, `airDecel`, `airTurn` | `sub` of `run.runMaxSpeed`, `groundAccel`, `groundDecel`, `groundTurnAccel`, `airAccel`, `airDecel`, `airTurnAccel` |
+| `jumpVel`, `jumpCutVel` | `sub(jump.jumpVelocity)`, `sub(jump.jumpCutVelocity)` |
+| `gravRise`, `gravFall`, `apexHangSpeed`, `maxFall` | `sub` of `gravity.gravityRise`, `gravityFall`, `apexHangSpeed`, `maxFallSpeed` |
+| `gravRiseHang`, `gravFallHang` | `sub(gravityRise * apexHangScale)`, `sub(gravityFall * apexHangScale)` |
+| `coyoteTicks`, `jumpBufferTicks` | `forgiveness.coyoteFrames`, `jumpBufferFrames` |
+| `cornerNudge`, `ledgeCatch`, `hurtInsetSide/Top/Bottom`, `spikeInsetSide/Top`, `fireInsetSide/Top`, `coolantInsetTop`, `enemyTouchInset`, `pickupOutset`, `doorInsetSide` | `sub` of the `forgiveness.*Px` field of the same name |
+| `thrustAccel`, `thrustMaxRise`, `thrustCutVel`, `fuelTicks` | `sub(thruster.jetAccel)`, `sub(jetMaxRiseSpeed)`, `sub(jetCutSpeed)`, `jetFuelFrames` |
+| `boltSpeed`, `boltRange`, `boltW`, `boltH`, `fireBufferTicks` | `sub` of `blaster.boltSpeed`, `boltRangePx`, `boltHitboxW`, `boltHitboxH`; `fireBufferFrames` |
+| `cinderpegSpeed`, `mothSpeed` | `sub(enemies.cinderpegSpeed)`, `sub(enemies.mothSpeed)` |
+| `dyingTicks` | `timing.hitStopFrames + deathAnimFrames + fadeFrames` (52) |
+| `respawnReadyTicks` | `timing.fadeFrames + readyMinFrames` (22) |
+| `readyMinTicks`, `exitTicks` | `timing.readyMinFrames` (12), `timing.exitFrames` (60) |
+| `startLives`, `maxLives`, `livesPerLevelClear` | `lives.*` |
+| `scoreCrystal`, `scoreCog`, `scoreCinderpeg`, `scoreMoth`, `scoreLevelClear`, `scoreLifeLeft` | `score.crystal`, `cog`, `cinderpeg`, `arcMoth`, `levelClear`, `lifeLeft` |
+
+The groups `camera`, `view`, `touch`, `effects` and `pacing` are shell-only and ignored. With the shipped numbers every px value is an exact multiple of 1/256 px, so nothing is lost to rounding. (The comfort handicap is not exact: its run speed is 364.8 sub-pixels per tick and rounds to 365.)
+
+`compileTuning` throws `TuningError` (one message listing every problem) when: a value is negative or not finite; a frame count, a lives value or a score is not a whole number; any speed (`runMaxSpeed`, `jumpVelocity`, `maxFallSpeed`, `jetMaxRiseSpeed`, `boltSpeed`, `cinderpegSpeed`, `mothSpeed`) is 0, or is 8 px per frame or more (half a tile); the hero box is not a whole number of px, is larger than a tile, or `16 - heroHitboxW` is odd; the hurt box, the enemy touch box, a hazard kill box or the door box has no size; `jumpCutVelocity >= jumpVelocity`; `jetCutSpeed > jetMaxRiseSpeed`; `apexHangScale` is outside (0, 1]; `boltSpeed + cinderpegSpeed >= boltHitboxW + 16` or the same with `mothSpeed`; `startLives` is below 1 or above `maxLives`.
+
+## 4. Step order
+
+`step(game, input, events?)` advances one tick. Names without a prefix are fields of `game.run.player`; `P` is `game.phys`.
+
+1. **Status.** If `session.status !== 'playing'`, return.
+2. **Tick.** `run.tick += 1`.
+3. **Phase.**
+   - `dying` or `exiting`: `phaseTicks += 1`; `prevJump = input.jump`; `prevFire = input.fire`; if `phaseTicks >= phaseLength`, finish the death or the exit (section 6). Return. The world is frozen.
+   - `ready`: `held` = any of the five inputs is held. If `!held`: `readyArmed = true` (on every ready tick, also during the minimum). Then, if `phaseTicks < phaseLength`: `phaseTicks += 1`, update `prevJump` and `prevFire`, return. Otherwise, if `!(readyArmed && held)`: update `prevJump` and `prevFire`, return. Otherwise the gate opens: `phase = 'playing'`, `phaseTicks = 0`, `phaseLength = 0`, emit `readyEnded`, and continue with this same tick.
+   - `playing`: `phaseTicks += 1` (also on the tick the gate opened), continue.
+4. **Presses and timers.** `jumpPressed = input.jump && !prevJump`; `firePressed = input.fire && !prevFire`; then store the new `prevJump`, `prevFire`. `wasOnGround = onGround`. Coyote: if `onGround` then `coyote = P.coyoteTicks + 1`, else if `coyote > 0` then `coyote -= 1`. Jump buffer: if `jumpBuffer > 0` then `jumpBuffer -= 1`; then if `jumpPressed`, `jumpBuffer = P.jumpBufferTicks + 1`. Fire buffer: the same with `firePressed` and `P.fireBufferTicks`.
+5. **Run.** `dir = (input.right ? 1 : 0) - (input.left ? 1 : 0)` (both held is 0). If `dir !== 0`: `turning = vx !== 0 && sign(vx) !== dir`; pick `groundTurn` or `groundAccel` when `onGround`, `airTurn` or `airAccel` otherwise; `vx = approach(vx, dir * runMax, a)`; `facing = dir`. If `dir === 0`: `vx = approach(vx, 0, onGround ? groundDecel : airDecel)`. `approach(v, target, a)` moves `v` toward `target` by at most `a` without passing it.
+6. **Jump start.** If `jumpBuffer > 0 && coyote > 0`: `vy = -jumpVel`, `jumpArc = true`, `coyote = 0`, `jumpBuffer = 0`, `onGround = false`, `jumped = true`, emit `jumped`.
+7. **Jump cut.** If `jumpArc && !input.jump && vy < -jumpCutVel`: `vy = -jumpCutVel`.
+8. **Thrust or gravity.**
+   - `engaged = input.thrust && hasThruster && fuel > 0`; `burning = engaged && vy >= -thrustMaxRise`.
+   - Thrust cut: if `!engaged && thrusting && !jumped && vy < -thrustCutVel`: `vy = -thrustCutVel`. (`thrusting` still holds last tick's value here.)
+   - If `burning`: `vy = max(vy - thrustAccel, -thrustMaxRise)`, `fuel -= 1`, `jumpArc = false`. If `fuel` is now 0: emit `fuelEmptied`, then for every thruster pickup `i` with `taken[i]`: `taken[i] = false`, emit `pickupRestored`.
+   - Else if `!jumped` (no gravity on the launch tick): `hang = jumpArc && input.jump && abs(vy) < apexHangSpeed`; `rising = jumpArc && input.jump && vy < 0`; gravity is `gravRise` when rising, else `gravFall`, each replaced by its `Hang` variant when `hang`; `vy = min(vy + gravity, maxFall)`.
+   - If `vy >= apexHangSpeed`: `jumpArc = false`.
+   - If `burning !== thrusting`: `thrusting = burning`, emit `thrustStarted` or `thrustStopped`.
+   - `impact = vy` (kept for the `landed` event).
+9. **Move X.** Section 5.2.
+10. **Move Y.** Section 5.3.
+11. **Ground.** `onGround = vy >= 0 && boxHitsSolid(x, y + heroH, heroW, 1)`. If `onGround`: `vy = 0`, `jumpArc = false`, and if `!wasOnGround` emit `landed` with `speed = impact`.
+12. **Enemies** move (section 5.6).
+13. **Bolt** (section 5.7): spawn if `fireBuffer > 0 && hasBlaster && !bolt.active`; then move and test walls, enemies, range.
+14. **Pickups** in index order (section 5.5).
+15. **Trophy.**
+16. **Door.** If `hasTrophy` and the hero box overlaps the door box: start the exit (section 6) and return.
+17. **Deaths**, first match wins: hazard tiles, then falling out, then enemy touch (section 5.4). A match starts the dying phase.
+
+Why this order:
+- 6 before 9: a press acts on the tick it arrives. 9 before 10: no snagging on a ledge corner at foot height.
+- 4 reads `onGround` from the end of the previous tick. Coyote: a tick is "airborne tick n" when it is the n-th tick that starts with `onGround` false after walking off a ledge; a press on airborne ticks 1 to `coyoteFrames` still jumps, and one on tick `coyoteFrames + 1` does not. Buffer: the first tick on which a landed hero can jump is the tick after the touchdown tick (the tick whose step 11 sets `onGround`); a press up to `jumpBufferFrames` ticks before that tick is honoured, which is up to `jumpBufferFrames - 1` ticks before the touchdown tick (7 and 6 with the shipped number), and the jump starts on the tick after touchdown. With both at 0 a press on the ground still jumps on its own tick.
+- 12 and 13 before 17: a point-blank bolt destroys an enemy before it can kill. 14 to 16 before 17: on a tie the player keeps the crystal, the cog and the win.
+- The thrust cut ignores the launch tick and an idling engine, so a jump is never cut by the thruster; holding thrust is the best possible climb (section 13).
+
+Golden numbers for tests, from the reference tuning (`REFERENCE_PHYS`, section 12; equal to the shipped numbers at the time of writing): a held jump rises 1280, 2496, 3648, 4736 sub-pixels after ticks 1 to 4; `vy` on ticks 18 to 28 is `-192 -128 -64 -32 0 56 112 168 280 392 504`; apex 13472 sub-pixels on tick 21; back on the ground on tick 41. Thrust for 7 ticks from standing, then release: `vy/fuel` per tick is `-96/79 -192/78 -288/77 -384/76 -448/75 -448/74 -448/73 -16/73 96/73 208/73`.
+
+## 5. Collision rules
+
+### 5.1 Boxes and tiles
+
+- Hero box: `[x, x + heroW)` by `[y, y + heroH)`, 10 by 14 px. Two half-open boxes overlap when each starts before the other ends on both axes.
+- `tileAt(level, col, row)`: `col < 0`, `col >= width` or `row < 0` is `Solid`; `row >= height` is `Empty`; otherwise `tiles[row * width + col]`. So the level is walled on the left, right and top, and open below.
+- `boxHitsSolid(level, x, y, w, h)` (the level argument is left out in the text below): true when any tile from column `x >> 12` to `(x + w - 1) >> 12` and row `y >> 12` to `(y + h - 1) >> 12` is `Solid`. Only `Solid` blocks movement; hazards are not solid.
+- Hero start: `x = start.col * TILE + ((TILE - heroW) >> 1)`, `y = (start.row + 1) * TILE - heroH`, `facing = 1`, `onGround = true`.
+
+### 5.2 Move X (step 9)
+
+If `vx === 0` nothing happens. `nx = x + vx`. If `!boxHitsSolid(nx, y, heroW, heroH)`: `x = nx`. Otherwise:
+- **Ledge catch.** `rowTop = ((y + heroH - 1) >> 12) << 12` (top of the lowest row the box overlaps); `lift = y + heroH - rowTop`. If `!onGround && vy >= 0 && lift <= ledgeCatch && !boxHitsSolid(nx, rowTop - heroH, heroW, heroH)`: `x = nx`, `y = rowTop - heroH`, `vy = 0`. Step 11 then finds the ground. (`onGround` is still the value from the end of the previous tick, cleared by a jump start in step 6.)
+- **Wall.** Otherwise snap flush and stop: moving right `x = (((nx + heroW - 1) >> 12) << 12) - heroW`; moving left `x = ((nx >> 12) + 1) << 12`; `vx = 0`.
+
+### 5.3 Move Y (step 10)
+
+If `vy === 0` nothing happens. `ny = y + vy`. If `!boxHitsSolid(x, ny, heroW, heroH)`: `y = ny`. Otherwise:
+- **Landing** (`vy > 0`): `y = (((ny + heroH - 1) >> 12) << 12) - heroH`, `vy = 0`.
+- **Corner nudge** (`vy < 0`): `dR = (((x >> 12) + 1) << 12) - x` (shift that puts the left edge on the next column line); `dL = (x + heroW) - (((x + heroW - 1) >> 12) << 12)` (shift that puts the right edge on its column line). Try right then left when `vx >= 0`, left then right otherwise. A shift `d` is taken when `d <= cornerNudge` and the box at the shifted `x` and `ny` hits no solid: move `x` by it, `y = ny`, keep `vy`.
+- **Bonk** (no shift taken): `y = ((ny >> 12) + 1) << 12`, `vy = 0`, `jumpArc = false`, emit `bonked`.
+
+All speeds are below half a tile per tick (enforced by `compileTuning`), so a move can enter at most one new row or column and the snaps above are exact.
+
+### 5.4 Deaths (step 17)
+
+Hurt box: `[x + hurtInsetSide, x + heroW - hurtInsetSide)` by `[y + hurtInsetTop, y + heroH - hurtInsetBottom)`, 6 by 11 px.
+
+1. **Hazard tiles.** For each tile the hurt box overlaps, rows top to bottom, columns left to right: if the hurt box overlaps the tile's kill box, die with that cause.
+
+   | Tile | Kill box inside cell `(c, r)` | Cause |
+   |---|---|---|
+   | `Spikes` | `[c*TILE + spikeInsetSide, (c+1)*TILE - spikeInsetSide)` by `[r*TILE + spikeInsetTop, (r+1)*TILE)` | `spikes` |
+   | `Fire` | the same with `fireInsetSide`, `fireInsetTop` | `fire` |
+   | `Coolant` | `[c*TILE, (c+1)*TILE)` by `[r*TILE + coolantInsetTop, (r+1)*TILE)` | `coolant` |
+2. **Falling out.** `y >= level.height * TILE`: cause `fell`.
+3. **Enemy touch.** For each live enemy in index order: touch box `[ex + enemyTouchInset, ex + TILE - enemyTouchInset)` by the same in y. Overlap with the hurt box: cause `enemy`. No stomping: every side kills.
+
+### 5.5 Pickups, trophy, door (steps 14 to 16)
+
+All three test against the full hero box.
+- Pickup or trophy box for cell `(c, r)`: `[c*TILE - pickupOutset, (c+1)*TILE + pickupOutset)` on both axes.
+- Pickup `i` with `!taken[i]` and overlap: `taken[i] = true`; crystal: `score += scoreCrystal`; blaster: `hasBlaster = true`; thruster: `hasThruster = true`, `fuel = fuelTicks` (a pack is always consumed, also with a full tank). Emit `pickup` (score 0 for items).
+- Trophy with `!hasTrophy` and overlap: `hasTrophy = true`, `score += scoreCog`, emit `trophyCollected` then `doorOpened`.
+- Door box: `[c*TILE + doorInsetSide, (c+1)*TILE - doorInsetSide)` by `[r*TILE, (r+1)*TILE)`. It does nothing while `hasTrophy` is false.
+
+### 5.6 Enemies (step 12)
+
+An enemy's body is one tile square at `(x, y)`; it starts on its cell with `dir = -1` (left, or up for a vertical moth). Enemies ignore the hero, gravity and each other. Dead enemies do not move.
+
+- **Cinderpeg** (`C`), `row = y >> 12` never changes. `nx = x + dir * cinderpegSpeed`; `lead = dir > 0 ? nx + TILE - 1 : nx`; `c = lead >> 12`. Blocked when `tileAt(c, row) !== Empty` (wall, hazard, level edge) or `tileAt(c, row + 1) !== Solid` (no floor under the leading foot). Blocked: `dir = -dir` and no move this tick. Otherwise `x = nx`.
+- **Arc Moth** (`M` axis `v`, `H` axis `h`): the same along its axis with `mothSpeed`; blocked when the leading cell is outside the grid on any side or is not `Empty`.
+
+### 5.7 Bolt (step 13)
+
+- **Spawn** when `fireBuffer > 0 && hasBlaster && !bolt.active`: `bolt.dir = facing`; `bolt.x = facing > 0 ? x + heroW - boltW : x`; `bolt.y = y + ((heroH - boltH) >> 1)`; `rangeLeft = boltRange`; `active = true`; `fireBuffer = 0`; emit `boltFired`. The bolt starts inside the hero's box, so it can never start inside a wall.
+- **Move** (also on the spawn tick): `bolt.x += dir * boltSpeed`; `rangeLeft -= boltSpeed`. Then, first match ends the bolt (`active = false`, emit `boltEnded`):
+  1. `boxHitsSolid(bolt box)`: hit `wall`.
+  2. The first live enemy in index order whose full one-tile body overlaps the bolt box: `alive = false`; `points = enemyPaid[i] ? 0 : value`; `enemyPaid[i] = true`; `score += points`; emit `enemyKilled`, then `boltEnded` with hit `enemy`.
+  3. `rangeLeft <= 0`: hit `range`.
+- Bolts pass through hazards, pickups, the trophy and the door. With the shipped numbers a bolt lives 40 ticks and reaches 160 px.
+
+## 6. State machine: ready, death, exit, level change
+
+```
+createSession / startLevel ──► ready ──(minimum elapsed and a control pressed)──► playing
+playing ──(step 17)──► dying ──(dyingTicks)──► lives -= 1 ──► lives > 0: respawn ──► ready
+                                                          └─► lives = 0: status 'gameOver'
+playing ──(step 16)──► exiting ──(exitTicks)──► next level ──► ready
+                                             └─► after the last level: status 'won'
+playing ──holdReady()──► ready           (after a pause; nothing else changes)
+ready | playing ──restartLevel()──► lives -= 1 ──► respawn ──► ready, or 'gameOver'
+```
+
+**Ready gate.** The world is frozen. `phaseLength` is `readyMinTicks` (12) at a level start, after `restartLevel` and after `holdReady`, and `respawnReadyTicks` (22: fade in, then the minimum) after a death. The gate opens on a **press** (ruling R4), never on a control that is merely still down:
+
+- `readyArmed` is false whenever the gate shuts. It becomes true on the first ready tick on which none of left, right, jump, fire and thrust is held, and stays true.
+- The first `phaseLength` ticks never open the gate (they do arm it).
+- From then on, the first tick on which `readyArmed` is true and any control is held opens the gate, and that tick is simulated in full: a direction or thrust acts at once.
+
+Consequences, each covered by `flow.test.ts`: a thumb kept on RIGHT through a death (or through the airlock into the next level) does not start the world, however long it is held; it must lift and press again. A control that was let go and pressed again during the minimum counts: the gate opens on the first tick after the minimum. A jump or fire pressed before the gate opened is not replayed when it opens, because `prevJump` and `prevFire` are tracked in every phase: the hero starts with whatever is held, and needs a fresh press to jump or fire. The validator is unaffected: its root idles through the minimum, which arms the gate.
+
+**Death** (step 17): `phase = 'dying'`, `phaseTicks = 0`, `phaseLength = dyingTicks`, `deathCause = cause`; if `thrusting`: clear it and emit `thrustStopped`; emit `playerDied` with `livesAfter = lives - 1`. When the phase ends: `lives -= 1`. At 0: `status = 'gameOver'`, emit `gameOver`. Otherwise `respawnRun(run, level, phys, respawnReadyTicks)` and emit `respawned` with reason `death`. From the death tick, at least 74 frozen ticks pass before a control can act again.
+
+**What a respawn keeps and resets** (`respawnRun`, used by deaths and by `restartLevel`):
+
+| Kept | Reset |
+|---|---|
+| `session.score`, `session.lives` (after the decrement), `highestUnlocked` | Hero: start position, zero velocity, `facing = 1`, `onGround = true`, all timers 0, `jumpArc`, `thrusting`, `prevJump`, `prevFire` false |
+| `taken[i]` of every crystal | `hasBlaster`, `hasThruster` false, `fuel = 0` |
+| `hasTrophy` (the door stays open) | `taken[i] = false` for every blaster and thruster pack |
+| `enemyPaid[i]` (a respawned enemy is worth 0) | Every enemy: spawn cell, `dir = -1`, `alive = true` |
+| `run.tick` (keeps counting) | `bolt.active = false`; `deathCause = null`; `phase = 'ready'`, `phaseTicks = 0`, `phaseLength = readyTicks`, `readyArmed = false` |
+
+After a respawn the level is its start state plus harmless collectibles, so one death-free proof covers every life.
+
+**Exit** (step 16): `score += scoreLevelClear`; `lives = min(lives + livesPerLevelClear, maxLives)`; `highestUnlocked = max(highestUnlocked, last ? levelIndex : levelIndex + 1)`; `phase = 'exiting'`, `phaseTicks = 0`, `phaseLength = exitTicks`; clear `thrusting` (emit `thrustStopped` if it was set); emit `levelCompleted`. When the phase ends: on the last level `lifeBonus = lives * scoreLifeLeft`, `score += lifeBonus`, `status = 'won'`, emit `gameWon`; otherwise `startLevel(game, levelIndex + 1, events)`.
+
+**`startLevel`** builds a new `RunState` with `createRun`: nothing taken, no trophy, `enemyPaid` all false, `tick = 0`, hero and enemies at their cells, `phase = 'ready'` with `phaseLength = readyMinTicks` and `readyArmed = false`. Items never carry over. It emits `levelStarted`.
+
+**`restartLevel`** (pause menu): only when status is `playing` and the phase is `ready` or `playing`. If `thrusting`, emit `thrustStopped`. `lives -= 1`; at 0 `status = 'gameOver'` and `gameOver`; otherwise `respawnRun(..., readyMinTicks)` and `respawned` with reason `restart`. It is the way out of any dead end; together with the thruster packs reappearing when the tank runs dry (step 8) it is the whole soft-lock policy. The validator does not look for inescapable pits.
+
+**`holdReady`** (resume after a pause): `playing` becomes `ready` with `phaseTicks = 0`, `phaseLength = readyMinTicks` and `readyArmed = false`; position, speed and items are untouched. The shell releases every control when the pause overlay closes, so the gate is armed again on the next tick.
+
+**Scoring.** Crystal 10, golden cog 100, Cinderpeg 50, Arc Moth 100 (each enemy pays once per level visit), level clear 200, each life left at the win 500. Lives: 3 at the start of a run, plus 1 per level cleared (also the last, before the life bonus is counted), never above 3.
+
+## 7. Events
+
+The `GameEvent` union in `types.ts` documents every payload. Order within one tick follows the step order. Coordinates are sub-pixels.
+
+| Event | Emitted by | Typical use (see `docs/ART-AND-SOUND.md`) |
+|---|---|---|
+| `levelStarted` | `createSession`, `startLevel` | Rebuild tile layer and sprites, snap camera, intro, save `resume` |
+| `readyEnded` | step 3 | Hide the ready blink |
+| `jumped`, `landed`, `bonked` | steps 6, 11, 10 | `jump`, `land` (by `speed`), dust |
+| `thrustStarted`, `thrustStopped` | step 8, death, exit | One-shot ignition effects. The loop sound follows state (11.3) |
+| `fuelEmptied`, `pickupRestored` | step 8 | `fuelEmpty`, vibration, sparkle on the returning pack |
+| `pickup` | step 14 | `gem` ladder or `item`, sparkles, `+10` pop-up |
+| `trophyCollected`, `doorOpened` | step 15 | `cog`, toast, gold flash; `airlock` 320 ms later, iris animation |
+| `boltFired`, `boltEnded` | step 13 | `bolt`; `boltHit` and sparks for `wall` |
+| `enemyKilled` | step 13 | `enemyDown`, scrap, hit stop, pop-up when `score > 0` |
+| `playerDied` | step 17 | `death`, flash by cause, shake, vibration; save lives |
+| `respawned` | end of dying, `restartLevel` | Snap camera and interpolation, fade in, HUD life blink |
+| `levelCompleted` | step 16 | `clear`, banner with `bonus`, save `unlocked` |
+| `gameOver`, `gameWon` | end of dying, end of exiting | `gameOver` / `win`, end screen, save best score |
+
+## 8. Level file format
+
+```
+@name Format Example
+@teaches Every letter of the legend, once
+@hardest 12,3 the two-tile coolant pool
+@requires thruster
+; a free comment
+########################################
+#......................................#
+#.P..G..B..J....C...S..F....M...H..T.D.#
+############WW##########################
+```
+
+- Before the grid: blank lines, comment lines starting with `;`, and header lines starting with `@`. All four headers are optional to the parser; `tests/levels.test.ts` requires `@name`, `@teaches` and `@hardest` in level-01 to level-10.
+- `@name text`, `@teaches text`, `@hardest col,row note` (at most one each) and `@requires blaster` or `@requires thruster` (at most one of each). Keywords are lower case; one or more spaces separate keyword and value.
+- The first line that is not blank, a comment or a header starts the grid. Every grid row has the same length. Blank lines after the last row are ignored.
+- Each line loses a trailing `\r` and trailing spaces and tabs before anything else; a byte-order mark at the start of the file is dropped.
+- **All coordinates are 0-based**: `col` counts from the left edge of the grid, `row` from its first row. This holds for `@hardest`, for error messages and for validator reports. Error messages that concern one line also carry the 1-based line number of the file, as editors show it.
+
+| Char | Meaning | Tile | Recorded as |
+|---|---|---|---|
+| `#` | wall | `Solid` | |
+| `.` | empty | `Empty` | |
+| `F` `W` `S` | furnace fire, coolant, spikes | `Fire`, `Coolant`, `Spikes` | |
+| `P` | hero start | `Empty` | `start` |
+| `T` | golden cog trophy | `Empty` | `trophy` |
+| `D` | airlock door | `Empty` | `door` |
+| `G` | ore crystal | `Empty` | `pickups` kind `crystal` |
+| `B` | bolt blaster | `Empty` | `pickups` kind `blaster` |
+| `J` | thruster pack | `Empty` | `pickups` kind `thruster` |
+| `C` | Cinderpeg | `Empty` | `enemies` kind `cinderpeg` |
+| `M` | Arc Moth, vertical | `Empty` | `enemies` kind `moth`, axis `v` |
+| `H` | Arc Moth, horizontal | `Empty` | `enemies` kind `moth`, axis `h` |
+
+Rules: exactly one `P`, one `T`, one `D`; the cell below `P` and below every `C` is `#`; at most 64 columns, 24 rows, 16 enemies (C + M + H) and 4 `J`. `pickups` and `enemies` are in reading order and their index is their id.
+
+Not a parser rule: `docs/LEVELS.md` asks every file in `levels/` to have its top row and both side columns made of `#`, so the picture has a frame. The simulation does not need it (cells outside the grid are solid on those three sides), and unit-test fixtures may be open grids, so `parseLevel` does not check it. `tests/levels.test.ts` does, for every file in `levels/` (9.6).
+
+**Errors.** `parseLevel` throws `LevelError` (`extends Error`, with `levelId: string` and `line: number | null`) for the first problem found. The message is `levels/<id>.txt: <text>`, or `levels/<id>.txt:<line>: <text>` when a line is named. Checks run in this order: line-level checks in file order while reading (rows are checked for width, then characters left to right, as they are read); then the whole-file checks in the order listed.
+
+| When | Line | Text |
+|---|---|---|
+| Header keyword not known | yes | `unknown header "@title" (allowed: @name, @teaches, @hardest, @requires)` |
+| Header repeated | yes | `duplicate @name` (also `@teaches`, `@hardest`, `@requires blaster`, `@requires thruster`) |
+| `@name` or `@teaches` with no text | yes | `@name needs a value` |
+| `@hardest` malformed | yes | `@hardest must look like "col,row note", for example "@hardest 35,9 the two-tile step"` |
+| `@requires` value wrong | yes | `@requires must be "blaster" or "thruster", found "jetpack"` |
+| `@` or `;` line after the first grid row | yes | `header line after the grid has started` |
+| Non-blank line after a blank line that follows the grid | yes, of the blank line | `blank line inside the grid` |
+| Row length differs from row 0 | yes | `row 5 has 59 columns, expected 60 (the width of row 0)` |
+| Character not in the legend | yes | `unknown character "x" at col 16, row 3 (allowed: # . P T D G F W S B J C M H)` |
+| No grid row at all | no | `no grid rows found` |
+| Too large | no | `grid is 70x18; the limit is 64x24` |
+| Wrong count of P, T, D (checked in that order) | no | `expected exactly one P (player start), found 0` (also `T (trophy)`, `D (door)`) |
+| `P`, then each `C` in reading order, not above `#` | yes | `P at col 2, row 9 must stand on a wall (#)` (also `C`) |
+| Too many enemies | no | `too many enemies (17, limit 16)` |
+| Too many packs | no | `too many J (5, limit 4)` |
+| `@hardest` cell outside the grid | yes, of the header | `@hardest 70,3 is outside the 60x14 grid` |
+| `@requires` without the item | yes, of the header | `@requires blaster, but the grid has no B` (also `thruster` and `J`) |
+
+## 9. Validator
+
+### 9.1 Contract
+
+`validateLevel(level, phys, options?)` returns a `LevelProof`: a verdict and, when `proven`, a concrete `InputScript`. Every state the search holds was produced by the real `step()`. The test then replays the script through `step()` from a fresh `createSession([level], phys)` (`replayScript`) and asserts `trophyCollected` at `trophyTick`, `levelCompleted` at `winTick` and no `playerDied`. A validator bug can therefore only reject a good level, never accept an impossible one.
+
+A script starts at the first tick after `startLevel`. The search root is the fresh session stepped `readyMinTicks` times with nothing held (the gate's minimum; those idle ticks also arm the gate, section 6), and every script begins with the run `[0, readyMinTicks]`. The first manoeuvre's first held control opens the gate and acts on the same tick. A state whose phase becomes `dying` is dropped; `exiting` is the win. The core has no clock: budgets are counted in `step()` calls, so verdicts are reproducible.
+
+### 9.2 Manoeuvres, not frames
+
+| State kind | Stored and merged on | Actions |
+|---|---|---|
+| **Ground** (`onGround`) | x bucket (`groundBucketPx`), row, signed `vx` bucket (stopped, part, full) | Hold left / none / right for K = `decisionTicks`; jumps; thrust lift-off when fuel is left; fire |
+| **Ballistic** (airborne, no usable fuel) | never stored, never merged | None: it is the inside of a manoeuvre |
+| **Flight** (airborne, `hasThruster && fuel > 0`) | cell of `flightCellPx`, `vx` sign | Thrust or coast, each with left / none / right, for K ticks |
+
+- A **jump** is one atomic manoeuvre, simulated tick by tick until it lands, dies or wins: hold {full, `tapTicks` tap} x direction {left, none, right} x at most one change of direction at an arc tick from `airSwitchTicks`. That is 42 arcs at most with the defaults. Walking off a ledge resolves the same way.
+- An input that leaves the state's key unchanged is held for up to `maxHoldDecisions` x K ticks, so slow moves inside one bucket are not discarded as duplicates of their own parent.
+- With fuel, each full jump also hands off a flight node at its apex (jump, then thrust, is the fuel-optimal climb). A flight that runs dry ends as a ballistic fall.
+- **Fire** is offered only from a ground state, when the blaster is held and a live enemy is ahead within range; it runs until the bolt is gone, so no stored state has a bolt in flight. The search never fires during a jump or in flight. A level whose only way past an enemy is a shot from the air therefore comes back `blocked-by-enemies` or `no-route`; `docs/LEVELS.md` (rule 9) forbids such levels, also because a thumb cannot hold THRUST and FIRE together.
+- **Merging.** One representative stands for its key. The state with more effective fuel wins: on the ground `fuel`; in flight `fuel - max(0, (vy + thrustMaxRise) / thrustAccel) + (cellBottom - y) / thrustMaxRise` (integer division).
+- Ballistic states are never merged: two arcs crossing in one bucket may differ in which one survives (the prototype returned false "unreachable" verdicts when they were merged).
+
+### 9.3 State key
+
+Hero part: kind, x bucket, row or flight cell, `vx` bucket, `hasTrophy`, which `J` pickups are taken. The search with enemies adds `hasBlaster`, `facing` when armed, the alive mask, and for each live enemy within `enemyKeyRadiusTiles` its position in `enemyBucketPx` buckets and its direction. Far enemies are not in the key, so the search can wait beside an enemy but cannot stall elsewhere. Crystals are never in the key; reachable crystals are the union of `taken` over explored states.
+
+### 9.4 Pipeline
+
+0. **Safe start.** From the root: one tick of fire alone (opens the gate; harmless without a blaster), then `safeStartTicks` idle ticks. A death is `unsafe-start`.
+1. **Quick pass** (skipped when `alwaysMap`). Weighted A* with enemies on, ordered by `f = ticks so far + heuristicWeight * h`.
+   - `h` is in **ticks**: the flood-fill distance in tiles from the hero's cell to the trophy cell plus the trophy-to-door distance (to the door cell once the trophy is held), multiplied by `TILE / phys.runMax` (10.7 ticks per tile with the shipped run speed) and rounded down.
+   - The flood fill (4 neighbours, inside the grid) passes through **`Tile.Empty` cells only**: `Solid`, `Fire`, `Coolant` and `Spikes` all block it. A cell it cannot reach gets a large constant (100 000 ticks); it is penalised, never pruned.
+   - Its budget in `step()` calls depends on whether the level holds a thruster pack. **No pack:** `quickStepCalls`; the map of such a level is small, so it is a cheap fallback. **With packs:** all of `maxStepCalls`; the map of such a level costs more than the quick pass ever does (9.6), so there is no fallback and stages 2 and 3 are not run.
+   - A win ends the pipeline: `proven`.
+   - The frontier runs empty: the search has tried everything it can do and there is no win. Verdict **`no-route`**; the pipeline stops. (`alwaysMap` tells whether enemies are the reason.)
+   - The budget is spent: with packs, `budget-exceeded`; without, go on to the map.
+2. **Map.** Enemies removed (`alive = false` at the root), exhaustive, most effective fuel first, every edge recorded; a backward shortest-path pass from the win gives the cost-to-go of every stored state. No state with the trophy: `trophy-unreachable`. Trophy but no win: `door-unreachable`. Both set `stuckAt` to the closest approach. The total budget spent before the map is complete: `budget-exceeded`.
+3. **Guided search.** Enemies on, `h` = the map's cost-to-go (unknown keys penalised, never pruned). A win: `proven`. Exhausted: `blocked-by-enemies`. Out of budget: `budget-exceeded`.
+
+`stuckAt` is always the closest approach of the last stage that ran.
+
+`alwaysMap` means map first, for any level: stages 0, 2, 3. Whenever the map finishes inside `maxStepCalls` it names the reason of a failure and fills `unreachableCrystals`. Without packs it costs about 1 to 2 M step calls; with packs 12 M to 85 M (9.6), so it is for a person asking a question, not for every test run.
+
+Why hazards block the flood fill: with hazard tiles passable, the shortest "path" to a goal on the far side of a deck runs through the coolant set into the floor, and the search queues up under it. Measured on a 64 x 24 level of three decks with coolant gaps in the deck floors (2 packs, 6 enemies): hazards passable, no win in 300 000 nodes and 72 M step calls; hazards blocking, proven in 1 996 nodes and 0.05 M step calls (comfort: 1 418 nodes). Why ticks: `ticks so far` is in ticks, so a distance in tiles would weigh a tenth of what it should and the search would be close to uniform-cost.
+
+Start-to-trophy and trophy-to-door are one search because `hasTrophy` is in the key: the second leg starts from every way of holding the trophy. Hazards and enemies need no model: `step()` kills and the branch is dropped. Fuel is exact per state. The rule that packs reappear on an empty tank is simply part of `step()`.
+
+### 9.5 Options (`validate/options.ts`)
+
+| Option | `DEFAULT_OPTIONS` | `COMFORT_OPTIONS` | `REQUIRES_OPTIONS` |
+|---|---|---|---|
+| `decisionTicks` (K) | 6 | 8 | 6 |
+| `maxHoldDecisions` | 3 | 3 | 3 |
+| `groundBucketPx` / `flightCellPx` | 4 / 8 | 4 / 8 | 4 / 8 |
+| `tapTicks` | 4 | 4 | 4 |
+| `airSwitchTicks` | 8, 16, 24 | 12, 24 | 8, 16, 24 |
+| `enemyKeyRadiusTiles` / `enemyBucketPx` | 4 / 8 | 4 / 8 | 4 / 8 |
+| `heuristicWeight` | 2 | 2 | 2 |
+| `quickStepCalls` | 2 000 000 | 2 000 000 | 2 000 000 |
+| `maxStepCalls` | 40 000 000 | 40 000 000 | 6 000 000 |
+| `safeStartTicks` | 120 | 120 | 120 |
+| `alwaysMap` | false | false | false (the test sets it, 9.6) |
+
+These are starting values, measured on a reference implementation (9.6), and may be tuned by the validator's implementer; they are not feel numbers. One thing worth trying there: the set of taken packs is part of every key, which multiplies the flight cells of the map by up to 16.
+
+### 9.6 Required tests (`tests/levels.test.ts`)
+
+| Suite | Levels | Passes when |
+|---|---|---|
+| (a) Normal proof | every file in `levels/`, including `test` and `debug` | `parseLevel` succeeds; verdict `proven` with `compileTuning(TUNING)` and `DEFAULT_OPTIONS`; `replayScript` wins with the same `trophyTick` and `winTick` |
+| (b) Comfort proof | level-01 to level-10 | `proven` with `compileTuning(handicap(TUNING))` and `COMFORT_OPTIONS`, and its replay wins. `handicap`: coyote 0, buffer 0, run speed and jump velocity x 0.95, fuel x 0.9 rounded down |
+| (c) Requires | each `@requires X` line | `validateLevel(withoutItem(level, X), phys, options)` is anything but `proven`. `options` is `REQUIRES_OPTIONS`, with `alwaysMap: true` when the level without the item holds no thruster pack (always so for a removed thruster): the map is then small, decides at once and names the reason |
+
+What the comfort proof shows, and what it does not: a route exists that needs no coyote time and no jump buffer, with run speed and jump 5 % weaker and a tenth less fuel. It certifies **no timing margin**. The search shifts its take-off point in 4 px steps, so it finds jumps whose press window is 2 frames (measured: the level 4-tile gap, comfort window 2, is proven in 0.02 M step calls). Timing margins are enforced by people, with the window classes of `docs/LEVELS.md`.
+
+`budget-exceeded` in suite (c) counts as a pass ("as far as the search can decide", ruling R10), but it decides nothing: the file prints one line per `@requires` run with its verdict, and a final line listing the runs that ended `budget-exceeded`, so a reviewer sees which promises were not checked.
+
+The same file also:
+- asserts that level-01 to level-10 carry `@name`, `@teaches` and `@hardest`, with texts the pixel font can show;
+- asserts the picture frame of every file: the top row and both side columns are `#` (section 8);
+- prints one line per level with verdict, the stage that decided, and step calls; a level without packs that fails the normal proof with `no-route` is run once more with `alwaysMap` so the message names the reason;
+- with the environment variable `LEVELS_CRYSTALS=1` (`LEVELS_CRYSTALS=1 npx vitest run tests/levels.test.ts`), runs every level once more with `alwaysMap` and a `maxStepCalls` of 400 M and prints `unreachableCrystals`. This is the reviewer's command for the checklist in `docs/LEVELS.md`; it is not part of `npm run check`, because the map of a thruster level is expensive.
+
+**Budget.** Ruling R10: the whole file runs in about 60 s or less on the 4-core build machine. Because CI machines are slower and the core has no clock, the file asserts **step calls, not seconds**: the sum of `stats.stepCalls` over all proofs must stay below `LEVELS_STEP_BUDGET` (exported by `validate/options.ts`; 150 000 000 to start with, which is 60 s at the reference rate of 0.4 microseconds per call). Wall time is printed, never asserted. Every proof test passes an explicit timeout of 120 s (`it(name, fn, 120_000)`): Vitest's default of 5 s would fail any proof that takes a slow path.
+
+Measured costs, in step calls, on a reference implementation of this section (a throwaway model of sections 3 to 6 and of 9.1 to 9.5; two independent models of the rules agreed tick for tick over a million random ticks). They are the evidence behind the option values, not a promise about the real validator:
+
+| Level | Quick pass, normal / comfort | Map first, normal / comfort | Suite (c) |
+|---|---|---|---|
+| `levels/test.txt` (64 x 16, no pack, no enemy) | 0.05 M / 0.04 M | 2.0 M / 1.4 M | |
+| Two Cinderpegs in tunnels 1 tile high, 56 x 6, no pack (the shape of level 5) | 0.02 M / 0.01 M | | Without blaster, map first: `blocked-by-enemies` in 1.0 M |
+| `levels/debug.txt` (64 x 14, 2 packs, 3 enemies) | 0.49 M / 0.01 M | 12.5 M / 8.8 M | Without thruster, map first: `trophy-unreachable` in 0.40 M. Without blaster: `no-route` after 2.78 M |
+| Three decks, 64 x 24, 2 packs, 6 enemies, coolant in the deck floors | 0.05 M / 0.03 M | 27.8 M / 20.3 M | Without thruster: `trophy-unreachable` in 0.82 M |
+| Open hall, 64 x 24, 4 packs, no enemy | 2.9 M / 3.7 M | 85.6 M / 60.1 M | |
+| Open hall, 64 x 24, 4 packs, 4 enemies | 13.5 M / 27.6 M | 85.6 M / 60.6 M | Without thruster: `trophy-unreachable` in 0.77 M |
+
+So: an ordinary level is proven by the quick pass in well under 1 M step calls; the map of a level with thruster packs costs 12 M to 85 M, which is why it is not a fallback; and one open hall at the size cap can use a quarter of the whole file's budget by itself. The earlier figure of 1.7 to 4.6 M for the full path came from 60 x 14 levels under different physics and does not hold.
+
+**Phase 4 gate, before the first campaign level is built.** The real validator must show, in `src/core/validate/*.test.ts`:
+1. the three-deck fixture above proven, normal and comfort, in under 1 M step calls each (and not proven when its flood fill is allowed through hazards: the fixture exists to catch that mistake);
+2. the open-hall fixture (64 x 24, 4 packs, 4 enemies) proven, normal and comfort, inside `maxStepCalls`;
+3. `debug.txt` without its thruster packs decided (`trophy-unreachable`) and without its blaster decided (`no-route`), each inside `REQUIRES_OPTIONS`;
+4. the measured rate of the real `step()` on the build machine, from which `LEVELS_STEP_BUDGET` is set to 60 s worth of calls.
+
+If 2 fails, or if the ten planned levels cannot fit the step budget, the caps are lowered as ruling R10 allows, in this order: `LEVEL_MAX_WIDTH` / `LEVEL_MAX_HEIGHT` in `types.ts` for levels that hold a thruster pack (48 x 16 is the first step), then `LEVEL_MAX_THRUSTERS`. The new caps are recorded in `docs/LEVELS.md` and the level plan there is changed to fit. Until the gate has run, the caps of ruling R9 stand and `docs/LEVELS.md` (rule 12) keeps thruster airspace small by design.
+
+## 10. Session and save
+
+Storage is the shell's (`src/shell/storage.ts`, never throws, memory fallback). Two keys: `${GAME_ID}:progress` holds `SaveData`, `${GAME_ID}:settings` holds `SettingsData` (`sound`, `vibration`; both default true). The reducers in `src/core/save.ts` are pure.
+
+| Moment | Shell does |
+|---|---|
+| Boot | `save = parseSave(loadJson(progressKey), CAMPAIGN.length)` |
+| After every tick's events | `next = applyEvents(save, events)`; when `next !== save`, write it |
+| Title, `save.resume` set | `CONTINUE - LEVEL n`: `createSession(CAMPAIGN, phys, { ...save.resume, highestUnlocked: save.unlocked })` |
+| Title, no resume, `save.unlocked > 0` | Continue: `createSession(CAMPAIGN, phys, { levelIndex: save.unlocked, highestUnlocked: save.unlocked })` (3 lives, score 0) |
+| `NEW GAME` | `createSession(CAMPAIGN, phys, { highestUnlocked: save.unlocked })`; unlocked levels and best score are kept |
+| Quit to title from pause | Nothing is written; `resume` already holds the level's starting score and the current lives. Quitting costs no life: it throws away the level visit (see below) |
+| `?level=test`, `?level=debug`, the e2e hook | `createSession([level], phys)`; never read or write the save |
+
+What `applyEvents` does per event is listed on `ApplySaveEventsFn` in `types.ts`. Consequences:
+- Quitting (or closing the page) and continuing restarts the level as a fresh visit: the score it began with, the lives as they are now (deaths are not undone), nothing collected, no cog. This is deliberately different from `Restart level`, which keeps the score, the crystals and the cog and costs a life. A player can therefore dodge a death that has not happened yet by quitting in mid-air, and pays for it with everything gathered in that level. Charging a life for leaving would also punish a phone call or a closed tab, so version 1 accepts this (`docs/SPEC.md` says so in plain words).
+- A cleared level moves `resume` to the next level at once, so closing the page during the clear banner loses nothing. A game over or a win clears `resume`.
+- `bestScore` updates on game over and on the win, and already at the last death in case the page closes during the animation. That is why an end screen cannot find out from the save whether the score is a new best: see 11.3.
+
+## 11. Shell interface
+
+Boot, scaling and rendering follow the verified recipes in `docs/PHASER4-NOTES.md`: `Scale.NONE` with the canvas in game pixels and a CSS `transform: scale(zoom / devicePixelRatio)`, camera zoom always 1, integer draw positions, CPU `TilemapLayer`, `Image` objects, `BitmapText` through `RetroFont`, the HUD as its own scene, one reusable particle emitter, a private `AudioContext` with Phaser audio off, `fps: { panicMax: 0 }`, `input: { windowEvents: false }`.
+
+### 11.1 Fixed-step loop (`PlayScene.update`)
+
+```ts
+override update(_time: number, deltaMs: number): void {
+  if (this.mode !== 'running') return;                 // intro, paused, rotated, ended: the core is not stepped
+  this.keyboard.poll(this.controls);
+  const n = this.replay ? this.replay.ticksThisFrame() : this.stepper.advance(deltaMs);
+  for (let i = 0; i < n; i++) {
+    this.events.length = 0;
+    const input = this.replay ? this.replay.next() : this.controls.consume();   // exactly one sample per tick
+    step(this.game_, input, this.events);
+    this.cam = stepCamera(this.cam, cameraTarget(this.game_), this.viewSize, this.levelSize, TUNING.camera);
+    this.view.capture(this.game_, this.cam, this.events); // prevDraw = curDraw; curDraw = whole-pixel positions of sprites AND camera; snaps on teleports
+    this.router.drain(this.events, this.game_);        // sound, effects, HUD, save, scene changes
+  }
+  this.view.render(this.interpolation.alpha(this.stepper)); // alpha is 1 when interpolation is off: draws curDraw
+}
+```
+
+- `FixedStepper(1000 / TICK_HZ, TUNING.pacing.maxStepsPerFrame)`: `advance(deltaMs)` returns 0 to 5 whole ticks; a longer backlog is dropped. It is fed Phaser's smoothed `delta`. `reset()` on every pause, resume, scene start and level start.
+- `Controls.consume()` returns held states and latches presses: a tap that starts and ends between two ticks is still reported for one tick. It sends at most one of left and right (the most recently pressed).
+- Pausing means not calling `step`. On closing the pause overlay the shell calls `holdReady(game)`, `stepper.reset()` and `controls.releaseAll()`.
+- The HUD scene updates before the Play scene in Phaser's order, so `EventRouter` pushes HUD changes instead of the HUD polling.
+- **Hit stop on a kill** is the shell's: after a tick whose events hold `enemyKilled`, `update` steps nothing for `TUNING.effects.killHitStopFrames` rendered-at-60 frames (it still draws). Never during a replay, so replays stay tick-exact. The freeze at a death is different: it is part of the core's dying phase.
+- **Interpolation** (last shell feature to build): mode `'auto'` switches it on only when the measured display interval is below `TUNING.pacing.interpolateBelowMs` (90 and 120 Hz screens); at 60 Hz it is off and `render` draws the current state. The method is the verified one in `docs/PHASER4-NOTES.md`, section 12, and nothing else: after every tick the view stores the **whole-pixel draw position** of each sprite and of the camera (the values it would draw with interpolation off); `render` blends the previous and the current whole-pixel positions with `lerpPx(prev, cur, alpha)`, sprites and camera alike. Blending sub-pixels and flooring afterwards is wrong: it made the hero wobble across three screen pixels at 144 Hz. A draw position snaps to the current one (`prev = cur`) on `levelStarted` and `respawned`; when it moved more than 16 px in one tick (inside `lerpPx`); and for **anything that was not drawn on the previous tick**: a bolt that became `active` this tick (its x and y are meaningless while inactive), an enemy that came back to life, a pickup that reappeared.
+
+### 11.2 State to sprites, by id
+
+Arrays in `RunState` are never reordered during a level, so `kind:index` is a stable id. `WorldView` keeps `Map<string, Image>`; all sprites are rebuilt on `levelStarted`.
+
+| Id | Source | Rule |
+|---|---|---|
+| tile layer | `level.tiles` | Built once per level; hazards animate by swapping tile frames |
+| `hero` | `run.player`, `run.phase`, `run.phaseTicks` | Sprite 16 x 16 at `(x >> 8) - (16 - heroW_px) / 2`, `(y >> 8) - (16 - heroH_px)`; flip when `facing < 0`; frame from `frames.ts` (idle, run, jump, fall, thrust, die) |
+| `hero.blaster`, `hero.pack`, `hero.flame`, `hero.fuelbar` | `hasBlaster`, `hasThruster`, `thrusting`, `fuel` | Overlays that follow the hero |
+| `enemy:<i>` | `run.enemies[i]` | At `x >> 8`, `y >> 8`; visible while `alive`; flip by `dir` |
+| `pickup:<i>` | `level.pickups[i]`, `run.taken[i]` | At its cell; visible while not taken; bobs 1 px in the view |
+| `trophy` | `level.trophy`, `run.hasTrophy` | Visible until collected |
+| `door` | `level.door`, `run.hasTrophy` | Locked frame, then the opening animation started by `doorOpened`, then open |
+| `bolt` | `run.bolt` | Visible while `active` |
+| HUD | `session.score`, `lives`, `levelIndex`, `hasTrophy`, `hasBlaster`, `hasThruster`, `fuel / phys.fuelTicks` | Pushed by the router after each tick |
+
+Dying stages for the hero frame come from `run.phaseTicks` and `TUNING.timing`: hit stop for the first `hitStopFrames`, the break-apart animation for `deathAnimFrames`, then the fade out; the fade in runs during the first `fadeFrames` of the ready phase that follows `respawned`.
+
+### 11.3 Event consumption
+
+`EventRouter.drain(events, game)` handles each event once, in order: one sound per event type (table in section 7), particles and flashes through `Effects`, HUD pushes, `applyEvents` for the save, and scene changes on `gameOver` and `gameWon` (guarded by a flag so a scene is started once). **New best.** When a session is created the router remembers `previousBest = save.bestScore`. `EndScene` is started with `{ score, previousBest }` and shows `NEW BEST!` when `score > previousBest`, otherwise `BEST` with `max(previousBest, score)`. It must not compare with `save.bestScore`: `applyEvents` has already raised it (at the last death, 52 ticks before `gameOver`; at `gameWon` before the win screen is built).
+
+Things that last are read from state every frame instead of from events: the thrust loop plays while `run.phase === 'playing' && player.thrusting`; the low-fuel beep while thrusting at 20 % fuel or less; FIRE and THRUST buttons are shown while `hasBlaster` / `hasThruster`, FIRE dimmed while `bolt.active`, THRUST dimmed while `fuel === 0`.
+
+### 11.4 Camera
+
+`stepCamera(prev, target, view, level, TUNING.camera)` is pure, in art pixels, stepped once per simulation tick; `snapCamera` gives the resting position and is used on `levelStarted` and `respawned`. The scroll set on Phaser's camera is the rounded result; `startFollow` is never used.
+
+- Horizontal: the hero sits `camLookAheadPx` behind the view centre on the side opposite to `facing`. The look-ahead slides toward the facing side at `camLookShiftSpeed` px per tick only while `vx !== 0`. Around that anchor is a dead zone of `camDeadzoneHalfW` px each way; beyond it the camera moves by exactly the overshoot (no smoothing).
+- Vertical: while `onGround` the feet line eases toward `camAnchorY` of the view height by `camVerticalEase` of the remaining distance per tick. While airborne the camera holds unless the hero leaves the band from `camAirBandTop` to `camAirBandBottom`, then it follows rigidly.
+- Bounds: clamped to the level; a level smaller than the view on an axis is centred on that axis.
+
+### 11.5 View size
+
+`chooseView(cssW, cssH, dpr, safe, TUNING.view)`: `dw = floor((cssW - safe.left - safe.right) * dpr)`, `dh = floor(cssH * dpr)`; `zoom = max(1, min(floor(dw / (viewMinCols * 16)), floor(dh / (viewMinRows * 16))))`; `viewW = min(floor(dw / zoom), viewMaxCols * 16)`, `viewH = min(floor(dh / zoom), viewMaxRows * 16)`. The canvas is `viewW` by `viewH` game pixels, shown at `zoom / dpr`, centred inside the horizontal safe area; the page background is the palette's darkest colour. Recomputed on resize, rotation and pixel-ratio change.
+
+**Size on the glass.** One art pixel is `zoom / dpr` CSS px. With the whole screen height that is 2 CSS px or more on phones (568 x 320 at ratio 2: zoom 4, 2.0; 740 x 360 at 2.75: zoom 6, 2.18). In a browser tab the toolbars take height and the whole-number zoom drops a step: 740 x 304 gives zoom 5 (1.82), 740 x 280 gives zoom 4 (1.45), 568 x 232 gives zoom 2 (1.0, and the view grows to its 30 x 14 cap). Ruling R11 fixes the zoom rule, so the shell does three things about it:
+- **Fullscreen.** The first tap on the title (the same `pointerup` that unlocks audio) calls `game.scale.startFullscreen()` when touch mode is on, `game.scale.fullscreen.available` is true and the page is not inside a frame (`window.self === window.top`). A refusal is ignored. iPhones have no fullscreen for web pages: there the full height comes from adding the game to the home screen.
+- **Menus are sized in CSS px.** `menuLayout(viewW, viewH, zoom / dpr)` (pure, `src/shell/menuLayout.ts`) makes every tappable menu row `max(22, ceil(44 * dpr / zoom))` art px tall, so a row is at least 44 CSS px; the panel grows with its rows and is centred. If the rows do not fit the view height they share it evenly, never below 22 px: that happens only in the most extreme window computed (568 x 232 at ratio 2, zoom 2, where the pause menu's rows come out about 43 CSS px). Small switches drawn as 12 px sprites (sound on the title, sound and buzz in the pause menu) get an invisible hit area of at least 44 CSS px, centred on the sprite.
+- **Text stays 1x.** A glyph is 5 x 7 art px, so 10 x 14 CSS px at 2.0 and 7.3 x 10.2 CSS px at 1.45. The only text during play is the top bar; names and hints are on the intro card, which waits for the player. Whether the tab-with-toolbars size is acceptable is a question for the owner's Phase 1 playtest (`docs/PLAN.md`).
+
+The device table of the `chooseView` test holds the rows of `docs/PHASER4-NOTES.md`, section 6, including the three short windows above.
+
+### 11.6 Test hook
+
+Installed only when the URL has `?e2e=1` or in a dev build:
+
+```ts
+interface E2EHook {
+  state(): { status: SessionStatus; levelId: string; levelIndex: number; phase: RunPhase; tick: number;
+             score: number; lives: number; player: { x: number; y: number } };
+  /** Starts a one-level session that is never saved. id: 'level-01' ... 'level-10', 'test', 'debug'. */
+  startLevel(id: string): void;
+  /** Starts the level fresh and feeds the script through the same step(), ticksPerFrame ticks per rendered frame. */
+  replay(id: string, script: InputScript, ticksPerFrame?: number): Promise<ReplayResult>;
+}
+declare global { interface Window { __E2E__?: E2EHook } }
+```
+
+During a replay the scene takes its input from the script (`inputAtTick`) instead of `Controls`, bypasses the stepper (a fixed number of ticks per frame, so timing cannot change the result) and still draws, plays and routes events normally. `e2e/replay.spec.ts` computes `validateLevel` for level 1 in Node, passes the script to `window.__E2E__.replay`, and asserts `won` with the same `trophyTick` and `winTick`: proof that browser and Node simulate identically. Other URL switches: `?level=test`, `?level=debug`, `?touch=1` (force the touch pad and let the mouse drive it).
+
+### 11.7 Offline app (Phase 5)
+
+Ruling R18: a hand-written manifest and service worker, no library. Nothing in this section has been run; it is the design to build and verify in Phase 5.
+
+**Build step.** Two things cannot be written by hand in advance: the bundle's file name carries a hash (`assets/index-<hash>.js`), and the game's name may be spelled only in `src/meta.ts`. So a small plugin in `vite.config.ts` (a `generateBundle` hook, about 30 lines, no dependency) emits two files from templates in `src/pwa/`:
+- `manifest.webmanifest` from `manifest.template.json`: `name` = `GAME_TITLE`, `short_name` = its first word, `id`, `start_url` and `scope` = `./`, `display` = `fullscreen` with `display_override: ["fullscreen", "standalone"]`, `orientation` = `landscape`, `background_color` and `theme_color` = the palette's `void` (`#0b0d1a`), and the four icons of `docs/ART-AND-SOUND.md` section 11 with relative URLs.
+- `sw.js` from `sw.template.js`, with two placeholders filled in: `PRECACHE` = `./` plus the relative path of every file the build emitted, and `VERSION` = a hash of that list and of the files' contents.
+`index.html` gains `<link rel="manifest" href="./manifest.webmanifest">` and the apple-touch-icon link, both relative.
+
+**The worker** (`sw.template.js`, plain JavaScript, no imports):
+- `install`: open the cache `${GAME_ID}-${VERSION}`, `cache.addAll(PRECACHE)`, then `skipWaiting()`. On a first visit the page's files are fetched before any worker controls the page; `addAll` fetches them again (normally from the HTTP cache), which is what makes the second visit work offline without a reload in between.
+- `activate`: delete every cache whose name starts with `${GAME_ID}-` and is not the current one, then `clients.claim()`. Only its own caches: on GitHub Pages every project of one owner shares one origin, so caches of other sites live beside the game's.
+- `fetch`: only `GET` requests inside the worker's scope. Cache first, with `ignoreSearch: true` so that `?level=test` and `?e2e=1` also work offline; a navigation falls back to the cached `./`; anything else goes to the network untouched.
+- A new build has a new `VERSION`, so it installs beside the old cache and replaces it on activation; the player gets it on the next start. Version 1 shows no update prompt.
+
+**Registration** (`src/shell/pwa.ts`, called once from `main.ts` after the game is created): only in a production build (`import.meta.env.PROD`); never inside a frame (`window.self !== window.top`); the whole function is wrapped in `try / catch`, because in a sandboxed frame merely reading `navigator.serviceWorker` throws, as `localStorage` does; `navigator.serviceWorker.register('./sw.js')` with a relative URL, so the scope is the game's own folder and the worker never sees the root site's requests. A failed registration is ignored: the game then simply needs the network.
+
+**Shared origin.** Storage keys already start with `GAME_ID` (section 10); cache names do too; the worker's scope is the game folder. Nothing else of the game is origin-wide.
+
+**Tests** (Phase 5 exit check): `e2e/offline.spec.ts` loads the game, waits for `navigator.serviceWorker.ready` and for the cache to hold every `PRECACHE` entry, switches the browser context offline, reloads and expects the title with no failed request. `e2e/subpath.spec.ts` serves `dist/` under `/deep/sub/` and expects the same boot, the worker's scope to be `/deep/sub/`, and no request outside it.
+
+**Known limits on iPhones** (expected from the platform's documentation, not verified on a device; `docs/SPEC.md` tells the owner in plain words): a game added to the home screen has its own storage, separate from the same address opened in Safari, so progress does not carry over between the two; Safari may erase a site's stored data after seven days without a visit (home-screen apps are exempt); Web Audio is silenced by the ring/silent switch; there is no vibration, so the BUZZ switch does nothing there.
+
+## 12. Tests
+
+**Which numbers a test runs on.** Decided once, here:
+
+- **Rule tests run on the reference tuning.** `src/core/testkit.ts` exports `REFERENCE_TUNING`: a frozen copy of the eleven core groups (`hero` to `score`) as they were when the golden numbers of sections 4 and 13 were measured, with the shell-only groups taken from `TUNING` (`compileTuning` ignores them). `REFERENCE_PHYS = compileTuning(REFERENCE_TUNING)`. Every test of a rule (`movement`, `jump`, `thruster`, `enemies`, `bolt`, `contact`, `flow`, `determinism`, the validator's fixtures, the tables in `limits`) uses it. Golden numbers such as "apex 13472 on tick 21" or "52 + 22 ticks" therefore belong to the fixture, and an owner's change to `src/tuning.ts` cannot break them. Where a rule is about a tuning field the test is also written against the field (`phys.coyoteTicks`, not 6).
+- **Four tests read the live `TUNING`**, and each fails with a message the owner can act on: `src/tuning.test.ts` and the last case of `compileTuning.test.ts` (a number is unsafe; it is named), the first part of `src/core/limits.test.ts` (a whole-tile limit the levels are built on has moved; it is named), and `tests/levels.test.ts` (a level can no longer be proven; it is named).
+- `REFERENCE_TUNING` is test data, not a second home for feel numbers: no game code may import `testkit.ts` (`purity.test.ts` checks that). It is refreshed on purpose, together with the snapshots and the tables of section 13 and of `docs/LEVELS.md`, once the owner has accepted a tuning change. Until then `limits.test.ts` prints, without failing, the fields in which `TUNING` differs from it.
+
+| File | Proves |
+|---|---|
+| `src/tuning.test.ts` | The owner's numbers are sane (finite, whole frames, speeds below half a tile, boxes with size). Live `TUNING` |
+| `src/core/compileTuning.test.ts` | The table in section 3; every `Phys` field an integer; each unsafe value rejected by name; the live `TUNING` compiles |
+| `src/core/purity.test.ts` | The source rules of section 1 that lint does not enforce, by scanning the files of `src/core` |
+| `src/core/level.test.ts` | Legend, header parsing, 0-based cells, every message in section 8 and the order of checks |
+| `src/core/movement.test.ts` | Run-up 6 ticks and 5.25 px, stop 4 ticks and 2.25 px, reverse 9 ticks, air stop 8 ticks; flush wall snap; solid level edges |
+| `src/core/jump.test.ts` | The golden numbers of section 4; cut on release; coyote: a press on airborne ticks 1 to `coyoteTicks` jumps, on tick `coyoteTicks + 1` it does not; buffer: a press `jumpBufferTicks - 1` ticks before the touchdown tick jumps on the tick after touchdown, a press `jumpBufferTicks` before it does not; both at 0 still jump; corner nudge up to `cornerNudge`, bonk beyond; ledge catch up to `ledgeCatch` |
+| `src/core/thruster.test.ts` | One fuel per burning tick; idle above the cap; cut on release and on empty; no periodic tap pattern climbs higher than holding; refill; packs reappear at 0 |
+| `src/core/enemies.test.ts` | Cinderpeg turns at wall, ledge, hazard, edge; moth bounces on both axes; touch kills from every side |
+| `src/core/bolt.test.ts` | Both directions; one at a time; fire buffer; wall, range (`boltRange / boltSpeed` ticks: 40), kill; score paid once per visit |
+| `src/core/contact.test.ts` | Pickup outset; hazard graze (inset is safe, one more sub-pixel kills; coolant kills only when the feet are more than `coolantInsetTop + hurtInsetBottom` below the surface); pickup beats hazard on a tie; door inert without the trophy |
+| `src/core/flow.test.ts` | Ready gate: the minimum; a control held since before the gate shut never opens it, however long; lifting and pressing opens it; a press made during the minimum opens it on the first tick after the minimum; the opening tick is simulated; a jump or fire pressed before the gate opened is not replayed. Death timeline (`dyingTicks` + `respawnReadyTicks`: 52 + 22); the respawn table; lives, `restartLevel`, `holdReady`; exit, next level, win bonus |
+| `src/core/determinism.test.ts` | Same script twice gives identical state; a `cloneGame` copy tracks its original over random input (catches a forgotten field in `copyGame`, `readyArmed` included); state stays integral; golden end-state hash |
+| `src/core/limits.test.ts` | Part 1, live `TUNING`, named assertions with the limit and the `docs/LEVELS.md` rule in the message: a 3-tile step can be climbed and a 4-tile step cannot; a level 4-tile gap can be jumped and a 5-tile gap cannot; a walking hero falls into a 1-tile hole; THRUST held climbs at least 6 tiles and crosses a level 8-tile gap under a roof 2 tiles up, both also under the handicap. Part 2, `REFERENCE_PHYS`, snapshots: the jump-window, hazard-bed, small-pad and thruster tables of section 13 (about 10 s). The documents quote these snapshots |
+| `src/core/save.test.ts`, `script.test.ts` | Reducers; corrupt input falls back; script packing round trip |
+| `src/core/validate/*.test.ts` | Small fixtures: each verdict (`no-route` included), `stuckAt`, a tampered script fails replay, a pack-free level that needs the map and the guided search, and the gate fixtures of 9.6: three decks with coolant set into the deck floors (proven quickly; not proven if hazards are passable in the flood fill) and the open hall |
+| `tests/levels.test.ts` | Section 9.6. Live `TUNING` |
+| `src/shell/*.test.ts`, `src/input/*.test.ts` | `chooseView` over the device table (short browser-tab windows included), `menuLayout` (rows at least 44 CSS px on every device row where the menu fits the view, and never below 22 art px), `stepCamera`, `FixedStepper` (30, 60, 90, 120 Hz give the same tick count over time), `lerpPx` and the interpolation gate, `layoutControls` and `hitTest` properties, `Controls` latch |
+
+The browser tests are listed in section 2.
+
+## 13. Derived limits
+
+Measured at the reference tuning (section 12) with throwaway integer models of sections 3 to 6. Two such models were written independently and agreed tick for tick over a million random ticks, and every number below was produced by one and checked on the other where a reviewer disputed it. `src/core/limits.test.ts` reproduces the tables through the real core; where the real core disagrees with a number here, one of the two is wrong and both get fixed. "Handicap" is the comfort proof's tuning: no coyote time, no jump buffer, run and jump x 0.95, fuel x 0.9.
+
+### Movement
+
+| Quantity | Value |
+|---|---|
+| Run speed | 1.5 px/f = 5.6 tiles/s; full speed after 6 f (5.25 px) |
+| Stop from full speed | 4 f, 2.25 px on the ground; 8 f, 5.25 px in the air; full reverse 9 f |
+| Full jump | Apex 52.625 px = 3.29 tiles on tick 21; 41 ticks in the air; 13 ticks within 4 px of the apex. Handicap: apex 47.625 px = 2.98 tiles |
+| Jump by hold, frames: apex in tiles | 1: 0.43, 2: 0.73, 3: 1.01, 4: 1.27, 6: 1.76, 8: 2.18, 10: 2.54, 12: 2.84, 14: 3.07, 18: 3.25, held: 3.29 |
+| Largest step-up | 3 tiles (minimum hold 3 f for 1 tile, 7 f for 2, 12 f for 3); 4 tiles is impossible. Under the handicap the 3-tile step needs a 14 f hold and exists **only through the ledge catch**: the apex is 0.375 px short of 3 tiles, and with `ledgeCatchPx` 0 no hold climbs it |
+| Longest level gap | How far the hero's right side is past the take-off edge at the last moment a landing at the same height is possible, best alignment, ledge catch included: 79.0 px with coyote time, 73.0 px without (71.5 px without the ledge catch too); handicap 67.0 px. So 4 whole tiles (64 px) at a run, never 5 (80 px) |
+| The same from a standing start | 68.2 px with the body hanging over the edge as far as it can, 58.2 px with the toes on the edge (handicap 62.7 px and 52.7 px): 3 tiles without a run-up, 4 only by hanging over the edge |
+| A hole 1 tile wide | Always swallows a walking hero; it is the smallest real pit |
+| Fall | Terminal 4 px/f after 10 f. Walking off at full speed drifts 12.75 px while dropping 1 tile, 18.75 px for 2, 24.75 px for 3, 36.75 px for 5 |
+| Headroom | The 14 px hero walks through a corridor 1 tile high; a ceiling corner clipped by 4 px or less is slid past |
+
+### Jump timing windows
+
+The hero runs at full speed toward the edge with the direction held; jump is pressed on one frame and held. The window is the number of consecutive press frames that end with the hero standing on the far side, for the worst of every sub-pixel alignment of the run-up. Coyote time, the jump buffer and the ledge catch count when the tuning has them. Left number: shipped tuning. Right number: handicap. `any` means that walking off the edge with the direction held also lands; `-` means impossible.
+
+| Landing | 1-tile gap | 2 | 3 | 4 | 5 | 6 |
+|---|---|---|---|---|---|---|
+| 3 up | 29 / 21 | 19 / 10 | 8 / - | - | - | - |
+| 2 up | 35 / 27 | 25 / 16 | 14 / 5 | 1 / - | - | - |
+| 1 up | 39 / 31 | 29 / 20 | 18 / 9 | 7 / - | - | - |
+| level | 43 / 35 | 33 / 24 | 22 / 13 | 11 / 2 | - | - |
+| 1 down | any / any | 37 / 28 | 26 / 17 | 15 / 6 | 5 / - | - |
+| 2 down | any / any | 41 / 32 | 30 / 21 | 19 / 10 | 9 / - | - |
+| 3 down | any / any | any / any | 34 / 25 | 23 / 14 | 13 / 2 | - |
+| 4 down | any / any | any / any | 38 / 29 | 27 / 18 | 17 / 6 | 6 / - |
+
+The table assumes an unlimited landing area. Landing on a small pad with a deadly gap behind it is harder, because the hero must also stop. Policy: run at full speed, hold jump, let go of everything some frames after touching down.
+
+| Gap, then a level pad, then a deadly gap | Let go at once | After 4 f | After 8 f |
+|---|---|---|---|
+| 2-tile gap, pad 1 tile wide | 16 / 17 | 12 / 13 | 8 / 9 |
+| 2-tile gap, pad 2 tiles wide | 27 / 24 | 23 / 24 | 19 / 21 |
+| 3-tile gap, pad 2 tiles wide | 22 / 13 | 22 / 13 | 20 / 13 |
+| 3-tile gap, pad 3 tiles wide | 22 / 13 | 22 / 13 | 22 / 13 |
+
+Design rule: a required jump has a shipped window of at least 10 f; ordinary jumps 18 f or more; a required landing pad is at least 2 tiles wide. A `-` on the right means the comfort proof cannot pass through that jump at all. A small number on the right does **not** stop the comfort proof: it finds 2-frame windows (9.6). The windows are enforced by the level's reviewer with these tables, not by the validator.
+
+### Hazards and forgiveness
+
+| Quantity | Value |
+|---|---|
+| Hurt box | 6 x 11 px inside the 10 x 14 px body |
+| Sideways grace against spikes and fire | 5 px (the body's front edge is 5.25 px inside the cell when a walking hero dies) |
+| Spike bed on level ground, running jump window (shipped / handicap) | 1 tile 27 / 24, 2 tiles 16 / 13, 3 tiles 6 / 2, 4 tiles impossible |
+| Fire bed on level ground | 1 tile 25 / 22, 2 tiles 14 / 11, 3 tiles 4 / impossible: at most 2 tiles in a campaign level |
+| Coolant | Kills when the feet are more than 7 px below the surface (7 px exactly is still safe); a pool behaves as a pit of the same width |
+| Enemy touch box | 10 px square inside the 16 px body |
+| Pickups | Collected from 2 px outside their tile; never through a wall |
+
+### Thruster
+
+A thumb cannot hold JUMP and THRUST together: the touch pad gives each finger one control and both buttons belong to the right thumb. Rows marked "keyboard" need both held at once and are never required by a level.
+
+| Quantity | Shipped (80 f tank) | Handicap (72 f) |
+|---|---|---|
+| Climb, THRUST held from standing | 136.8 px = 8.55 tiles | 7.68 tiles |
+| Climb, one thumb: JUMP held 15 f (handicap 14 f), 6 f to move the thumb, THRUST held | 179.0 px = 11.19 tiles | 10.00 tiles |
+| Climb, JUMP and THRUST held together (keyboard; fuel starts burning on tick 15) | 187.3 px = 11.71 tiles | 10.52 tiles |
+| Best possible climb from standing over every thrust pattern, no jump | 8.55 tiles: holding is optimal | |
+| Level flight, THRUST held from the ledge, no jump, open sky | 11.95 tiles of gap | 10.40 tiles |
+| The same under a roof 2 tiles above the ledge | 10.55 tiles | 9.16 tiles |
+| Level flight, THRUST feathered (on whenever not rising), no jump | 14.95 tiles | 12.90 tiles |
+| Level flight, JUMP and THRUST held together (keyboard), open sky; the hero rises 11.7 tiles on the way | 14.77 tiles | 12.54 tiles |
+| The same under a roof 8 / 6 / 4 tiles above the ledge | 13.17 / 12.42 / 11.67 tiles | 11.21 / 10.49 / 9.87 tiles |
+| Level flight, JUMP held, THRUST feathered (keyboard), open sky | 18.70 tiles | 15.93 tiles |
+| Stopping a terminal-speed fall | 11 f, 19.25 px | |
+| Hover on a full tank, thrust whenever not rising | 148 f = 2.47 s, 54 % duty | 133 f = 2.22 s |
+
+Flight figures are the best over the frame on which the manoeuvre starts. No exhaustive search over thrust patterns was run for level flight; 18.70 is the best simple policy found. What a level may ask for is set by how forgiving the start is. Press windows, in frames, for crossing a level gap with THRUST simply held and no jump (shipped / handicap):
+
+| Gap | Open sky | Roof 4 tiles above the ledge | Roof 2 tiles above |
+|---|---|---|---|
+| 7 tiles | 75 / 63 | 59 / 44 | 51 / 36 |
+| 8 tiles | 71 / 52 | 48 / 33 | 40 / 25 |
+| 9 tiles | 60 / 41 | 37 / 22 | 29 / 14 |
+| 10 tiles | 50 / 10 | 27 / - | 19 / - |
+| 11 tiles | 39 / - | 16 / - | 8 / - |
+| 12 tiles | - | - | - |
+
+Design rule: ask for at most **6 tiles of climb or 8 tiles of level flight per tank**; 9 tiles of flight only where at least 4 tiles are clear above the take-off. (The earlier rule of 12 tiles rested on the keyboard-only figure with open sky above.)
+
+### Blaster, enemies, timing
+
+| Quantity | Value |
+|---|---|
+| Bolt | 4 px/f, 160 px = 10 tiles, 40 f; after a miss the next shot is 0.67 s away |
+| Cinderpeg | 0.5 px/f: 32 f per tile, 1.9 tiles/s |
+| Arc Moth | 0.75 px/f: 21.3 f per tile, 2.8 tiles/s. In a closed lane of 5 cells (4 tiles of travel) it takes 85 or 86 f from one turn to the next, the turn tick included, depending on the cell it starts in; it stops up to 0.5 px short of each end, because 0.75 px does not divide a tile |
+| Death to control | 52 f dying + 22 f ready minimum = 74 f (1.23 s), then a press |
+| Level clear pause | 60 f |
+| View | 17 x 10 tiles at least, 30 x 14 at most |
+| Level caps | 64 x 24 tiles, 16 enemies, 4 thruster packs (subject to the Phase 4 gate, 9.6) |
+
+## 14. Decisions where the designs differed or were silent
+
+| Topic | Decision |
+|---|---|
+| Tuning units | Px and frames with the feel design's names; `boltRangePx` replaces a bolt lifetime, so range does not change with bolt speed |
+| Left and right together | The input layer sends the most recent; the core treats both as neither (no direction memory in the state) |
+| Ready gate | Opens on a press, as ruling R4 says, not on a control still held from before (the feel design said "held"): `readyArmed` needs one tick with nothing held. The opening tick is simulated; a jump or fire pressed earlier is not replayed |
+| Thrust cut | Skipped on a tick a jump starts and while the engine only idles, so a jump right after thrusting is not cut |
+| Thruster pack with a full tank | Always collected |
+| Arc Moth | Bounces off hazard tiles as well as walls and the grid edge |
+| Enemy body | Exactly one tile for both kinds; a structural constant, not a tuning value |
+| Falling out | Death when the box top passes the bottom edge of the grid |
+| Lives on the last clear | The life is returned before the win bonus is counted |
+| Lives timing | Removed when the dying phase ends; `playerDied` already carries `livesAfter` so the save cannot be cheated by quitting |
+| Coordinates | 0-based everywhere a person reads or writes them; file line numbers are 1-based |
+| Level headers | All optional to the parser; `;` comment lines allowed before the grid; the campaign test requires name, teaches, hardest |
+| Validator budgets | Counted and asserted in `step()` calls (the core has no clock, and CI machines are slower than the build machine); wall time is printed, never asserted |
+| Validator stages | Quick pass first; the enemy-free map is a fallback only for levels without thruster packs, and first on request (`alwaysMap`); an exhausted quick pass is the verdict `no-route` |
+| Comfort proof | Proves a route without forgiveness and with weaker numbers. It certifies no timing margin; reviewers enforce the window classes |
+| Test numbers | Rule tests run on `REFERENCE_TUNING` (`src/core/testkit.ts`); only the tuning sanity test, the design-limit assertions and the level proofs read the live `TUNING` |
+| Thruster limits for levels | Based on THRUST held with one thumb, no jump: 6 tiles of climb, 8 of level flight (9 with 4 clear tiles above). The jump-and-thrust chord is keyboard only |
+| Required shots | Always possible from the ground in the enemy's row; the search never fires in the air |
+| Quit and continue | Restarts the level as a fresh visit and costs no life; only `Restart level` keeps what was collected, and it costs a life |
+| Fullscreen and menu sizes | The first title tap asks for fullscreen outside frames; menu rows and switches are sized to at least 44 CSS px from `zoom / dpr` |
+| Rotate message | Shown when the device is upright (`screen.orientation`), not merely when the window is taller than wide, so a tall preview frame cannot lock the game |
+| Offline app | Manifest and worker are hand-written templates completed by a build step, because of the hashed bundle name and the one-place rule for the title |
+| Save | Two keys (progress, settings); `resume` written at level start and its lives updated on every death |
+| Frame pacing | Phaser's smoothed delta, at most 5 ticks per frame, backlog dropped (input spike), not a 250 ms rule |

@@ -4,8 +4,12 @@
  * it from here, so a rename is a one-line change.
  */
 
-/** The name shown to players. */
-export const GAME_TITLE = 'Pip and the Moon Foundry';
+/**
+ * The name shown to players. The first word is the hero's name: the title
+ * screen draws it large and the rest of the title small underneath, in
+ * capitals (the pixel font has no lower case).
+ */
+export const GAME_TITLE = 'Sprue and the Moon Foundry';
 
 /**
  * Short, stable id used as the prefix of every storage key (for example

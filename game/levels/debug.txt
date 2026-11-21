@@ -1,0 +1,28 @@
+@name Debug Room
+@teaches Every tile, item and enemy in one room.
+@hardest 30,10 hop onto the porch while the Cinderpeg is deep in the tunnel, then fire
+@requires blaster
+@requires thruster
+; Development level, opened with ?level=debug. Every letter of the legend, in play order:
+;   crystals (G); spikes (S), furnace fire (F) and a coolant pool (W), all crossed by plain jumps;
+;   the bolt blaster (B); an Arc Moth (M) bobbing under a grate;
+;   a Cinderpeg (C) in a tunnel 1 tile high: it cannot be jumped, only shot from the porch at column 30;
+;   a thruster pack (J) at the foot of a shaft 5 tiles deep; the golden cog (T) on top of the block;
+;   a second pack and an Arc Moth (H) patrolling between two hanging pillars, for flying practice;
+;   the airlock (D) and a last crystal.
+; Why both @requires lines hold: the only way to the cog is up the shaft, the shaft is
+; reached only through the tunnel, and the tunnel is too low to jump over the Cinderpeg.
+################################################################
+#..............................................#.........#.....#
+#..............................................#.........#.....#
+#..............................................#.........#.....#
+#..............................................#.........#.....#
+#..............................................#....H....#.....#
+#......................#.................T.....................#
+#..............................######G.####....................#
+#......................M.......######..####....................#
+#..............G...............######G.####....................#
+#......................G........G.C....####....................#
+#.P.GG.S...F.......B..........#######.J####..J.............D.G.#
+###############WW###############################################
+################################################################

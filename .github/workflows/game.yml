@@ -2,9 +2,20 @@ name: Game
 
 # The game lives in game/. This workflow checks it on every pull request and,
 # on the default branch, publishes the whole site to GitHub Pages:
-#   /        the existing root site (index.html and data/), unchanged
+#   /        the existing root site: every tracked file outside game/, as before
 #   /game/   the built game
-# Pages must be set to "GitHub Actions" as its source in the repository settings.
+#
+# ONE MANUAL STEP, BEFORE THE GAME IS MERGED INTO THE DEFAULT BRANCH:
+#   Settings > Pages > Build and deployment > Source = "GitHub Actions".
+# While the source is still "Deploy from a branch", GitHub publishes the branch
+# as it is: /game/ would then serve the game's unbuilt source (a blank page),
+# and that publisher would compete with the deploy job below.
+# The step is also listed in game/docs/PLAN.md (Phase 0, owner's step 2).
+#
+# Known consequence: the deploy job needs the check job, so a push that only
+# changes the root site still waits for the game's checks, and nothing is
+# published while they fail. That is on purpose (a broken game is never
+# published) and ends when the game moves to its own repository.
 
 on:
   pull_request:
@@ -90,10 +101,15 @@ jobs:
         run: |
           rm -rf _site
           mkdir -p _site/game
-          cp index.html _site/index.html
-          cp -R data _site/data
+          # The root site: every tracked file outside game/ and the dot-folders, which is what
+          # publishing from the branch did. No list to keep up to date: a new root file is published too.
+          git ls-files -z -- . ':(exclude)game' ':(exclude).github' ':(exclude).gitignore' \
+            | xargs -0 cp --parents --target-directory=_site
           cp -R game/dist/. _site/game/
           find _site -type f | sort
+          # Both pages must be there, or the deploy stops here.
+          test -f _site/index.html
+          test -f _site/game/index.html
 
       - name: Configure Pages
         id: pages
