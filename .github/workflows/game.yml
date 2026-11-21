@@ -1,0 +1,113 @@
+name: Game
+
+# The game lives in game/. This workflow checks it on every pull request and,
+# on the default branch, publishes the whole site to GitHub Pages:
+#   /        the existing root site (index.html and data/), unchanged
+#   /game/   the built game
+# Pages must be set to "GitHub Actions" as its source in the repository settings.
+
+on:
+  pull_request:
+  push:
+    # GitHub cannot name "the default branch" in a trigger filter, so the likely
+    # default branches are listed here and the jobs below still compare the
+    # pushed branch with the real default. Other branches start no run at all.
+    branches:
+      - main
+      - master
+      - 'claude/mobile-financial-charts-SsZsI'
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: check
+    if: github.event_name == 'pull_request' || github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: game
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: game/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck, lint, unit tests and build
+        run: npm run check
+
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: End-to-end smoke test
+        run: npm run e2e
+
+  deploy:
+    name: deploy
+    needs: check
+    if: github.event_name == 'push' && github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    # One Pages deployment at a time; let a running one finish.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.pages.outputs.base_url }}/game/
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: game/package-lock.json
+
+      - name: Build the game
+        working-directory: game
+        run: |
+          npm ci
+          npm run build
+
+      - name: Assemble the site
+        run: |
+          rm -rf _site
+          mkdir -p _site/game
+          cp index.html _site/index.html
+          cp -R data _site/data
+          cp -R game/dist/. _site/game/
+          find _site -type f | sort
+
+      - name: Configure Pages
+        id: pages
+        uses: actions/configure-pages@v6
+
+      - name: Upload the site
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v5
+
+      - name: Link to the game
+        env:
+          GAME_URL: ${{ steps.pages.outputs.base_url }}/game/
+        run: echo "Play the game at $GAME_URL" >> "$GITHUB_STEP_SUMMARY"
