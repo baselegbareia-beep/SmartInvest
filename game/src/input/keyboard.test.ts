@@ -12,7 +12,7 @@ import { GAME_KEYS, MUTE_KEYS, PAUSE_KEYS, installKeyboard, onKeyDown, releaseKe
  * Phaser 4.2.1 in a browser (see the task report); this file keeps it from regressing.
  */
 
-type Listener = () => void;
+type Listener = (...args: unknown[]) => void;
 
 class Emitter {
   private readonly listeners = new Map<string, { fn: Listener; once: boolean }[]>();
@@ -35,10 +35,10 @@ class Emitter {
     return this;
   }
 
-  emit(type: string): void {
+  emit(type: string, ...args: unknown[]): void {
     for (const entry of [...(this.listeners.get(type) ?? [])]) {
       if (entry.once) this.off(type, entry.fn);
-      entry.fn();
+      entry.fn(...args);
     }
   }
 
@@ -47,18 +47,30 @@ class Emitter {
   }
 }
 
-/** Behaves like Phaser's Key: 'down' once per physical press, never on auto-repeat. */
+/**
+ * Behaves like Phaser 4.2.1's Key.onDown / onUp: 'down' (key, event) when a keydown finds it up, nothing for a
+ * keydown while it is down (an auto-repeat it knows about); 'up' on every keyup. A Key that was reset while the
+ * key stayed held therefore emits 'down' for the next auto-repeat, with `repeat: true` on the event.
+ */
 class FakeKey extends Emitter {
   isDown = false;
 
   keydown(): void {
-    if (this.isDown) return; // auto-repeat
+    if (this.isDown) return; // an auto-repeat the Key knows about
     this.isDown = true;
-    this.emit('down');
+    this.emit('down', this, { repeat: false });
+  }
+
+  /** The browser's auto-repeat of a held key: a keydown with repeat set. */
+  repeat(): void {
+    if (this.isDown) return;
+    this.isDown = true;
+    this.emit('down', this, { repeat: true });
   }
 
   keyup(): void {
     this.isDown = false;
+    this.emit('up', this, { repeat: false });
   }
 }
 
@@ -88,7 +100,7 @@ class FakeKeyboard {
 
   /** Listeners on every key, to see that nothing is left behind. */
   downListeners(): number {
-    return [...this.keys.values()].reduce((sum, key) => sum + key.count('down'), 0);
+    return [...this.keys.values()].reduce((sum, key) => sum + key.count('down') + key.count('up'), 0);
   }
 }
 
@@ -227,6 +239,46 @@ describe('installKeyboard', () => {
     expect(onPause).toHaveBeenCalledTimes(1);
   });
 
+  it('a key held through a reset (pause, resume, blur) reads as up, auto-repeating, until it is let go and pressed', () => {
+    const r = rig();
+    const onPause = vi.fn();
+    installKeyboard(r.scene, r.controls, { onPause });
+    const right = r.keyboard.key('RIGHT');
+    right.keydown();
+    r.frame();
+    expect(r.controls.consume().right).toBe(true);
+    releaseKeys(r.scene, r.controls); // the pause menu closes: Phaser's keys are reset while RIGHT stays down
+    for (let i = 0; i < 12; i++) {
+      right.repeat(); // about every 33 ms on a real keyboard
+      r.frame();
+      // Neither held nor a latched press: the core's ready gate arms and stays shut (docs/SPEC.md, R4).
+      expect(r.controls.consume()).toEqual(NOTHING);
+    }
+    right.keyup();
+    r.frame();
+    expect(r.controls.consume()).toEqual(NOTHING);
+    right.keydown(); // the fresh press
+    r.frame();
+    expect(r.controls.consume()).toEqual({ ...NOTHING, right: true });
+    // Esc held through the same reset does not pause again on its repeats.
+    r.keyboard.key('ESC').keydown();
+    releaseKeys(r.scene, r.controls);
+    r.keyboard.key('ESC').repeat();
+    expect(onPause).toHaveBeenCalledTimes(1);
+  });
+
+  it('a key already held when the scene starts (its Key is new) does not count until it is pressed again', () => {
+    const r = rig();
+    installKeyboard(r.scene, r.controls);
+    r.keyboard.key('SPACE').repeat(); // the first keydown this scene's Key sees is an auto-repeat
+    r.frame();
+    expect(r.controls.consume()).toEqual(NOTHING);
+    r.keyboard.key('SPACE').keyup();
+    r.keyboard.key('SPACE').keydown();
+    r.frame();
+    expect(r.controls.consume()).toEqual({ ...NOTHING, jump: true });
+  });
+
   it('Esc and P call onPause, M calls onMute, once per press, whatever isActive says', () => {
     const r = rig();
     const onPause = vi.fn();
@@ -355,6 +407,17 @@ describe('installKeyboard', () => {
 });
 
 describe('onKeyDown and releaseKeys', () => {
+  it('onKeyDown never calls the handler for an auto-repeat, also not the first one after a reset', () => {
+    const r = rig();
+    const handler = vi.fn();
+    onKeyDown(r.scene, ['ENTER'], handler);
+    r.keyboard.key('ENTER').repeat();
+    expect(handler).not.toHaveBeenCalled();
+    r.keyboard.key('ENTER').keyup();
+    r.keyboard.key('ENTER').keydown();
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
   it('onKeyDown calls the handler once per press of any named key until it is removed', () => {
     const r = rig();
     const handler = vi.fn();

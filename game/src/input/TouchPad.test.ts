@@ -233,6 +233,22 @@ describe('PointerTracker', () => {
     expect(r.controls.held()).toEqual(NOTHING);
   });
 
+  it('a touch the zones never heard of (touch mode came on with it) is taken where it landed, if on the pad', () => {
+    const r = rig();
+    const right = r.at('right');
+    expect(r.tracker.downIfOnPad(7, right.x, right.y)).toBe(true);
+    expect(r.controls.consume()).toEqual({ ...NOTHING, right: true });
+    // In the middle of the screen it is not the pad's: not followed, so sliding onto a button presses nothing.
+    expect(r.tracker.downIfOnPad(8, 422, 150)).toBe(false);
+    r.tracker.move(8, right.x, right.y - 2);
+    r.tracker.up(7);
+    expect(r.controls.consume()).toEqual(NOTHING);
+    // PAUSE is taken too, as a tap.
+    const pause = r.at('pause');
+    expect(r.tracker.downIfOnPad(9, pause.x, pause.y)).toBe(true);
+    expect(r.pauses).toBe(1);
+  });
+
   it('a new layout is applied to fingers that are already down', () => {
     const r = rig();
     const right = r.at('right');

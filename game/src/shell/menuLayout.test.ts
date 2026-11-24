@@ -9,6 +9,7 @@ import {
   BUTTON_W_PX,
   CORNER_INSET_PX,
   ITEM_GAP_PX,
+  LARGE_TEXT_BELOW,
   MIN_ROW_PX,
   MIN_SPACING_PX,
   MIN_TOUCH_CSS_PX,
@@ -17,6 +18,7 @@ import {
   SWITCH_ICON_PX,
   contains,
   cornerSwitch,
+  drawnScale,
   menuLayout,
   menuRowPx,
   textLinePx,
@@ -102,9 +104,9 @@ function spacingOf(m: MenuLayout): { pad: number; gaps: number[] } {
 }
 
 /** The height a menu needs for 44 CSS px rows with the given padding and gap. */
-function neededPx(items: readonly MenuItem[], cssPerArt: number, pad: number, gap: number): number {
+function neededPx(items: readonly MenuItem[], cssPerArt: number, pad: number, gap: number, textScale: 1 | 2 = 1): number {
   const rows = items.filter((item) => item.kind !== 'text').length;
-  const text = items.reduce((sum, item) => sum + (item.kind === 'text' ? textLinePx(item.scale ?? 1) : 0), 0);
+  const text = items.reduce((sum, item) => sum + (item.kind === 'text' ? textLinePx(drawnScale(item.scale, textScale)) : 0), 0);
   return 2 * pad + text + Math.max(0, items.length - 1) * gap + rows * menuRowPx(cssPerArt);
 }
 
@@ -115,13 +117,16 @@ function problems(m: MenuLayout, items: readonly MenuItem[], viewW: number, view
   // and where the rows fit, the largest spacing that lets them (gaps shrink first, then the padding).
   const { pad, gaps } = spacingOf(m);
   const gap = gaps[0] ?? ITEM_GAP_PX;
+  const ts = m.textScale;
+  if (ts === 2 && !(cssPerArt < LARGE_TEXT_BELOW)) out.push(`2x text at ${cssPerArt} CSS px per art px`);
+  if (ts === 2 && !m.fits) out.push('2x text in a menu whose rows do not reach 44 CSS px');
   if (gaps.some((g) => g !== gap)) out.push(`uneven gaps ${gaps.join(', ')}`);
   if (pad < MIN_SPACING_PX || gap < MIN_SPACING_PX || pad > PANEL_PAD_PX || gap > ITEM_GAP_PX) out.push(`spacing ${pad}/${gap} out of range`);
-  if (!m.fits && neededPx(items, cssPerArt, MIN_SPACING_PX, MIN_SPACING_PX) <= viewH) out.push('shares the rows although tighter spacing would hold 44 CSS px rows');
+  if (!m.fits && neededPx(items, cssPerArt, MIN_SPACING_PX, MIN_SPACING_PX, ts) <= viewH) out.push('shares the rows although tighter spacing would hold 44 CSS px rows');
   if (!m.fits && (pad !== MIN_SPACING_PX || gap !== MIN_SPACING_PX)) out.push(`shares the rows with spacing ${pad}/${gap} left over`);
   if (m.fits && pad < PANEL_PAD_PX && gap !== MIN_SPACING_PX) out.push(`the padding shrank to ${pad} before the gaps (${gap})`);
-  if (m.fits && gap < ITEM_GAP_PX && pad === PANEL_PAD_PX && neededPx(items, cssPerArt, pad, gap + 1) <= viewH) out.push(`gaps of ${gap} px where ${gap + 1} would fit`);
-  if (m.fits && pad < PANEL_PAD_PX && neededPx(items, cssPerArt, pad + 1, gap) <= viewH) out.push(`padding of ${pad} px where ${pad + 1} would fit`);
+  if (m.fits && gap < ITEM_GAP_PX && pad === PANEL_PAD_PX && neededPx(items, cssPerArt, pad, gap + 1, ts) <= viewH) out.push(`gaps of ${gap} px where ${gap + 1} would fit`);
+  if (m.fits && pad < PANEL_PAD_PX && neededPx(items, cssPerArt, pad + 1, gap, ts) <= viewH) out.push(`padding of ${pad} px where ${pad + 1} would fit`);
   const view: Rect = { x: 0, y: 0, w: viewW, h: viewH };
   const touch = MIN_TOUCH_CSS_PX - 1e-9;
 
@@ -144,11 +149,12 @@ function problems(m: MenuLayout, items: readonly MenuItem[], viewW: number, view
     if (!inside(r, m.panel)) out.push(`item ${i} ${JSON.stringify(r)} leaves the panel ${JSON.stringify(m.panel)}`);
     if (r.y < lastBottom) out.push(`item ${i} overlaps the one above`);
     lastBottom = r.y + r.h;
-    if (item?.kind === 'text' && textPx(item.text, item.scale ?? 1) > r.w) out.push(`text ${item.text} is wider than its box`);
+    if (item?.kind === 'text' && textPx(item.text, drawnScale(item.scale, ts)) > r.w) out.push(`text ${item.text} is wider than its box`);
     if (item?.kind === 'button') {
       if (r.h !== m.rowPx) out.push(`button ${item.text} is not one row tall`);
       if (r.w < BUTTON_W_PX) out.push(`button ${item.text} is narrower than ${BUTTON_W_PX}`);
-      if (textPx(item.text) > r.w - 2 * 8) out.push(`label ${item.text} does not fit its button`);
+      if (textPx(item.text, ts) > r.w - 2 * 8) out.push(`label ${item.text} does not fit its button`);
+      if (textLinePx(ts) > r.h) out.push(`label ${item.text} is taller than its button`);
       if (m.fits && (r.w * cssPerArt < touch || r.h * cssPerArt < touch)) out.push(`button ${item.text} is smaller than 44 CSS px`);
     }
     if (item?.kind === 'switches') {
@@ -158,7 +164,7 @@ function problems(m: MenuLayout, items: readonly MenuItem[], viewW: number, view
         if (!inside(cell.hit, r)) out.push(`switch ${label} leaves its row`);
         if (!inside(cell.icon, cell.hit) || !inside(cell.label, cell.hit)) out.push(`switch ${label}: icon or label outside its hit area`);
         if (cell.icon.w !== SWITCH_ICON_PX || cell.icon.h !== SWITCH_ICON_PX) out.push('the icon is not 12 px');
-        if (textPx(label) > cell.label.w) out.push(`switch label ${label} does not fit`);
+        if (textPx(label, ts) > cell.label.w) out.push(`switch label ${label} does not fit`);
         if (cell.label.x < cell.icon.x + cell.icon.w) out.push(`switch label ${label} overlaps its icon`);
         // A square of at least 44 CSS px (one row) centred on the icon lies inside the hit area.
         const side = m.rowPx;
@@ -300,6 +306,34 @@ describe('menuLayout on every window of the device table', () => {
     expect(m.rowPx).toBe(44);
     expect(m.panel.h).toBeLessThanOrEqual(v.viewH);
   });
+
+  it('draws the labels at 2x where an art pixel is under 1.5 CSS px and the menu still fits: 10 x 14 CSS px letters, not 5 x 7', () => {
+    // An iPhone SE's tab with toolbars (568 x 232 at 2: 1.0) and a Pixel 7's (740 x 280 at 2.75: 1.45).
+    for (const [w, h, dpr] of [[568, 232, 2], [740, 280, 2.75]] as const) {
+      const v = chooseView(w, h, dpr, { left: 0, right: 0, top: 0, bottom: 0 }, TUNING.view);
+      const c = cssPerArtPx(v, dpr);
+      expect(c).toBeLessThan(LARGE_TEXT_BELOW);
+      for (const name of ['pause', 'title', 'gameOver']) {
+        const items = SCREENS[name] ?? [];
+        const m = menuLayout(v.viewW, v.viewH, c, items);
+        expect(m.textScale, `${name} at ${w} x ${h}`).toBe(2);
+        expect(m.fits).toBe(true);
+        expect(problems(m, items, v.viewW, v.viewH, c)).toEqual([]);
+      }
+    }
+  });
+
+  it('keeps 1x text where the pixels are large enough, and where 2x would not fit', () => {
+    const pause = SCREENS.pause ?? [];
+    expect(menuLayout(400, 300, LARGE_TEXT_BELOW, pause).textScale).toBe(1);
+    expect(menuLayout(400, 300, 2, pause).textScale).toBe(1);
+    // Small pixels, but a view too narrow for RESTART LEVEL -1 LIFE at 2x (250 px and the plate's corners).
+    expect(menuLayout(240, 300, 1, pause).textScale).toBe(1);
+    // ...or too short for the taller lines and full rows.
+    const short = neededPx(pause, 1, MIN_SPACING_PX, MIN_SPACING_PX, 2) - 1;
+    expect(menuLayout(400, short, 1, pause).textScale).toBe(1);
+    expect(menuLayout(400, short + 1, 1, pause).textScale).toBe(2);
+  });
 });
 
 describe('menuLayout: properties over a sweep of windows', () => {
@@ -368,6 +402,22 @@ describe('cornerSwitch: the title screen sound switch', () => {
       expect(s.icon.y, where).toBeGreaterThanOrEqual(CORNER_INSET_PX);
       expect(v.viewW - s.icon.x - s.icon.w, where).toBeGreaterThanOrEqual(CORNER_INSET_PX);
     }
+  });
+});
+
+describe('cornerSwitch off a rounded corner', () => {
+  it('keeps its icon rightClearPx from the view\'s edge; the hit area still reaches the corner and is 44 CSS px wide at least', () => {
+    for (const c of [1, 1.45, 2, 7 / 3, 6 / 2.75]) {
+      for (const clear of [0, 4, 8, 16]) {
+        const s = cornerSwitch(400, c, clear);
+        expect(400 - s.icon.x - s.icon.w, `${c} ${clear}`).toBeGreaterThanOrEqual(Math.max(clear, CORNER_INSET_PX));
+        expect(s.hit.x + s.hit.w).toBe(400);
+        expect(s.hit.y).toBe(0);
+        expect(s.hit.w * c).toBeGreaterThanOrEqual(MIN_TOUCH_CSS_PX - 1e-9);
+        expect(s.icon.x).toBeGreaterThanOrEqual(s.hit.x);
+      }
+    }
+    expect(cornerSwitch(400, 2, 0)).toEqual(cornerSwitch(400, 2));
   });
 });
 

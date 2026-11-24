@@ -6,8 +6,8 @@ import { SUB_SHIFT, TILE_PX } from '../core/types';
 import type { CameraTuning } from '../core/types';
 import { TUNING } from '../tuning';
 
-import { cameraTarget, levelSize, snapCamera, stepCamera } from './camera';
-import type { CameraState, CameraTarget, Size } from './camera';
+import { NO_PAD, cameraTarget, levelSize, padReach, snapCamera, stepCamera } from './camera';
+import type { CameraState, CameraTarget, PadReach, Size } from './camera';
 
 /**
  * The rules of docs/ARCHITECTURE.md 11.4 on a frozen copy of the camera numbers the game shipped with,
@@ -393,6 +393,84 @@ describe('cameraTarget and the camera on the real core', () => {
       expect(cam.scrollY).toBe(Math.floor((level.h - VIEW.h) / 2));
     }
     expect([...screenX]).toEqual([VIEW.w / 2 - CAM.camLookAheadPx + CAM.camDeadzoneHalfW]);
+  });
+});
+
+describe('the touch pad: the hero is never held under a drawn button by a side wall', () => {
+  // How far LEFT and RIGHT, and JUMP and FIRE, reach into the view: art px, as padReach gives them.
+  const PAD: PadReach = { left: 80, right: 85 };
+  /** Where the hero's sprite (one tile, centred on target.x) is drawn: its left and right edges on screen. */
+  const sprite = (cam: CameraState, t: CameraTarget): { left: number; right: number } => ({
+    left: t.x - TILE_PX / 2 - cam.scrollX,
+    right: t.x + TILE_PX / 2 - cam.scrollX,
+  });
+
+  it('at the left wall the view passes the wall by just enough to draw the hero right of RIGHT', () => {
+    for (const x of [24, 40, 56, 72, 88]) {
+      const t = target(x, 320);
+      const cam = snapCamera(t, VIEW, BIG, CAM, PAD);
+      expect(sprite(cam, t).left, `hero at ${x}`).toBeGreaterThanOrEqual(PAD.left);
+      // ...and no further than needed: either the hero is exactly clear, or the camera is where it would be anyway.
+      const free = snapCamera(t, VIEW, BIG, CAM);
+      expect(cam.scrollX === free.scrollX || sprite(cam, t).left === PAD.left, `hero at ${x}`).toBe(true);
+      expect(cam.scrollX).toBeLessThanOrEqual(0);
+    }
+  });
+
+  it('at the right wall it passes that wall by just enough to draw the hero left of JUMP and FIRE', () => {
+    for (const fromWall of [24, 40, 56, 72, 88]) {
+      const t = target(BIG.w - fromWall, 320, { facing: -1 });
+      const cam = snapCamera(t, VIEW, BIG, CAM, PAD);
+      expect(VIEW.w - sprite(cam, t).right, `hero ${fromWall} px from the wall`).toBeGreaterThanOrEqual(PAD.right);
+      expect(cam.scrollX).toBeGreaterThanOrEqual(BIG.w - VIEW.w);
+    }
+  });
+
+  it('changes nothing away from the walls, nor without a pad', () => {
+    for (const x of [200, 400, 800, BIG.w - 300]) {
+      const t = target(x, 320);
+      expect(snapCamera(t, VIEW, BIG, CAM, PAD)).toEqual(snapCamera(t, VIEW, BIG, CAM));
+    }
+    const nearWall = target(24, 320);
+    expect(snapCamera(nearWall, VIEW, BIG, CAM, NO_PAD)).toEqual(snapCamera(nearWall, VIEW, BIG, CAM));
+    expect(snapCamera(nearWall, VIEW, BIG, CAM, NO_PAD).scrollX).toBe(0);
+  });
+
+  it('walking away from the wall, the view comes back into the level without a jump, on the hero\'s whole pixels', () => {
+    let t = target(24, 320, { moving: true });
+    let cam = snapCamera(t, VIEW, BIG, CAM, PAD);
+    for (let x = 24; x < 400; x++) {
+      t = target(x, 320, { moving: true });
+      const next = stepCamera(cam, t, VIEW, BIG, CAM, PAD);
+      expect(Math.abs(next.scrollX - cam.scrollX), `at x = ${x}`).toBeLessThanOrEqual(1);
+      expect(Number.isInteger(next.scrollX)).toBe(true);
+      expect(sprite(next, t).left, `at x = ${x}`).toBeGreaterThanOrEqual(PAD.left);
+      cam = next;
+    }
+    expect(cam.scrollX).toBeGreaterThan(0); // back inside the level, following as before
+  });
+
+  it('a room narrower than the view stays centred unless the hero would stand under a button', () => {
+    const room: Size = { w: 15 * TILE_PX, h: 10 * TILE_PX };
+    const centred = Math.floor((room.w - VIEW.w) / 2);
+    const middle = target(room.w / 2, 100);
+    expect(snapCamera(middle, VIEW, room, CAM, PAD).scrollX).toBe(centred);
+    const atWall = target(24, 100);
+    const cam = snapCamera(atWall, VIEW, room, CAM, PAD);
+    expect(sprite(cam, atWall).left).toBeGreaterThanOrEqual(PAD.left);
+  });
+
+  it('padReach measures the drawn buttons over the canvas in whole art px, from either edge', () => {
+    const canvas = { x: 47, y: 0, w: 750, h: 390 }; // 375 art px at 2 CSS px per art px, after a 47 px notch
+    const left = { x: 67, y: 286, w: 64, h: 64 };
+    const right = { x: 143, y: 286, w: 64, h: 64 };
+    const jump = { x: 701, y: 274, w: 76, h: 76 };
+    const fire = { x: 627, y: 290, w: 60, h: 60 };
+    const out: PadReach = { left: -1, right: -1 };
+    expect(padReach([left, right], [jump, fire], canvas, 2, out)).toBe(out);
+    expect(out).toEqual({ left: Math.ceil((143 + 64 - 47) / 2), right: Math.ceil((47 + 750 - 627) / 2) });
+    // Buttons beyond the canvas (wide bars beside it) reach nothing.
+    expect(padReach([{ x: 0, y: 0, w: 20, h: 20 }], [{ x: 900, y: 0, w: 20, h: 20 }], canvas, 2, out)).toEqual({ left: 0, right: 0 });
   });
 });
 

@@ -635,6 +635,7 @@ The last three rows are the price of a whole-number zoom when a browser's toolba
 4. Round the camera's own state once per tick (`Math.round`), keep that integer, and when interpolation is on, blend the two integers with `lerpPx` (section 12) exactly as the sprites are blended.
 5. Centre a level that is smaller than the view yourself (negative scroll is fine). Phaser's bounds would pin it to the top [R].
 6. Parallax and anything else fixed to the screen: `setScrollFactor(0)` and set the position by hand to a rounded value [C].
+7. On a touch screen the scroll may pass a level's side wall, also negative, by as much as it takes to draw the hero clear of the DOM pad's buttons (`PadReach`, ARCHITECTURE 11.4). The backdrop wraps its stars and ridge (`starShift`, `farShift`), so the space beyond the wall is drawn like any other [C, review: at 844 x 390 the hero who starts beside level 1's left wall was drawn inside RIGHT].
 
 **[C]** From the check's `PlayScene`. `stepCamera` here is the render spike's sample (a stand-in for the real one), and `Math.floor(this.sim.x)` stands in for `player.x >> 8`:
 
@@ -737,11 +738,10 @@ create(): void {
   this.pips = Array.from({ length: 10 }, () => this.add.rectangle(0, 0, 2, 5, 0xb4f04a).setOrigin(0, 0));
   this.layout();
   this.scale.on(Phaser.Scale.Events.RESIZE, this.layout);
-  const cleanup = (): void => {
+  onSceneEnd(this.events, () => {
+    // src/shell/sceneEnd.ts: once, on 'shutdown' or 'destroy', and the other listener goes too (section 11)
     this.scale.off(Phaser.Scale.Events.RESIZE, this.layout);
-  };
-  this.events.once(Phaser.Scenes.Events.SHUTDOWN, cleanup);
-  this.events.once(Phaser.Scenes.Events.DESTROY, cleanup);
+  });
 }
 
 /** Pushed by PlayScene after its ticks (the HUD updates BEFORE Play in Phaser's order, so it must not poll). */
@@ -855,7 +855,7 @@ Rules, all observed:
 - Data passed to `start` or `launch` arrives in both `init(data)` and `create(data)`. Reset per-run state in `init()`: the scene object is reused [I].
 - Scenes **update in reverse** array order and draw in array order: `Hud.update` runs before `Play.update` [I]. A HUD that reads the simulation in its own `update` shows the previous frame; Play pushes instead.
 - Listeners on `this.input`, `this.input.keyboard`, Key objects, timers, tweens and the display list are removed for you on shutdown. Listeners on `this.events`, `this.game.events`, `this.scale`, `this.registry.events`, `window` and `document` are **not**: after three restarts there were four of each [I].
-- `game.destroy(true)` emits `destroy` on running scenes, **not** `shutdown` [I]. Register cleanup for both. But `this.scene.stop(...)` inside a `destroy` handler throws (`Cannot read properties of null (reading 'queueOp')`) and aborts the teardown [C]: scene operations go in the `shutdown` handler only.
+- `game.destroy(true)` emits `destroy` on running scenes, **not** `shutdown` [I], and `destroy` is emitted nowhere else. Register cleanup for both, through `onSceneEnd` (src/shell/sceneEnd.ts), which removes the twin listener: two plain `once` calls leave the `destroy` one behind on every visit [C, review]. But `this.scene.stop(...)` inside a `destroy` handler throws (`Cannot read properties of null (reading 'queueOp')`) and aborts the teardown [C]: scene operations go in the `shutdown` handler only.
 - A scene that places things from the view size must re-place them on `Scale.Events.RESIZE`. The Pause scene is the proof: it opens during a rotation, its `create()` ran with the old view size, and its RESUME button sat in the wrong place until it listened for resizes [C].
 - Pass handlers as arrow-function properties (`private readonly layout = (): void => { ... }`): they can be added and removed by reference, and the project's lint rules reject bare method references (section 19).
 
@@ -896,21 +896,21 @@ const autoPause = (): void => {
 this.game.events.on(Phaser.Core.Events.BLUR, autoPause);
 this.game.events.on(Phaser.Core.Events.HIDDEN, autoPause);
 window.addEventListener('pagehide', autoPause);
-const cleanup = (): void => {
+onSceneEnd(this.events, (how) => {
   this.game.events.off(Phaser.Core.Events.BLUR, autoPause); // game.events listeners are NOT removed for you
   this.game.events.off(Phaser.Core.Events.HIDDEN, autoPause);
   window.removeEventListener('pagehide', autoPause);
   app.classList.remove('playing');
   pad.releaseAll();
   controls.releaseAll();
-};
-this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-  cleanup();
-  this.scene.stop('Hud'); // scene operations belong here only: inside DESTROY they throw
-  this.scene.stop('Pause');
+  if (how === 'shutdown') {
+    this.scene.stop('Hud'); // scene operations belong here only: inside 'destroy' (game.destroy()) they throw
+    this.scene.stop('Pause');
+  }
 });
-this.events.once(Phaser.Scenes.Events.DESTROY, cleanup); // game.destroy() skips 'shutdown'
 ```
+
+`onSceneEnd` (src/shell/sceneEnd.ts) registers `once` on both `SHUTDOWN` and `DESTROY` and, whichever fires, takes the other listener off. Do **not** write the two `once` calls side by side: `destroy` comes only from `game.destroy()`, so the `once(DESTROY, cleanup)` of every visit stayed on the scene's own `sys.events`, holding its closure (for a menu: its objects and callbacks). After 20 rounds of title, play, pause, quit, restart and game over the scenes' listener totals had grown from 55 to 131 (Title), 26 to 64 (Play), and the heap after a forced GC rose by about 0.06 MB per round; with the twin removed, the counts and the heap stayed flat [C, review].
 
 **[C]** Play: pause, resume, leave. `mode` is `'running' | 'paused'` here; the real scene has more modes (ARCHITECTURE 11.1) and `resumeGame` must also call `holdReady(game)`:
 
@@ -980,11 +980,9 @@ export class PauseScene extends Phaser.Scene {
     // This scene usually opens while the window is changing (rotation, blur), so it MUST follow resizes.
     this.layout();
     this.scale.on(Phaser.Scale.Events.RESIZE, this.layout);
-    const cleanup = (): void => {
+    onSceneEnd(this.events, () => {
       this.scale.off(Phaser.Scale.Events.RESIZE, this.layout);
-    };
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, cleanup);
-    this.events.once(Phaser.Scenes.Events.DESTROY, cleanup);
+    });
 
     const play = this.scene.get('Play');
     let closing = false;
@@ -1025,7 +1023,7 @@ export class PauseScene extends Phaser.Scene {
 }
 ```
 
-Observed [C]: after three round trips Play, Title, Play the listener counts on `game.events` (`blur`, `hidden`), on the Scale Manager (`resize`) and on the input manager were the same as on the first visit, and the running scenes were exactly Play and Hud.
+Observed [C]: after three round trips Play, Title, Play the listener counts on `game.events` (`blur`, `hidden`), on the Scale Manager (`resize`) and on the input manager were the same as on the first visit, and the running scenes were exactly Play and Hud. Count each scene's own `sys.events` too (`__E2E__.listeners()`): that is where the `destroy` twins piled up unseen. e2e/pause.spec.ts checks that four rounds of title, play, pause, restart to game over and the end screen leave every scene's count where the first round left it.
 
 Not exercised by anyone: `scene.sleep`, `wake`, `switch`, `run`, `transition`. `scene.restart` was run only on the input spike's small shell [I], not with Play, Hud and Pause stacked. ARCHITECTURE 11.2 changes level inside the running Play scene (sprites rebuilt on `levelStarted`), which needs no scene restart at all.
 
@@ -1238,7 +1236,7 @@ Observed:
 - A Key's `'down'` event fires once per physical press. `keyboard.on('keydown-N', ...)` for a key that has no Key object fired 6 times for one held press (1 press + 5 auto-repeats); `addKey('M').on('down', ...)` fired once [C]. **Use `addKey(code).on('down', ...)` for every action key**, pause and mute included.
 - Keyboard events reach scenes in the order the scenes were **started**, not top-most first: with Play, Hud and Pause running, Play's Esc handler ran before Pause's [C]. So Phaser's `event.stopPropagation()` in a menu scene does not shield the scenes under it. Guard by state instead: Play's handler does nothing unless `mode === 'running'`; the menu's handler resumes. With that, Esc paused, Esc resumed, and holding Esc through seven `keydown` events paused once and stayed paused [C].
 - Phaser's own "release every key when the window loses focus" stops working for **all** scenes as soon as any scene that used the keyboard shuts down (`KeyboardPlugin.shutdown` removes that listener without its context, which removes everybody's). After the first pause menu closed, Play's and Hud's blur listeners were gone [C]. Never rely on it: `pauseGame()` calls `this.input.keyboard?.resetKeys()` itself.
-- After `resetKeys()`, a key that is still physically held reads up until its next repeat `keydown` [I].
+- After `resetKeys()`, a key that is still physically held reads up until its next repeat `keydown` [I]. **That repeat is then taken for a new press**: `Key.onDown` finds the Key up, sets `isDown` and emits `'down'` (with `event.repeat === true`). The same happens for a key already held when a scene starts (its Key is new). Seen in the game [C, review]: RIGHT held through the pause menu opened the ready gate about 12 ticks after RESUME (also after RESTART LEVEL and after a blur), and a held Esc closed the menu it had just opened, then opened it again. src/input/keyboard.ts therefore ignores every `'down'` whose event is an auto-repeat, and reads such a key as up until its `keyup`; e2e/pause.spec.ts holds keys with repeats (`keyboard.down` again on a held key) through every way out of the menu.
 
 **Traps** [I]
 
@@ -1568,6 +1566,8 @@ export function installTouchPad(root: HTMLElement, controls: Controls, t: TouchT
 
 How it is wired [C]: created once at module level with `TUNING.touch` (section 3); `pad.layout(innerWidth, innerHeight, insets)` in `relayout`; `pad.setItems(...)` every frame from Play; `pad.releaseAll()` in `pauseGame()` and in Play's cleanup; shown by CSS only while `#app` has both classes `touch` and `playing`. Touch mode (`installTouchMode`) is in section 17.
 
+Pixel art in the DOM at fractional device ratios [C, review]. At 740 x 360 at 2.75 (and 915 x 412 at 2.625) the glyph canvases, centred by flexbox in buttons whose layout rectangles are fractional CSS px, sat on half device pixels (origins such as 1602.004, 804.504), and the art's outer rows were blended with the button fill (a lime glyph grew a darker 75 % lime line). Three things fix it in the built pad: every drawn button's rectangle is snapped to whole device pixels (`snapRect`), the glyph is placed absolutely at a whole number of device pixels from the button's edge (`centreOnDevicePx`), and the 2 px rim is an inset `box-shadow` rounded to whole device pixels, not a `border` (the browser rounded a 2.18 px border to 2 px, half a device pixel at 2.75, and the glyph's origin moved with it). One more: a CSS size such as 96 / 2.75 px cannot be laid out exactly (layout keeps 1/64 px), so the canvas is a hundredth of a device pixel small and its outermost device pixels are blended whatever the position; each glyph therefore has one transparent art pixel round it. After that every glyph holds only palette colours at 2.75, 2.625, 3 and 2. The hit test keeps the exact layout; the two differ by under half a device pixel.
+
 Why DOM and one tracker [I] (real touch sequences through the DevTools protocol, 844 x 390):
 
 | Scenario | DOM pad, one tracker | DOM, one handler per button | Phaser zones, default | Phaser zones, 3 pointers |
@@ -1776,7 +1776,9 @@ Why a `mode` flag and not `this.scene.pause()`: `scene.pause()` works (no update
 
 ## 17. The rotate message and touch mode
 
-The message is plain CSS (section 2): `#rotate` is shown when `#app` has the classes `touch` **and** `upright`. Script sets `upright` and stops the game underneath.
+The message is plain CSS (section 2): `#rotate` is shown when `#app` has the classes `touch` **and** `upright`. Script sets `upright` and stops the game underneath. The message's canvas is drawn at up to 3 CSS px per art px, smaller in a narrow window (a fixed 3 made it 337 CSS px wide in a 320 px window at 1.5), and redrawn on resize (`rotateDevicePerArt` in src/shell/screenText.ts).
+
+Touch mode and the first touch [C, review]. A key press ends touch mode and hides the pad. The next touch turns it on again in a capture-phase `pointerdown` on `window`, but by then the browser has picked that event's target: the canvas under the hidden zone. So that first touch pressed nothing, and only a second one worked. The built `installTouchMode` hands the pointerdown that turned it on to the pad (`onChange(on, firstTouch)`, then `pad.takeFirstTouch(e)`), which takes it as if a zone had (`PointerTracker.downIfOnPad`); and Cmd, Ctrl and Alt (alone or in a shortcut) no longer end touch mode (`keyEndsTouchMode`). The listing below is the earlier version.
 
 "Upright" means the **device** is held upright, not that the window is taller than wide. The difference matters inside a frame: a preview pane is often a tall rectangle on a screen that is lying sideways, `(orientation: portrait)` describes the pane, and a phone has no way to turn a pane. So the guard asks the window first and then the screen (`screen.orientation.type`, which reports the device also from inside a frame, sandboxed or not [F]).
 
@@ -2040,7 +2042,8 @@ Plan to look at these on a real phone before calling the shell done.
 | Assuming `this.scene.start('X')` has happened on the next line | It is queued until the next frame. Guard transitions with a flag; two calls in one frame both run | VERIFIED I, C |
 | A HUD scene reading game state in its own `update` | Push from Play after its ticks. Scenes update in reverse array order, so the HUD runs first | VERIFIED I, C |
 | Using `launch` or `start` order to decide what is on top | The config array order is the draw order and never changes | VERIFIED I |
-| Leaving `game.events`, `scale`, `window` or `this.events` listeners to "scene shutdown" | Remove them in a cleanup registered for both `SHUTDOWN` and `DESTROY`. They are not removed for you and pile up over restarts | VERIFIED I, C |
+| Leaving `game.events`, `scale`, `window` or `this.events` listeners to "scene shutdown" | Remove them in a cleanup registered for both `SHUTDOWN` and `DESTROY` with `onSceneEnd` (src/shell/sceneEnd.ts). They are not removed for you and pile up over restarts | VERIFIED I, C |
+| `this.events.once(SHUTDOWN, cleanup)` next to `this.events.once(DESTROY, cleanup)` | `onSceneEnd(this.events, cleanup)`: whichever fires removes the other. `destroy` only comes from `game.destroy()`, so its `once` stayed on the scene after every visit | VERIFIED C |
 | `this.scene.stop('Hud')` inside a `DESTROY` handler | Scene operations in the `SHUTDOWN` handler only; in `DESTROY` they throw | VERIFIED C |
 | Placing menu items once in `create()` from `this.scale.width` | Re-place on `Phaser.Scale.Events.RESIZE`; the view size changes during play | VERIFIED C |
 | `this.scale.on('orientationchange', ...)`, `this.scale.orientation` | `window.matchMedia('(orientation: portrait)')`. Phaser's event fires before the viewport has its new size and reports the physical screen | VERIFIED I |
@@ -2054,6 +2057,7 @@ Plan to look at these on a real phone before calling the shell done.
 | `this.input.keyboard.on('keydown-ESC', togglePause)` | `this.input.keyboard?.addKey(code).on('down', ...)`. Without a Key object the event re-fires on every auto-repeat | VERIFIED C |
 | `event.stopPropagation()` in the top scene to hide a key from the scenes below | Guard by state. Keys reach scenes in start order, so the lower scene has usually seen it already | VERIFIED C |
 | Trusting Phaser to release held keys on blur | `this.input.keyboard?.resetKeys()` in your pause path. Phaser's own blur reset is lost for all scenes once any keyboard-using scene shuts down | VERIFIED C |
+| Acting on every Key `'down'`, or reading `isDown`, after a `resetKeys()` | Ignore a `'down'` whose `event.repeat` is true, and read that key as up until its `keyup` (src/input/keyboard.ts). A held key's next auto-repeat otherwise counts as a fresh press | VERIFIED C |
 | `window.onblur = ...`, `window.onfocus = ...` | `addEventListener`. Phaser assigns both properties; overwriting them blinds it | VERIFIED I |
 | `this.input.keyboard.addKey(...)` without a null check | `this.input.keyboard?.` or a guard; it is typed nullable | VERIFIED I, C |
 | Phaser `Zone`s or `this.input.addPointer(n)` for on-screen buttons | The DOM pad (section 14) with `input: { windowEvents: false }`. Phaser has one touch pointer by default and drops other fingers | VERIFIED I, C |

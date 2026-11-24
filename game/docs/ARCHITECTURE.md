@@ -560,7 +560,7 @@ Things that last are read from state every frame instead of from events: the thr
 
 - Horizontal: the hero sits `camLookAheadPx` behind the view centre on the side opposite to `facing`. The look-ahead slides toward the facing side at `camLookShiftSpeed` px per tick only while `vx !== 0`. Around that anchor is a dead zone of `camDeadzoneHalfW` px each way; beyond it the camera moves by exactly the overshoot (no smoothing).
 - Vertical: while `onGround` the feet line eases toward `camAnchorY` of the view height by `camVerticalEase` of the remaining distance per tick. While airborne the camera holds unless the hero leaves the band from `camAirBandTop` to `camAirBandBottom`, then it follows rigidly.
-- Bounds: clamped to the level; a level smaller than the view on an axis is centred on that axis.
+- Bounds: clamped to the level; a level smaller than the view on an axis is centred on that axis. On a touch screen (touch mode on) the horizontal bound is widened by just enough to draw the hero's sprite clear of the pad's drawn buttons (`PadReach`: how far LEFT and RIGHT, and JUMP, FIRE and THRUST, reach into the view, in art px, measured from the pad's layout each frame; FIRE and THRUST count whether or not held, so a pickup never moves the view). The bound only lets the camera past a side wall, never pushes it: away from the walls nothing changes, and the widened bound moves with the hero's whole pixels, so the view never jumps and the hero never shimmers. Space and stars show beyond the wall (`docs/ART-AND-SOUND.md` section 8: "the lower corners belong to the thumbs"). Without it a hero who starts one to three tiles from a wall stood under RIGHT on most phones, and the airlock by a right wall lay under JUMP.
 
 ### 11.5 View size
 
@@ -568,28 +568,59 @@ Things that last are read from state every frame instead of from events: the thr
 
 **Size on the glass.** One art pixel is `zoom / dpr` CSS px. With the whole screen height that is 2 CSS px or more on phones (568 x 320 at ratio 2: zoom 4, 2.0; 740 x 360 at 2.75: zoom 6, 2.18). In a browser tab the toolbars take height and the whole-number zoom drops a step: 740 x 304 gives zoom 5 (1.82), 740 x 280 gives zoom 4 (1.45), 568 x 232 gives zoom 2 (1.0, and the view grows to its 30 x 14 cap). Ruling R11 fixes the zoom rule, so the shell does three things about it:
 - **Fullscreen.** The first tap on the title (the same `pointerup` that unlocks audio) calls `game.scale.startFullscreen()` when touch mode is on, `game.scale.fullscreen.available` is true and the page is not inside a frame (`window.self === window.top`). A refusal is ignored. iPhones have no fullscreen for web pages: there the full height comes from adding the game to the home screen.
-- **Menus are sized in CSS px.** `menuLayout(viewW, viewH, zoom / dpr)` (pure, `src/shell/menuLayout.ts`) makes every tappable menu row `max(22, ceil(44 * dpr / zoom))` art px tall, so a row is at least 44 CSS px; the panel grows with its rows and is centred. If the rows do not fit the view height they share it evenly, never below 22 px: that happens only in the most extreme window computed (568 x 232 at ratio 2, zoom 2, where the pause menu's rows come out about 43 CSS px). Small switches drawn as 12 px sprites (sound on the title, sound and buzz in the pause menu) get an invisible hit area of at least 44 CSS px, centred on the sprite.
-- **Text stays 1x.** A glyph is 5 x 7 art px, so 10 x 14 CSS px at 2.0 and 7.3 x 10.2 CSS px at 1.45. The only text during play is the top bar; names and hints are on the intro card, which waits for the player. Whether the tab-with-toolbars size is acceptable is a question for the owner's Phase 1 playtest (`docs/PLAN.md`).
+- **Menus are sized in CSS px.** `menuLayout(viewW, viewH, zoom / dpr)` (pure, `src/shell/menuLayout.ts`) makes every tappable menu row `max(22, ceil(44 * dpr / zoom))` art px tall, so a row is at least 44 CSS px; the panel grows with its rows and is centred. If the rows do not fit the view height, the spacing gives way first (the gaps between items, then the panel's padding above and below, down to 1 px each); only then do the rows share the height evenly, never below 22 px: that happens only in the most extreme window computed (568 x 232 at ratio 2, zoom 2, where the pause menu's rows come out about 43 CSS px). Small switches drawn as 12 px sprites (sound on the title, sound and buzz in the pause menu) get an invisible hit area of at least 44 CSS px, centred on the sprite.
+- **Large text where the pixels are small.** A glyph is 5 x 7 art px, so 10 x 14 CSS px at 2.0 but only 5 x 7 CSS px (about a millimetre on the glass) at 1.0, inside buttons 44 CSS px tall. Where one art px is under `LARGE_TEXT_BELOW` (1.5) CSS px, `menuLayout` draws every 1x line, button label and switch label at 2x (`MenuLayout.textScale`) if the whole menu still fits the view with 44 CSS px rows, else 1x; `introLayout` does the same for the card's name and hint, line by line where each fits across. The top bar stays 1x (it must fit the narrowest view). Decided here, where the owner's playtest question was left open: SPEC asks for a game played on a phone, and a millimetre-high label in a short browser tab is not readable. Above 1.5 CSS px nothing changes.
+- **Corners and edges.** The top bar's outer items and the title's sound switch keep 16 CSS px from the glass's side edges where the canvas starts closer than that (Android reports no inset for rounded corners; `cornerClearPx` in hudModel.ts). The rotate message is drawn at up to 3 CSS px per art px, smaller in a narrow portrait window, 8 CSS px from each side (`rotateDevicePerArt`), redrawn on resize.
 
 The device table of the `chooseView` test holds the rows of `docs/PHASER4-NOTES.md`, section 6, including the three short windows above.
 
 ### 11.6 Test hook
 
-Installed only when the URL has `?e2e=1` or in a dev build:
+Installed only when the URL has `?e2e=1` or in a dev build (src/shell/e2eHook.ts, loaded as its own chunk, so a normal visit does not download it):
 
 ```ts
 interface E2EHook {
   state(): { status: SessionStatus; levelId: string; levelIndex: number; phase: RunPhase; tick: number;
-             score: number; lives: number; player: { x: number; y: number } };
+             score: number; lives: number; player: { x: number; y: number; vx: number; vy: number; onGround: boolean };
+             hasTrophy: boolean; mode: 'intro' | 'running' | 'paused' | 'ended' } | null;
+  /** The buttons held now: controls.held() of the one Controls the keyboard and the pad write to. */
+  held(): Input;
   /** Starts a one-level session that is never saved. id: 'level-01' ... 'level-10', 'test', 'debug'. */
   startLevel(id: string): void;
-  /** Starts the level fresh and feeds the script through the same step(), ticksPerFrame ticks per rendered frame. */
-  replay(id: string, script: InputScript, ticksPerFrame?: number): Promise<ReplayResult>;
+  /**
+   * Starts the level fresh and feeds the script through the same step(), ticksPerFrame ticks per rendered frame.
+   * A list of ids plays those levels as one session. Options: stopAtTick (stop once run.tick reaches it, for a
+   * picture), until: 'sessionEnd' (go on through deaths, level changes and the End screen).
+   */
+  replay(id: string | readonly string[], script: InputScript, ticksPerFrame?: number,
+         options?: { stopAtTick?: number; until?: 'levelCompleted' | 'sessionEnd' }): Promise<ReplayResult>;
+  /** src/audio/offline.ts's renderEffect, unchanged. */
+  renderEffect(what: string | readonly string[]): Promise<EffectRender>;
+  /** game.pause() / game.resume(), for a screenshot that must not move. */
+  freeze(on: boolean): void;
+  /** The Play scene steps exactly this many frames per rendered frame from the controls; null: the real stepper. */
+  pace(framesPerRender: number | null): void;
+  /** Resolves with run.tick once it reaches `tick`, the game frozen at that moment (checked on every POST_RENDER). */
+  freezeAtTick(tick: number): Promise<number>;
+  /** The running scenes' keys, in draw order. */
+  scenes(): string[];
+  /** The buttons and switches of the menu on screen, with where to tap them in page CSS px. */
+  menu(): { label: string; focused: boolean; x: number; y: number; w: number; h: number }[];
+  /** The audio's state: 'none' before the first gesture, then the context's; muted; effects started. */
+  sound(): { state: string; muted: boolean; plays: number; thrusting: boolean };
+  /** What the HUD shows: the intro card's lines, the toast, the banner's heading, whether its clocks are held (paused). */
+  hud(): { intro: readonly string[]; toast: string | null; banner: string | null; held: boolean } | null;
+  /** Listeners on each scene's own `sys.events`, by scene key: the same after many visits as after one. */
+  listeners(): Record<string, number>;
+  /** The hero's 16 px sprite as last drawn, in page CSS px: clear of the pad's buttons at a side wall (11.4). */
+  heroOnPage(): { x: number; y: number; w: number; h: number } | null;
 }
 declare global { interface Window { __E2E__?: E2EHook } }
 ```
 
-During a replay the scene takes its input from the script (`inputAtTick`) instead of `Controls`, bypasses the stepper (a fixed number of ticks per frame, so timing cannot change the result) and still draws, plays and routes events normally. `e2e/replay.spec.ts` computes `validateLevel` for level 1 in Node, passes the script to `window.__E2E__.replay`, and asserts `won` with the same `trophyTick` and `winTick`: proof that browser and Node simulate identically. Other URL switches: `?level=test`, `?level=debug`, `?touch=1` (force the touch pad and let the mouse drive it).
+**Real input on given ticks.** `e2e/rooms.spec.ts` and `e2e/touch.spec.ts` also win the two rooms with real key presses and real touches on the pad, on the same ticks as Node. A key or a touch sent by the test reaches the page a few milliseconds after the test decides to send it, and a loaded machine runs several ticks in one frame, so neither can be aimed at a tick by timing alone. The tests therefore set `pace(1)` (one tick per rendered frame, the input still from `Controls`) and, for every run of the script, `freezeAtTick(t)`, change the keys or fingers while the game stands still, and `freeze(false)`. Nothing else differs from a player's input: the keys go through Phaser's keyboard plugin and `installKeyboard`, the touches through the pad's Pointer Events. The game itself never uses either member.
+
+During a replay the scene takes its input from the script (`inputAtTick`) instead of `Controls`, bypasses the stepper (a fixed number of ticks per frame, so timing cannot change the result), shows no intro card and holds no hit stop, and still draws, plays and routes events normally. By default it stops as `replayScript` does in Node: at `levelCompleted`, at the first death, or at the end of the script. `e2e/rooms.spec.ts` replays the two rooms' scripts this way and gets the same `trophyTick` and `winTick` as `src/core/rooms.test.ts` in Node; `e2e/replay.spec.ts` (Phase 4) does the same with level 1's validator script. Other URL switches: `?level=test`, `?level=debug` (any level id: that room at once, never saved), `?touch=1` (force the touch pad and let the mouse drive it).
 
 ### 11.7 Offline app (Phase 5)
 
@@ -645,6 +676,7 @@ Ruling R18: a hand-written manifest and service worker, no library. Nothing in t
 
 The browser tests are listed in section 2.
 
+  /** null before the first level is played. Positions in sub-pixels; mode is the Play scene's (11.1). */
 ## 13. Derived limits
 
 Measured at the reference tuning (section 12) with throwaway integer models of sections 3 to 6. Two such models were written independently and agreed tick for tick over a million random ticks, and every number below was produced by one and checked on the other where a reviewer disputed it. `src/core/limits.test.ts` reproduces the tables through the real core; where the real core disagrees with a number here, one of the two is wrong and both get fixed. It reproduces every row of the Movement and Thruster tables, the jump-window, small-pad and thruster press-window tables and the hazard beds, cell for cell (the other rows of Hazards and of Blaster, enemies, timing are asserted by `contact`, `bolt`, `enemies` and `flow` tests); doing so fixed two entries (the thruster press window for 7 tiles under open sky, and the terminal-fall row, which said which of two figures it meant). "Handicap" is the comfort proof's tuning: no coyote time, no jump buffer, run and jump x 0.95, fuel x 0.9.
@@ -680,6 +712,35 @@ The hero runs at full speed toward the edge with the direction held; jump is pre
 | 4 down | any / any | any / any | 38 / 29 | 27 / 18 | 17 / 6 | 6 / - |
 
 The table assumes an unlimited landing area. Landing on a small pad with a deadly gap behind it is harder, because the hero must also stop. Policy: run at full speed, hold jump, let go of everything some frames after touching down.
+### 11.8 Shell modules as built
+
+Section 2 lists the shell as it was planned. These modules were added while building it (all under `src/shell/` unless a path is given); pure ones have a `*.test.ts` beside them:
+
+| File | Kind | Responsibility |
+|---|---|---|
+| `freshKey.ts` | Pure (fake keyboard in its test) | `onFreshKey`: a key acts once per keyboard event (Phaser replays a frame's queue; auto-repeat never counts) |
+| `sceneEnd.ts` | Pure (Node emitter in its test) | `onSceneEnd`: a scene's cleanup once on `shutdown` or `destroy`, the other listener removed (11.1) |
+| `fxModel.ts` | Pure | Effects as numbers: the shake, the fade, flashes, pop-ups and the airlock pointer, from events and ticks |
+| `hitStop.ts` | Pure | The hold after a kill (`killHitStopFrames`); disabled in a replay |
+| `hudModel.ts` | Pure | The top bar as numbers: what it shows, where (`topBarLayout`, the PAUSE reserve, the corner clearance), its clocks (`FrameClock`, held under the pause; score count, life blink, pip blink) |
+| `viewModel.ts` | Pure | Draw positions in whole pixels: the hero's sprite and overlays, enemies, pickups, the mini fuel bar |
+| `screens.ts` | Pure | Layouts of the intro card (2x name and hint where the pixels are small), the level-clear banner, the end screens' lines, the title's scenery, the shutter blades, the canvas's accessible name |
+| `screenText.ts` | Pure | Every fixed line the screens draw at its scale, for one test of glyphs and widths; the rotate message's size (`rotateDevicePerArt`) |
+| `scenes/menu.ts` | Phaser glue | The canvas menu of Title, Pause and End, drawn at `menuLayout`'s rectangles and text scale; touch, mouse and keyboard |
+| `scenes/sessions.ts` | Pure | What the title offers (CONTINUE, NEW GAME, the test rooms when there is no campaign) and what TRY AGAIN starts |
+| `scenes/strings.ts` | Pure | Every word the screens show (`TEXT`), shared with main.ts's rotate message |
+| `lifecycle.ts` | DOM | Touch mode (`keyEndsTouchMode`: Cmd, Ctrl and Alt do not end it; the touch that turns it on is handed to the pad) and the rotate guard |
+
+Browser specs beside those of section 2:
+
+| Spec | What it proves |
+|---|---|
+| `e2e/screens.spec.ts` | Every screen and menu as a player drives it: title, intro card, top bar (nothing white or gold along the bottom: LEVELS.md rule 11), pause by every route, menu text shadows over the panel, the rotate message's width, end screens |
+| `e2e/save.spec.ts` | The save rules of section 10 in the browser: CONTINUE, NEW GAME, the best score, TRY AGAIN's level |
+| `e2e/look.spec.ts` | Screenshots of the debug room's replay, frozen with the hero in the air: not blank, pixel-exact (every art pixel a uniform block of device pixels), the hero on the whole pixel the core gives |
+| `e2e/audio.spec.ts` | Every sound rendered offline in a real browser (`renderEffect`) and checked by numbers: not silent, not clipping, as long, as loud and sounding as section 12 of ART-AND-SOUND says; in the game, audio starting on the first tap and the M key |
+| `e2e/pause.spec.ts` | Keys held through the pause (with auto-repeat) never open the ready gate; RESTART LEVEL from the intro card; the HUD's toast and banner outlast a pause; scene listener counts stay flat over visits |
+
 
 | Gap, then a level pad, then a deadly gap | Let go at once | After 4 f | After 8 f |
 |---|---|---|---|

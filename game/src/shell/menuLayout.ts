@@ -19,6 +19,11 @@
  * rectangle and a switch's `hit` rectangle are also what a tap must land in. Every rectangle is in
  * whole art pixels inside the view's coordinates. Recompute on every resize (`Scale.Events.RESIZE`).
  *
+ * Large text: where one art pixel is under LARGE_TEXT_BELOW CSS px (a phone's browser tab with its
+ * toolbars, zoom 2 at ratio 2: 1.0 CSS px), a 1x letter is only 5 x 7 CSS px, about a millimetre on the
+ * glass, inside buttons 44 CSS px tall. There every 1x line and label is drawn at 2x (`textScale`),
+ * provided the whole menu still fits the view at full row height; otherwise it stays 1x.
+ *
  * Pure: no Phaser, no DOM.
  */
 import { FONT_ADVANCE, FONT_CELL_H, GLYPH_W } from '../art/font';
@@ -44,6 +49,8 @@ export const SWITCH_ICON_PX = 12;
 export const SWITCH_LABEL_GAP_PX = 3;
 /** A corner switch's icon keeps at least this far from the view's edges (the top bar's text starts 3 px down). */
 export const CORNER_INSET_PX = 3;
+/** Below this many CSS px per art px, a menu's 1x text is drawn at 2x where it fits (see the header). */
+export const LARGE_TEXT_BELOW = 1.5;
 
 /** A rectangle in art pixels: top-left corner and size, whole numbers. */
 export interface Rect {
@@ -90,6 +97,11 @@ export interface MenuLayout {
   readonly rowPx: number;
   /** True when the rows reach `MIN_TOUCH_CSS_PX` on the glass; false only when the view is too short and they share it. */
   readonly fits: boolean;
+  /**
+   * The scale of every line given at 1x, button labels and switch labels included: 2 where the pixels are
+   * small and the menu still fits (see the header), else 1. Lines given at 2x or 3x keep their scale.
+   */
+  readonly textScale: 1 | 2;
   /** One per item, in the order given. */
   readonly items: readonly PlacedItem[];
   /** The buttons' rectangles in order: what to hit-test and where keyboard focus moves. */
@@ -138,8 +150,28 @@ export function menuRowPx(cssPerArt: number): number {
  * @param items     the menu, top to bottom
  */
 export function menuLayout(viewW: number, viewH: number, cssPerArt: number, items: readonly MenuItem[]): MenuLayout {
+  if (cssPerArt > 0 && cssPerArt < LARGE_TEXT_BELOW) {
+    const large = layoutAt(viewW, viewH, cssPerArt, items, 2);
+    if (large.fits && large.panel.w <= viewW && large.contentW + 2 * PANEL_PAD_PX <= viewW) return large.layout;
+  }
+  return layoutAt(viewW, viewH, cssPerArt, items, 1).layout;
+}
+
+/** The scale a line is drawn at: a 1x line at `textScale`, a heading at its own. */
+export function drawnScale(scale: 1 | 2 | 3 | undefined, textScale: 1 | 2): 1 | 2 | 3 {
+  return scale === undefined || scale === 1 ? textScale : scale;
+}
+
+function layoutAt(
+  viewW: number,
+  viewH: number,
+  cssPerArt: number,
+  items: readonly MenuItem[],
+  textScale: 1 | 2,
+): { layout: MenuLayout; contentW: number; fits: boolean; panel: Rect } {
+  const scaleOf = (item: MenuItem): number => (item.kind === 'text' ? drawnScale(item.scale, textScale) : textScale);
   const rows = items.filter((item) => item.kind !== 'text').length;
-  const textHeight = items.reduce((sum, item) => sum + (item.kind === 'text' ? textLinePx(item.scale ?? 1) : 0), 0);
+  const textHeight = items.reduce((sum, item) => sum + (item.kind === 'text' ? textLinePx(scaleOf(item)) : 0), 0);
   const fixedWith = (pad: number, gap: number): number => 2 * pad + textHeight + Math.max(0, items.length - 1) * gap;
 
   // Rows of at least 44 CSS px if they fit, giving up spacing first (the gaps, then the padding above
@@ -156,18 +188,18 @@ export function menuLayout(viewW: number, viewH: number, cssPerArt: number, item
 
   // Widths: every button as wide as the widest; a switch row wide enough for icons, labels and hit squares.
   const buttonW = items.reduce(
-    (w, item) => (item.kind === 'button' ? Math.max(w, textPx(item.text) + 2 * BUTTON_TEXT_INSET_PX) : w),
+    (w, item) => (item.kind === 'button' ? Math.max(w, textPx(item.text, textScale) + 2 * BUTTON_TEXT_INSET_PX) : w),
     BUTTON_W_PX,
   );
   const iconOffset = Math.max(0, Math.floor((rowPx - SWITCH_ICON_PX) / 2));
   const cellW = (labels: readonly string[]): number => {
-    const label = Math.max(0, ...labels.map((l) => textPx(l)));
+    const label = Math.max(0, ...labels.map((l) => textPx(l, textScale)));
     return Math.max(Math.floor(BUTTON_W_PX / Math.max(1, labels.length)), rowPx, iconOffset + SWITCH_ICON_PX + SWITCH_LABEL_GAP_PX + label);
   };
   const itemW = (item: MenuItem): number => {
     switch (item.kind) {
       case 'text':
-        return textPx(item.text, item.scale ?? 1);
+        return textPx(item.text, scaleOf(item));
       case 'button':
         return buttonW;
       case 'switches':
@@ -184,7 +216,7 @@ export function menuLayout(viewW: number, viewH: number, cssPerArt: number, item
   const switches: SwitchCell[] = [];
   let y = panel.y + padY;
   for (const item of items) {
-    const h = item.kind === 'text' ? textLinePx(item.scale ?? 1) : rowPx;
+    const h = item.kind === 'text' ? textLinePx(scaleOf(item)) : rowPx;
     const w = item.kind === 'text' ? Math.min(contentW, panelW) : Math.min(itemW(item), panelW);
     const rect: Rect = { x: panel.x + Math.floor((panelW - w) / 2), y, w, h };
     let cells: SwitchCell[] = [];
@@ -210,17 +242,20 @@ export function menuLayout(viewW: number, viewH: number, cssPerArt: number, item
     y += h + gap;
   }
 
-  return { panel, rowPx, fits, items: placed, buttons, switches };
+  return { layout: { panel, rowPx, fits, textScale, items: placed, buttons, switches }, contentW, fits, panel };
 }
 
 /**
  * A lone switch in the view's top-right corner (the sound switch on the title screen): the 12 px icon
- * centred in a square hit area of at least 44 CSS px that lies inside the view.
+ * centred in a square hit area of at least 44 CSS px that lies inside the view. `rightClearPx` keeps the
+ * icon that far from the view's right edge (a rounded corner of the glass: hudModel's cornerClearPx); the
+ * square then moves in with it, and the hit area still reaches the corner.
  */
-export function cornerSwitch(viewW: number, cssPerArt: number): IconHit {
+export function cornerSwitch(viewW: number, cssPerArt: number, rightClearPx = 0): IconHit {
   const side = Math.max(touchPx(cssPerArt), SWITCH_ICON_PX + 2 * CORNER_INSET_PX);
-  const hit: Rect = { x: viewW - side, y: 0, w: side, h: side };
   const offset = Math.floor((side - SWITCH_ICON_PX) / 2);
+  const shift = Math.max(0, Math.min(rightClearPx - offset, viewW - side));
+  const hit: Rect = { x: viewW - side - shift, y: 0, w: side + shift, h: side };
   const icon: Rect = { x: hit.x + offset, y: offset, w: SWITCH_ICON_PX, h: SWITCH_ICON_PX };
   return { hit, icon };
 }

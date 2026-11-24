@@ -388,9 +388,9 @@ describe('recipes: which event plays what', () => {
 });
 
 describe('recipes: rate limits', () => {
-  it('repeats the low-fuel beep every 20 ticks and plays the start jingle once', () => {
-    expect(FUEL_LOW_BEEP_TICKS).toBe(20);
-    expect(RECIPES.fuelLow).toMatchObject({ minGapTicks: 20 });
+  it('repeats the low-fuel beep every 8 ticks and plays the start jingle once', () => {
+    expect(FUEL_LOW_BEEP_TICKS).toBe(8);
+    expect(RECIPES.fuelLow).toMatchObject({ minGapTicks: 8 });
     expect(RECIPES.start).toMatchObject({ once: true });
     // The beep is shorter than its gap, so beeps never overlap.
     const beep = RECIPES.fuelLow;

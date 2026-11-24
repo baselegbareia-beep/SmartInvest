@@ -49,15 +49,15 @@
   pointer-events: auto;
 }
 
-/* The drawn buttons take no touches themselves. */
+/* The drawn buttons take no touches themselves. Their rectangles and rim (--pad-rim) are set on whole device
+   pixels by TouchPad.ts, which also places the glyph inside: flex centring put it on half device pixels. The rim
+   is an inset shadow, not a border: the browser rounds a border's width its own way (2.18 px became 2 px, half a
+   device pixel at a ratio of 2.75), and the glyph is placed from the button's edge, which a shadow leaves alone. */
 .touchpad__btn {
   position: absolute;
   box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   pointer-events: none;
-  border: calc(2px * var(--pad-scale)) solid #8090b4;
+  box-shadow: inset 0 0 0 var(--pad-rim, 2px) #8090b4;
   border-radius: calc(12px * var(--pad-scale));
   background: #151a36;
   opacity: var(--pad-idle);
@@ -67,9 +67,9 @@
   border-radius: 50%;
 }
 
-/* The glyph: a small canvas drawn at a whole number of CSS px per art px. */
+/* The glyph: a small canvas drawn at a whole number of device px per art px, placed by TouchPad.ts. */
 .touchpad__btn > * {
-  flex: none;
+  position: absolute;
   pointer-events: none;
   image-rendering: pixelated;
 }

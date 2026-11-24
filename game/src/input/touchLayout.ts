@@ -180,6 +180,42 @@ export function layoutControls(vw: number, vh: number, safe: SafeInsets, t: Touc
 
 const inside = (r: Rect, x: number, y: number): boolean => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
 
+// ---------------------------------------------------------------------------------------
+// Device pixels (for drawing: the glyphs are pixel art)
+// ---------------------------------------------------------------------------------------
+
+/** A length or position in CSS px moved to the nearest whole device pixel. */
+export function toDevicePx(cssPx: number, dpr: number): number {
+  const d = dpr > 0 && Number.isFinite(dpr) ? dpr : 1;
+  return Math.round(cssPx * d) / d;
+}
+
+/**
+ * A drawn rectangle with all four edges on whole device pixels. At ratios such as 2.75 or 2.625 the
+ * layout's CSS px fall between device pixels; a glyph centred in such a button had its outer rows
+ * and columns blended with the button's fill.
+ */
+export function snapRect(r: Rect, dpr: number): Rect {
+  const x = toDevicePx(r.x, dpr);
+  const y = toDevicePx(r.y, dpr);
+  return { x, y, w: toDevicePx(r.x + r.w, dpr) - x, h: toDevicePx(r.y + r.h, dpr) - y };
+}
+
+/**
+ * The offset that centres a glyph `glyph` CSS px long in a space `space` CSS px long, as a whole number of
+ * device pixels (rounded down where the two leave an odd number): with both on whole device pixels the
+ * glyph lands on them too.
+ */
+export function centreOnDevicePx(space: number, glyph: number, dpr: number): number {
+  const d = dpr > 0 && Number.isFinite(dpr) ? dpr : 1;
+  return Math.floor(Math.round((space - glyph) * d) / 2) / d;
+}
+
+/** True when (x, y) is inside one of the three zones that take touches (where a new touch belongs to the pad). */
+export function onPadZone(l: ControlLayout, x: number, y: number): boolean {
+  return inside(l.moveZone, x, y) || inside(l.actionZone, x, y) || inside(l.pauseZone, x, y);
+}
+
 /** Distance from a point to the rim of a round button (negative inside it). */
 function rimDistance(r: Rect, x: number, y: number): number {
   const dx = x - (r.x + r.w / 2);

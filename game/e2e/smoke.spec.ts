@@ -53,6 +53,13 @@ test('the title screen boots on WebGL without errors', async ({ page }) => {
   });
   expect(layout).toEqual({ canvasIsVisible: true, canvasIsInsideViewport: true, pageScrolls: false });
 
+  // The page around the picture is the palette's "void" (#0b0d1a), as is the browser's theme colour.
+  const colours = await page.evaluate(() => ({
+    body: getComputedStyle(document.body).backgroundColor,
+    theme: document.querySelector('meta[name="theme-color"]')?.getAttribute('content'),
+  }));
+  expect(colours).toEqual({ body: 'rgb(11, 13, 26)', theme: '#0b0d1a' });
+
   await page.screenshot({ path: SCREENSHOT });
 
   expect(problems).toEqual([]);

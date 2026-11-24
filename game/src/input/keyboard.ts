@@ -10,13 +10,19 @@
  * | Pause  | Esc or P             |
  * | Sound  | M                    |
  *
- * Three things the notes found, all handled here:
+ * Four things the notes found, all handled here:
  * - Polling `isDown` once per frame misses a key that is hit and released inside one frame, so
  *   every press is also latched from the Key's own 'down' event.
  * - Every action key goes through `addKey(name).on('down', ...)`: that fires once per physical
  *   press. `keyboard.on('keydown-ESC', ...)` fires again on every auto-repeat.
  * - Phaser's own "release every key when the window loses focus" stops working for all scenes as
  *   soon as any scene that used the keyboard shuts down. This module listens for blur itself.
+ * - A Key that does not know its key is down (reset by `resetKeys` on a pause, a resume or a blur,
+ *   or created by a scene that started while the key was held) takes the key's next auto-repeat
+ *   (`repeat: true`, about every 33 ms) for a new press: it emits 'down' and reads `isDown`. A key
+ *   held through the pause menu then opened the ready gate after RESUME without a fresh press, and a
+ *   held Esc closed the menu it had just opened. Here a 'down' that comes from an auto-repeat never
+ *   acts, and the key reads as up until it is let go (`event.repeat` is the browser's own flag).
  *
  * Only types are imported from Phaser, so the module can be unit-tested in Node.
  */
@@ -39,6 +45,7 @@ export const MUTE_KEYS: readonly string[] = ['M'];
 // Phaser's event names, spelled out so that Phaser itself is not needed at run time:
 // Phaser.Input.Keyboard.Events.DOWN and Phaser.Scenes.Events.UPDATE, SHUTDOWN and DESTROY.
 const KEY_DOWN = 'down';
+const KEY_UP = 'up';
 const SCENE_UPDATE = 'update';
 const SCENE_SHUTDOWN = 'shutdown';
 const SCENE_DESTROY = 'destroy';
@@ -55,24 +62,39 @@ export interface KeyboardOptions {
   isActive?: () => boolean;
 }
 
+/** True for a keydown the browser sent because the key is being held (auto-repeat), not pressed. */
+export function isAutoRepeat(event: unknown): boolean {
+  return typeof event === 'object' && event !== null && (event as { repeat?: unknown }).repeat === true;
+}
+
 /**
- * Calls `handler` once per physical press of any of the named keys (auto-repeat does not count).
- * Use it for every menu key as well. The keys are captured: they no longer scroll or click the
- * page. Returns a function that removes the handler; call it when the scene shuts down.
+ * Calls `handler` once per physical press of any of the named keys: an auto-repeat never counts,
+ * also not the first one after the Key was reset while the key was held. Use it for every menu key
+ * as well. The keys are captured: they no longer scroll or click the page. `handler` gets the Key
+ * and the KeyboardEvent, as Phaser hands them over. Returns a function that removes the handler;
+ * call it when the scene shuts down.
  */
-export function onKeyDown(scene: Phaser.Scene, names: readonly string[], handler: () => void): () => void {
+export function onKeyDown(
+  scene: Phaser.Scene,
+  names: readonly string[],
+  handler: (key: Phaser.Input.Keyboard.Key, event: KeyboardEvent) => void,
+): () => void {
   const kb = scene.input.keyboard;
   if (!kb) return () => undefined;
   const keys = names.map((name) => kb.addKey(name));
-  for (const key of keys) key.on(KEY_DOWN, handler);
+  const onDown = (key: Phaser.Input.Keyboard.Key, event: KeyboardEvent): void => {
+    if (!isAutoRepeat(event)) handler(key, event);
+  };
+  for (const key of keys) key.on(KEY_DOWN, onDown);
   return () => {
-    for (const key of keys) key.off(KEY_DOWN, handler);
+    for (const key of keys) key.off(KEY_DOWN, onDown);
   };
 }
 
 /**
  * Lets go of every key, in Phaser and in `Controls`. Call it from the scene's pause path. A key
- * that is still physically down reads as up until it is pressed again (or auto-repeats).
+ * that is still physically down reads as up until it is let go and pressed again: its auto-repeats
+ * do not count (installKeyboard).
  */
 export function releaseKeys(scene: Phaser.Scene, controls: Controls): void {
   scene.input.keyboard?.resetKeys();
@@ -97,14 +119,37 @@ export function installKeyboard(scene: Phaser.Scene, controls: Controls, options
   const removers: (() => void)[] = [];
 
   const keys: Record<Button, Phaser.Input.Keyboard.Key[]> = { left: [], right: [], jump: [], fire: [], thrust: [] };
+  // Keys whose 'down' came from an auto-repeat: down in Phaser, but not pressed since the Key last knew it was up.
+  // They read as up until their keyup (see the header). One Set for the scene's life, no allocation per frame.
+  const stale = new Set<Phaser.Input.Keyboard.Key>();
+  const onAnyDown = (key: Phaser.Input.Keyboard.Key, event: KeyboardEvent): void => {
+    if (isAutoRepeat(event)) stale.add(key);
+    else stale.delete(key);
+  };
+  const onAnyUp = (key: Phaser.Input.Keyboard.Key): void => {
+    stale.delete(key);
+  };
   for (const b of BUTTONS) {
     keys[b] = GAME_KEYS[b].map((name) => kb.addKey(name));
+    for (const key of keys[b]) {
+      key.on(KEY_DOWN, onAnyDown);
+      key.on(KEY_UP, onAnyUp);
+    }
     removers.push(
       onKeyDown(scene, GAME_KEYS[b], () => {
         if (isActive()) controls.latch(b);
       }),
     );
   }
+  removers.push(() => {
+    for (const b of BUTTONS) {
+      for (const key of keys[b]) {
+        key.off(KEY_DOWN, onAnyDown);
+        key.off(KEY_UP, onAnyUp);
+      }
+    }
+    stale.clear();
+  });
   if (options.onPause) removers.push(onKeyDown(scene, PAUSE_KEYS, options.onPause));
   if (options.onMute) removers.push(onKeyDown(scene, MUTE_KEYS, options.onMute));
 
@@ -115,7 +160,7 @@ export function installKeyboard(scene: Phaser.Scene, controls: Controls, options
       controls.set(
         'keys',
         b,
-        keys[b].some((key) => key.isDown),
+        keys[b].some((key) => key.isDown && !stale.has(key)),
       );
     }
   };

@@ -27,7 +27,7 @@ import type { TouchTuning } from '../core/types';
 
 import { BUTTONS } from './Controls';
 import type { Controls } from './Controls';
-import { CONTROL_IDS, hitTest, layoutControls } from './touchLayout';
+import { CONTROL_IDS, centreOnDevicePx, hitTest, layoutControls, onPadZone, snapRect, toDevicePx } from './touchLayout';
 import type { ControlId, ControlLayout, Rect, SafeInsets, ShownItems } from './touchLayout';
 
 import './touchpad.css';
@@ -89,6 +89,16 @@ export class PointerTracker {
     }
     this.pointers.set(id, { x, y, on: null });
     this.recompute();
+  }
+
+  /**
+   * A pointer went down somewhere on the page, not on one of the zones' elements: taken as `down` when it is
+   * inside a zone (as if the zone had taken it), ignored otherwise. Returns whether it was taken.
+   */
+  downIfOnPad(id: number, x: number, y: number): boolean {
+    if (!this.layout || !onPadZone(this.layout, x, y)) return false;
+    this.down(id, x, y);
+    return true;
   }
 
   /** A pointer moved. Pointers that never went down on the pad are ignored. */
@@ -159,6 +169,18 @@ export interface TouchPad {
   setItems(fire: boolean, thrust: boolean, fireDimmed?: boolean, thrustDimmed?: boolean): void;
   /** Measures the window and the safe area again. The pad does this by itself on every resize and rotation. */
   layout(): void;
+  /**
+   * Where each button is drawn, in CSS px of the window (null before the pad was first measured), whether or
+   * not the pad is on screen. The camera keeps the hero clear of them (src/shell/camera.ts, PadReach).
+   */
+  buttonsOnPage(): Readonly<Record<ControlId, Rect>> | null;
+  /**
+   * The touch that turned touch mode on. While the pad was hidden the browser had already picked the canvas
+   * as that touch's target, so the zones never hear of it: without this, after a key press had hidden the
+   * pad, the first touch on a button pressed nothing. Call it right after `setTouchMode(true)`, inside the
+   * same pointerdown. A touch inside a zone is taken as if it had landed there; any other is left alone.
+   */
+  takeFirstTouch(event: PointerEvent): void;
   /** Lets go of every touch (pause, blur, scene end). */
   releaseAll(): void;
   /** Removes the elements and every listener. */
@@ -176,6 +198,8 @@ const LABELS: Record<ControlId, string> = {
 const ROUND: ReadonlySet<ControlId> = new Set<ControlId>(['jump', 'fire', 'thrust']);
 const ITEMS: ReadonlySet<ControlId> = new Set<ControlId>(['fire', 'thrust']);
 const ZONE_IDS = ['move', 'action', 'pause'] as const;
+/** The rim of a drawn button (docs/ART-AND-SOUND.md section 10: a 2 px rim), CSS px at full size. */
+const RIM_CSS_PX = 2;
 
 /**
  * Builds the pad inside `parent`, which must cover the window (`#app`). The pad starts hidden:
@@ -194,6 +218,7 @@ export function createTouchPad(parent: HTMLElement, controls: Controls, t: Touch
     zones.set(id, el);
   }
   const buttons = new Map<ControlId, HTMLElement>();
+  const glyphs = new Map<ControlId, HTMLElement>();
   for (const id of CONTROL_IDS) {
     const el = document.createElement('div');
     el.className = 'touchpad__btn';
@@ -203,7 +228,10 @@ export function createTouchPad(parent: HTMLElement, controls: Controls, t: Touch
     el.setAttribute('role', 'button');
     el.setAttribute('aria-label', LABELS[id]);
     const art = options.glyph?.(id);
-    if (art) el.append(art);
+    if (art) {
+      el.append(art);
+      glyphs.set(id, art);
+    }
     root.append(el);
     buttons.set(id, el);
   }
@@ -227,6 +255,7 @@ export function createTouchPad(parent: HTMLElement, controls: Controls, t: Touch
   // The pad's top-left corner in the window: pointer positions arrive in window coordinates.
   let originX = 0;
   let originY = 0;
+  let onPage: Record<ControlId, Rect> | null = null;
 
   const place = (el: HTMLElement | undefined, r: Rect): void => {
     if (!el) return;
@@ -255,11 +284,30 @@ export function createTouchPad(parent: HTMLElement, controls: Controls, t: Touch
     originY = box.top;
     const l = layoutControls(box.width, box.height, readInsets(), t);
     root.style.setProperty('--pad-scale', String(l.scale));
-    for (const [id, el] of buttons) place(el, l.buttons[id]);
+    // Drawn on whole device pixels: the buttons, their rims and the glyphs inside them (pixel art). The hit test
+    // keeps the exact layout; the two differ by less than half a device pixel.
+    const dpr = window.devicePixelRatio || 1;
+    const rim = Math.max(1, Math.round(RIM_CSS_PX * l.scale * dpr)) / dpr;
+    root.style.setProperty('--pad-rim', `${rim}px`);
+    for (const [id, el] of buttons) {
+      const r = snapRect({ x: l.buttons[id].x + originX, y: l.buttons[id].y + originY, w: l.buttons[id].w, h: l.buttons[id].h }, dpr);
+      place(el, { x: r.x - originX, y: r.y - originY, w: r.w, h: r.h });
+      const glyph = glyphs.get(id);
+      if (glyph) {
+        const style = getComputedStyle(glyph);
+        const gw = toDevicePx(Number.parseFloat(style.width) || 0, dpr);
+        const gh = toDevicePx(Number.parseFloat(style.height) || 0, dpr);
+        glyph.style.left = `${centreOnDevicePx(r.w, gw, dpr)}px`;
+        glyph.style.top = `${centreOnDevicePx(r.h, gh, dpr)}px`;
+      }
+    }
     place(zones.get('move'), l.moveZone);
     place(zones.get('action'), l.actionZone);
     place(zones.get('pause'), l.pauseZone);
     tracker.setLayout(l);
+    const at = (r: Rect): Rect => ({ x: r.x + originX, y: r.y + originY, w: r.w, h: r.h });
+    const b = l.buttons;
+    onPage = { left: at(b.left), right: at(b.right), jump: at(b.jump), fire: at(b.fire), thrust: at(b.thrust), pause: at(b.pause) };
   };
 
   const releaseAll = (): void => {
@@ -371,6 +419,11 @@ export function createTouchPad(parent: HTMLElement, controls: Controls, t: Touch
       tracker.setShown(fire, thrust);
     },
     layout: relayout,
+    buttonsOnPage: () => onPage,
+    takeFirstTouch(event) {
+      if (!visible) return;
+      if (tracker.downIfOnPad(event.pointerId, event.clientX - originX, event.clientY - originY)) event.preventDefault();
+    },
     releaseAll,
     dispose() {
       abort.abort();

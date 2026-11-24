@@ -34,9 +34,9 @@ Names of states, fields and events are the ones in `src/core/types.ts`; `player`
 | `a` | #8a5a44 | rust | Sprue shade, Cinderpeg body |
 | `b` | #3b2a30 | char | Cinderpeg shade, scorch marks |
 | `c` | #ffd65c | gold | Cog, score, fire core |
-| `d` | #f4972a | amber | Fire, warnings, cog shade, under-glow |
+| `d` | #f4972a | amber | Fire, warnings, game-over text, cog shade, under-glow |
 | `e` | #d8442a | furnace red | Fire edge, spike tips, enemy cracks |
-| `f` | #8a1c38 | crimson | Fire base, game-over text |
+| `f` | #8a1c38 | crimson | Fire base |
 | `g` | #b4f04a | lime | Sprue's eye, bolt, thruster flame, focus |
 | `h` | #4f9e3a | green | Lime shade |
 | `i` | #7fe6ff | ice | Coolant surface |
@@ -49,6 +49,8 @@ Names of states, fields and events are the ones in `src/core/types.ts`; `player`
 Contrast against the `night` backdrop: cream 13.3, lime 12.6, gold 12.2, ice 11.9, earthlight 10.4, amber 7.6, rose 6.7, light steel 5.3, violet 5.0, furnace red 3.9, steel 2.8, char 1.3. Two rules follow: nothing that can kill may be mostly `char` (the Cinderpeg's body is rust with amber cracks), and anything the player must see sits at 5.0 or above.
 
 The page background and the bars beside the picture are `void`, so the picture has no visible edge.
+
+`GAME OVER` is drawn in amber with the `void` shadow, not in crimson: crimson reads at only 1.87 against `void` (amber 7.6), so crimson is never used for text (section 7). The Role column above is checked against `src/art/palette.ts` by `src/art/art.test.ts`; the two were changed together.
 
 ## 3. Sprite format
 
@@ -85,14 +87,14 @@ When several rows match, the first of these wins: dying, thrusting, in the air, 
 
 | Sprite | Size | Frames | Description | Shown when |
 |---|---|---|---|---|
-| `trophy` | 16x16 | 4 | The golden cog on a stand; a glint travels round the teeth. 8 ticks per frame | At `level.trophy` until `run.hasTrophy` |
-| `door_locked` | 16x16 | 1 | A round airlock hatch, iris shut, with a dark cog-shaped socket | At `level.door` while `run.hasTrophy` is false |
+| `trophy` | 16x16 | 4 | The golden cog mounted on a steel trestle (two splayed legs on a foot plate); a glint travels round the teeth. 8 ticks per frame | At `level.trophy` until `run.hasTrophy` |
+| `door_locked` | 16x16 | 1 | A round hatch, iris shut round a cog-shaped socket, hanging in a steel door frame with an amber lamp on its lintel | At `level.door` while `run.hasTrophy` is false |
 | `door_opening` | 16x16 | 3 | The iris blades retract. 6 ticks per frame | For 18 ticks after the event `doorOpened` |
 | `door_open` | 16x16 | 2 | Open iris, lime-lit inside; the lamp pulses every 30 ticks | `run.hasTrophy`, once the opening has played |
 | `gem_a`, `gem_b`, `gem_c` | 16x16 | 2 each | Violet shard, rose cluster, twin crystal: three looks, one value. Frame 1 is a glint | Pickup of kind `crystal` while `run.taken[i]` is false. Look = `(col + 2 * row) % 3` |
 | `pickup_blaster` | 16x16 | 2 | A stubby steel blaster with a lime coil; glint | Pickup of kind `blaster` while not taken |
 | `pickup_thruster` | 16x16 | 2 | A twin-bottle pack with a lime gauge; glint | Pickup of kind `thruster` while not taken (it comes back on `pickupRestored` and after a respawn) |
-| `cinderpeg` | 16x16 | 4 | Enemy 1: a lump of fused slag on four peg legs; rust body, amber and red cracks that pulse, two gold ember eyes. 10 ticks per frame | `run.enemies[i]` of kind `cinderpeg` while `alive`; flipped when `dir < 0` |
+| `cinderpeg` | 16x16 | 4 | Enemy 1: a wedge of fused slag on four peg legs; rust body, two molten seams that pulse, an amber glow underneath, two gold ember eyes. 10 ticks per frame | `run.enemies[i]` of kind `cinderpeg` while `alive`; flipped when `dir < 0` |
 | `moth` | 16x16 | 4 | Enemy 2: a feral welding drone; two earthlight plate wings in a V, a thin dark body, a crackling amber arc under it. 5 ticks per frame | `run.enemies[i]` of kind `moth` while `alive`, either axis; flipped when `axis === 'h'` and `dir < 0` |
 
 ### Effects (all from the one particle emitter, at most 48 alive)
@@ -132,11 +134,11 @@ When several rows match, the first of these wins: dying, thrusting, in the air, 
 | `hud_blaster`, `hud_thruster` | 8x8 | 1 each | Icons of the held items | `player.hasBlaster`, `player.hasThruster` |
 | `hud_pip` | 2x6 | 2 | Fuel pip: lime, slate | Ten pips; lit = `player.fuel` out of `phys.fuelTicks`, rounded up to tenths |
 | `btn_arrow` | 16x16 | 1 | A chevron, flipped for LEFT | Touch buttons (section 10) |
-| `btn_jump`, `btn_fire`, `btn_thrust` | 16x16 | 1 each | An up chevron over a bar; a bolt dash; a flame under a bottle | Touch buttons |
+| `btn_jump`, `btn_fire`, `btn_thrust` | 16x16 | 1 each | An up chevron over a bar; a bolt dash; a flame under each of two bottles | Touch buttons |
 | `btn_pause` | 12x12 | 1 | Two bars | PAUSE button |
 | `btn_sound`, `btn_vibe` | 12x12 | 2 each | On and off | Switches on the title and pause screens |
 | `ui_panel` | 24x24 | 1 | A steel plate with cut corners, stretched as a nine-slice with 8 px corners | Menu panels and menu buttons |
-| `logo_cog` | 32x32 | 1 | A large cog behind the title | Title screen |
+| `logo_cog` | 32x32 | 1 | A large cog behind the title. The title draws it at 2x as a flat `indigo` shape: in its own gold at 1x it sat behind the R of the gold name and the R could not be read | Title screen |
 | `icon` | 32x32 | 1 | Sprue's rim and lime eye inside a gold cog on `night` | App icon (section 11) |
 | font | 5x7 | 47 glyphs | Section 7 | All text |
 
@@ -242,7 +244,7 @@ One font, capitals only.
 - Glyph 5 x 7 px. Advance 6 px. Line height 9 px. Digits are all the same width.
 - 47 glyphs, in this order on the sheet: space, `A` to `Z`, `0` to `9`, then `. , ! ? : - + / ' %`.
 - On the sheet each glyph sits in a 6 x 8 cell (one empty column on the right, one empty row below), white on transparent, so a tint colours it. Text is drawn as bitmap text built from that sheet.
-- Colours: white for normal text, lime for the focused menu item and level names, gold for score values, amber for warnings, crimson for `GAME OVER`, slate for disabled items. Every text has a 1 px `void` shadow down and to the right.
+- Colours: white for normal text, lime for the focused menu item and level names, gold for score values (the score, `BEST`, `NEW BEST!`, the end screens' totals), amber for warnings and for `GAME OVER` (crimson reads at only 1.87 against `void`; amber 7.6), slate for disabled items. Every text has a 1 px `void` shadow down and to the right.
 - Sizes: 1x, 2x for headings, 3x for the first word of the title. Text always sits on whole pixels.
 - A 1x glyph is 5 x 7 art px. On glass that is `zoom / dpr` CSS px per art px: 10 x 14 CSS px (2.2 mm tall) on the smallest phone with the full screen height, and less in a browser tab whose toolbars take height (7.3 x 10.2 CSS px in a 740 x 280 window). `docs/ARCHITECTURE.md` (11.5) has the cases and what the shell does about them.
 - No line may be longer than 42 characters (252 px; the narrowest view is 272 px).
@@ -250,12 +252,12 @@ One font, capitals only.
 
 ## 8. Top bar (HUD)
 
-A single row along the top, y = 3 to 11 px, drawn by its own scene above the game. The lower corners belong to the thumbs. `W` is the view width.
+A single row along the top, y = 3 to 11 px, drawn by its own scene above the game. The lower corners belong to the thumbs: on a touch screen the camera never holds the hero under a drawn button at a side wall (it passes the wall instead, showing space beyond it; `docs/ARCHITECTURE.md` 11.4). `W` is the view width.
 
 | Element | Position | Reads | Notes |
 |---|---|---|---|
-| Lives | x = 4; `phys.maxLives` icons (three) of `hud_life`, 9 px apart | `session.lives` | On `respawned` the icon of the life just lost blinks five times, then stays dark |
-| Level | x = 36; `LEVEL 3` | `session.levelIndex + 1` | Ends at x = 83 for `LEVEL 10` |
+| Lives | x = 4 (further in on a rounded corner, below); `phys.maxLives` icons (three) of `hud_life`, 9 px apart | `session.lives` | On `respawned` the icon of the life just lost blinks five times, then stays dark |
+| Level | x = 36 (moves with the lives); `LEVEL 3` | `session.levelIndex + 1` | Ends at x = 83 for `LEVEL 10` |
 | Score | Centred on `W / 2`; five digits, gold | `session.score` | Counts up 10 per tick towards the real score |
 | Cog, blaster, thruster, ten fuel pips | Right-aligned block 61 px wide, ending 4 px left of the pause button | `run.hasTrophy`, `player.hasBlaster`, `player.hasThruster`, `player.fuel` | The cog is always shown (outline, then gold). Blaster and thruster only while held. Pips blink when two or fewer are lit |
 | Pause button | Top right | | A DOM button (section 10); the bar leaves the last 24 px free on the smallest phone |
@@ -264,23 +266,28 @@ A single row along the top, y = 3 to 11 px, drawn by its own scene above the gam
 
 On the smallest phone (view 284 x 160) the gaps between the four groups are 6, 44 and 39 px; at the 272 px minimum they are 6, 38 and 33 px.
 
+- Rounded corners: phones round the glass's corners, and Android reports a safe-area inset only for a cutout. Where the canvas starts less than 16 CSS px from the glass's side edge, the lives and the level move in so that nothing of the bar is closer than 16 CSS px to it, and the block of the right likewise (`SCREEN_CORNER_CSS` in `src/shell/hudModel.ts`); the title's sound switch keeps the same distance. Where a notch's inset or the bars beside a wide picture already keep it clear, nothing moves.
+- The bar's own clocks (the toast, the life blink, the score count, the pips' blink, the intro's shutter) stand still while the pause menu is up, as the world and its particles do, and go on after RESUME: a toast or a blink is never used up under the menu.
+
 ## 9. Screens
 
 | Screen | When | Content |
 |---|---|---|
-| Title | At boot, after Quit, after `TITLE` | Stars, Earth, ridge; Sprue idling on a girder; `logo_cog` behind the first word of the title (3x) over the rest of it (1x); `TAP TO START` blinking once a second (`PRESS SPACE TO START` when a keyboard was used last); `BEST 07900`; sound switch top right. With saved progress, two buttons instead of the prompt: `CONTINUE - LEVEL 7` and `NEW GAME`. The first tap also asks for fullscreen on touch devices, outside frames |
-| Level intro | Event `levelStarted` | A shutter wipe, then `LEVEL 3` (2x), the level's `@name` in lime, its `@teaches` line as the hint, the life icons. It stays for `TUNING.effects.introFrames`; a press after `introSkipAfterFrames` skips it. The core is not stepped meanwhile. Then the ready gate |
+| Title | At boot, after Quit, after `TITLE` | Stars, the Earth in the upper left, the ridge along the bottom; Sprue idling on a girder that juts in from the left edge over the ridge; `logo_cog` behind the first word of the title (3x, gold) over the rest of it (1x, white); `TAP TO START` blinking once a second (`PRESS SPACE TO START` when a keyboard was used last); `BEST 07900` in gold once there is a best score; the sound switch top right (also the M key; saved in the settings). With saved progress, two buttons instead of the prompt: `CONTINUE - LEVEL 7` and `NEW GAME`. A tap anywhere but the switch, or Space, Enter, Up, W, X or Z, starts. The first tap also asks for fullscreen on touch devices, outside frames. The `start` jingle plays on the first start of a visit only |
+| Level intro | Event `levelStarted` | A shutter wipe, then, over the dimmed level (top bar included), a `ui_panel` plate with `LEVEL 3` (2x), the level's `@name` in lime, its `@teaches` line as the hint, the life icons. It stays for `TUNING.effects.introFrames`; a press after `introSkipAfterFrames` skips it. The core is not stepped meanwhile. Then the ready gate. `RESTART LEVEL` from a pause opened on the card ends the card: the restarted level waits at its ready gate (`RESUME` goes back to the card) |
 | Ready gate | `run.phase === 'ready'` | The level, still. The hero blinks. No text and no countdown: the first control pressed starts the world (a control still held from before must be let go first) |
-| Pause | PAUSE, Esc or P; the page hidden or blurred; a phone turned upright | The game dimmed under a 160 x 130 panel: `PAUSED` (2x); buttons `RESUME`, `RESTART LEVEL -1 LIFE`, `QUIT TO TITLE`, each 144 x 22 px; switches `SOUND ON` and `BUZZ ON` side by side |
-| Level clear | Event `levelCompleted` | Banner `LEVEL CLEAR +200` (the number is the event's `bonus`) for as long as the hero stands in the airlock (the exiting phase, `phys.exitTicks`) |
-| Game over | Event `gameOver` | `GAME OVER` (2x, crimson); `SCORE 04250`; `BEST 06100`, or a blinking `NEW BEST!` when the score beats the best score as it was when this run began; buttons `TRY AGAIN - LEVEL 7` and `TITLE` |
-| Win | Event `gameWon` | `THE FOUNDRY IS LIT!` (2x); the backdrop glows amber; lines appear 30 ticks apart, each with a tick sound: `SCORE 06400`, `LIVES LEFT 3 X 500`, `TOTAL 07900`, `NEW BEST!`; buttons `PLAY AGAIN` and `TITLE` |
-| Rotate | A touch device held upright | A phone outline turning, and `ROTATE YOUR PHONE`. Turning back shows the pause screen; the game never resumes by itself |
+| Pause | PAUSE, Esc or P; the page hidden or blurred; a phone turned upright | The game dimmed under a 160 x 130 panel: `PAUSED` (2x); buttons `RESUME`, `RESTART LEVEL -1 LIFE`, `QUIT TO TITLE`, each 144 x 22 px; switches `SOUND ON` and `BUZZ ON` side by side. Everything under it stands still, the top bar's clocks included. A key held through the menu does not start the world after it: its auto-repeats are not presses |
+| Level clear | Event `levelCompleted` | Banner `LEVEL CLEAR +200` (2x, white; the number is the event's `bonus`) on a `ui_panel` plate under the top bar (y = 26, clear of the hero in the airlock), with the tally `SCORE 01230` in gold under it, counting up with the top bar's score; for as long as the hero stands in the airlock (the exiting phase, `phys.exitTicks`): shown from that phase itself, not from a clock, so a pause in the airlock cannot take it down early |
+| Game over | Event `gameOver` | Stars, Earth and ridge, and Sprue's girder, empty. `GAME OVER` (2x, amber with the `void` shadow); `SCORE 04250`; `BEST 06100`, or a blinking `NEW BEST!` when the score beats the best score as it was when this run began (gold; no best line in a development room, which is never saved); buttons `TRY AGAIN - LEVEL 7` and `TITLE` |
+| Win | Event `gameWon` | `THE FOUNDRY IS LIT!` (2x, gold); the backdrop glows amber (the lower half in six stepped amber strips, strongest at the ridge, breathing slowly; still under reduced motion); Sprue back on his girder; lines appear 30 ticks apart, each with the `uiOk` tick: `SCORE 06400` (before the bonus), `LIVES LEFT 3 X 500`, `TOTAL 07900`, `NEW BEST!` (or `BEST`); buttons `PLAY AGAIN` and `TITLE`, there from the start |
+| Rotate | A touch device held upright | A phone outline turning, and `ROTATE YOUR PHONE`. Turning back shows the pause screen; the game never resumes by itself. As built so far the message is the words alone, in the pixel font (src/main.ts draws it into a canvas at up to 3 CSS px per art px, smaller where a narrow window needs it, keeping 8 CSS px from each side: `rotateDevicePerArt` in `src/shell/screenText.ts`); the turning outline is still to come |
 
 - Menus work by touch, mouse and keyboard (arrows move the lime focus, Space or Enter confirms).
 - Menu rows are at least 44 CSS px tall wherever the view is tall enough for the whole menu. The sizes above (22 px rows, a 160 x 130 panel) are the smallest; where one art pixel is less than 2 CSS px (a browser tab with toolbars) the rows and the panel grow, as `menuLayout` in `docs/ARCHITECTURE.md` (11.5) says. The 12 px switches (`btn_sound`, `btn_vibe`) have an invisible hit area of at least 44 CSS px.
+- Large text: where one art pixel is under 1.5 CSS px, a 1x letter would be about a millimetre tall on the glass. There every 1x line of a menu, its button labels and its switch labels are drawn at 2x, provided the whole menu still fits the view with 44 CSS px rows (else 1x); the intro card's name and hint likewise, each where it fits across the view. The top bar stays 1x.
 - `NEW BEST!` on the game-over and win screens compares the final score with the best score remembered when the run began, never with the saved best score, which has already been raised by then (`docs/ARCHITECTURE.md`, 11.3).
-- Screens change with a 12-tick shutter wipe.
+- Screens change with a 12-tick shutter wipe: the new screen (the title, an end screen, a level's intro card) starts covered by two `void` blades with a 1 px `slate` edge, which open from the middle, slowing as they go. The pause menu opens at once, over the still game. Under reduced motion there is no wipe.
+- Every screen also names the canvas with its words (`aria-label`, never drawn), for screen readers and the browser tests: the pixel font cannot be read by either.
 - The level number in `CONTINUE` and `TRY AGAIN` is the level that will start: the saved run's level, or after a game over the highest level reached.
 - The ten hint lines are the `@teaches` headers of the level files; they are listed in `docs/LEVELS.md`.
 
@@ -296,7 +303,7 @@ The buttons are DOM elements over the canvas, laid out in CSS pixels by `src/inp
 | THRUST | Circle | `thrustButtonSize` | `btn_thrust`, lime | Only while `player.hasThruster` |
 | PAUSE | Rounded square | `pauseButtonSize` | `btn_pause`, white | Always |
 
-- Fill `night`, a 2 px rim in `light steel` (`#8090b4`). The glyph is the sprite grid drawn onto a small canvas inside the button at a whole number of CSS px per art px (3 for JUMP, 2 for the others), with `image-rendering: pixelated`.
+- Fill `night`, a 2 px rim in `light steel` (`#8090b4`). The glyph is the sprite grid drawn onto a small canvas inside the button at a whole number of device px per art px (as near as can be to 3 CSS px for JUMP, 2 for the others), with `image-rendering: pixelated`. The buttons, their rims (an inset shadow, rounded to whole device pixels) and the glyphs sit on whole device pixels, also at ratios such as 2.75; each glyph has a transparent art pixel round it, so no lit pixel of the art is ever at the canvas's edge, where the browser blends.
 - The whole button has opacity `opacityIdle` when idle and `opacityPressed` when pressed, and a pressed button is drawn at `pressedScale`.
 - FIRE drops to `opacityDimmed` while a bolt is in flight (`run.bolt.active`); THRUST drops to it when the tank is empty (`player.fuel === 0`).
 - FIRE and THRUST fade in over `appearMs` with one pulse when their item is picked up, always in the same place, and vanish when the item is lost.
@@ -343,7 +350,7 @@ These four files are the only images in the built game. The browser tab icon reu
 | `boltHit` | Event `boltEnded` with hit `wall` | Noise through a 3 kHz band-pass (Q 2), 35 ms, gain 0.08 |
 | `enemyDown` | Event `enemyKilled` | Noise through a low-pass sliding 2000 to 200 Hz, 200 ms, gain 0.20; plus square 147 to 55 Hz, 160 ms |
 | `thrust` | State, not an event: a loop while `run.phase === 'playing'` and `player.thrusting` | Noise through a 320 Hz band-pass (Q 0.7) plus a 55 Hz sawtooth at 0.05; fades in over 30 ms and out over 80 ms; gain 0.10 |
-| `fuelLow` | State: every 20 ticks while thrusting with `player.fuel` at 20 % of `phys.fuelTicks` or less | Square 880 Hz, 35 ms, gain 0.08 |
+| `fuelLow` | State: every 8 ticks while thrusting with `player.fuel` at 20 % of `phys.fuelTicks` or less (twice with the shipped tank of 80 ticks: 16 and 8 ticks before it is dry; a warning repeats) | Square 880 Hz, 35 ms, gain 0.08 |
 | `fuelEmpty` | Event `fuelEmptied` | Triangle 440 to 110 Hz in 220 ms, gain 0.14 |
 | `death` | Event `playerDied` | Sawtooth 440 to 55 Hz in 420 ms, plus noise through an 800 Hz low-pass for 300 ms; gain 0.22 |
 | `gameOver` | Event `gameOver` | Triangle D4, C4, A3 (294, 262, 220 Hz) at 180 ms each, then D3 (147 Hz) for 500 ms; gain 0.18 |
@@ -358,7 +365,7 @@ On the last level `clear` plays at `levelCompleted` and `win` at `gameWon`, when
 
 ### Sound switch
 
-A switch on the title and pause screens, and the M key. Off slides the master gain to 0 in 30 ms, stops the thrust loop and starts no new voices. The choice is saved in the settings (`sound`). Sound is on by default. Audio is also suspended whenever the game is paused or the page is hidden.
+A switch on the title and pause screens, and the M key. Off slides the master gain to 0 in 30 ms, stops the thrust loop and starts no new voices. The choice is saved in the settings (`sound`). Sound is on by default. Every sound fades out when the game pauses (the menu's own `uiMove` and `uiOk` still play); the audio is suspended while the page is hidden or the window loses focus.
 
 ## 13. Feedback: shake, flashes, vibration
 
@@ -380,7 +387,7 @@ All of it is presentation: none of it changes what happens in the game. Effects 
 | | `trophyCollected` | Two pulses of `vibrateCogPulseMs`, `vibrateCogGapMs` apart |
 | | `fuelEmptied` | `vibrateEmptyTankMs` |
 
-Vibration works only where the phone allows it (not on iPhones), never on ordinary button presses, and is switched off by `BUZZ OFF` (saved in the settings as `vibration`).
+Vibration works only where the phone allows it (not on iPhones), never on ordinary button presses, and is switched off by `BUZZ OFF` (saved in the settings as `vibration`). One named exception: switching `BUZZ ON` gives one sample buzz (the cog's two pulses), so the player feels what was switched on, as switching the sound on plays `uiOk`.
 
 ## 14. Checks
 
@@ -388,7 +395,7 @@ Tests that keep this document true (they arrive with the art and the sound):
 
 - Every sprite of the manifest exists with the listed size and number of frames; every row of a frame has the same length; every character is a palette code or `.`.
 - The font has all 47 glyphs at 5 x 7.
-- Every fixed text the game shows is at most 42 characters and uses only the font's characters. `src/meta.test.ts` checks the title and `tests/levels.test.ts` checks level names and hints.
+- Every fixed text the game shows is at most 42 characters and uses only the font's characters. `src/meta.test.ts` checks the title and `tests/levels.test.ts` checks level names and hints. `src/shell/screenText.test.ts` checks every fixed line of the screens at the size it is drawn (2x and 3x included) against the narrowest view, with 4 px to spare on each side.
 - Every sound recipe renders to something that is not silent and does not clip (a browser test, because Node has no WebAudio).
 - No file in `src/art` or `src/audio` is imported by `src/core`.
 

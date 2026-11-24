@@ -18,7 +18,12 @@
  *   rigidly. (The band is also kept while standing, which only matters right after the view changed
  *   size: the hero is then never left outside the picture while the ease catches up.)
  * - Bounds: the view never shows anything outside the level. A level narrower or lower than the view
- *   is centred on that axis instead.
+ *   is centred on that axis instead. One exception, on touch screens: the drawn buttons cover the
+ *   view's lower corners (docs/ART-AND-SOUND.md section 8: "the lower corners belong to the thumbs"),
+ *   so where the level's side wall would hold the hero under LEFT and RIGHT, or under JUMP and FIRE,
+ *   the view may pass that wall by just as much as it takes to keep his sprite clear of them
+ *   (`PadReach`). Space and stars show beyond the wall. Away from the walls nothing changes, and the
+ *   bound moves with the hero's whole pixels, so the view never jumps.
  *
  * The state keeps its exact (fractional) position, and the whole-pixel scroll to draw with: give
  * Phaser `cam.setScroll(scrollX, scrollY)` (through `lerpPx` when interpolating), never the fractional
@@ -36,6 +41,56 @@ import type { CameraTuning, Facing, GameState } from '../core/types';
 export interface Size {
   readonly w: number;
   readonly h: number;
+}
+
+/**
+ * How far the drawn touch buttons reach into the view, in art px: from its left edge (LEFT and RIGHT)
+ * and from its right edge (JUMP, FIRE, THRUST). Zero on both sides when there is no touch pad.
+ */
+export interface PadReach {
+  left: number;
+  right: number;
+}
+
+/** No touch pad: the camera keeps strictly inside the level. */
+export const NO_PAD: Readonly<PadReach> = Object.freeze({ left: 0, right: 0 });
+
+/** The hero's sprite is one tile wide, centred on `CameraTarget.x` (docs/ART-AND-SOUND.md section 3). */
+const HERO_HALF_W = TILE_PX / 2;
+
+/** A rectangle in CSS px (the pad's buttons, the canvas on the page). */
+export interface CssRect {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+}
+
+/**
+ * How far the drawn buttons reach into the canvas, in whole art px (rounded up), written into `out`.
+ * `moveButtons` are LEFT and RIGHT, `actionButtons` JUMP, FIRE and THRUST, all in CSS px of the same
+ * page as `canvas` (window coordinates). FIRE and THRUST count whether or not their item is held, so
+ * picking one up never moves the view. Allocates nothing: the Play scene asks once per frame.
+ */
+export function padReach(
+  moveButtons: readonly CssRect[],
+  actionButtons: readonly CssRect[],
+  canvas: CssRect,
+  cssPerArt: number,
+  out: PadReach,
+): PadReach {
+  const k = cssPerArt > 0 && Number.isFinite(cssPerArt) ? cssPerArt : 1;
+  let left = 0;
+  for (const b of moveButtons) left = Math.max(left, b.x + b.w - canvas.x);
+  let right = 0;
+  const canvasRight = canvas.x + canvas.w;
+  for (const b of actionButtons) right = Math.max(right, canvasRight - b.x);
+  // A button wider than the canvas is reach enough: never more than the view.
+  const viewW = canvas.w / k;
+  // Math.max(0, ...): no negative zero from a button that reaches nothing.
+  out.left = Math.max(0, Math.min(Math.ceil(left / k - 1e-9), Math.ceil(viewW)));
+  out.right = Math.max(0, Math.min(Math.ceil(right / k - 1e-9), Math.ceil(viewW)));
+  return out;
 }
 
 /** What the camera follows, in whole art pixels. Build it with `cameraTarget`. */
@@ -85,16 +140,26 @@ export function levelSize(level: { readonly width: number; readonly height: numb
   return { w: level.width * TILE_PX, h: level.height * TILE_PX };
 }
 
-/** The resting position: hero on the anchor both ways, look-ahead fully to the side he faces. */
-export function snapCamera(target: CameraTarget, view: Size, level: Size, t: CameraTuning): CameraState {
+/**
+ * The resting position: hero on the anchor both ways, look-ahead fully to the side he faces.
+ * `pad`: how far the touch buttons reach into the view (NO_PAD without them).
+ */
+export function snapCamera(target: CameraTarget, view: Size, level: Size, t: CameraTuning, pad: Readonly<PadReach> = NO_PAD): CameraState {
   const look = target.facing * t.camLookAheadPx;
   const x = target.x - anchorX(view, look);
   const y = target.feetY - t.camAnchorY * view.h;
-  return settle(x, y, look, view, level);
+  return settle(x, y, look, view, level, target.x, pad);
 }
 
 /** One simulation tick of camera movement. Returns a new state; `prev` is not changed. */
-export function stepCamera(prev: CameraState, target: CameraTarget, view: Size, level: Size, t: CameraTuning): CameraState {
+export function stepCamera(
+  prev: CameraState,
+  target: CameraTarget,
+  view: Size,
+  level: Size,
+  t: CameraTuning,
+  pad: Readonly<PadReach> = NO_PAD,
+): CameraState {
   // The look-ahead swings toward the facing side, only while the hero moves.
   let look = prev.look;
   if (target.moving) look = approach(look, target.facing * t.camLookAheadPx, t.camLookShiftSpeed);
@@ -118,7 +183,7 @@ export function stepCamera(prev: CameraState, target: CameraTarget, view: Size, 
   if (feetOnScreen < bandTop) y = target.feetY - bandTop;
   else if (feetOnScreen > bandBottom) y = target.feetY - bandBottom;
 
-  return settle(x, y, look, view, level);
+  return settle(x, y, look, view, level, target.x, pad);
 }
 
 /** Where the hero's middle sits on screen, from the view's left edge, for a given look-ahead. */
@@ -133,10 +198,25 @@ function approach(from: number, to: number, by: number): number {
   return from;
 }
 
-function settle(x: number, y: number, look: number, view: Size, level: Size): CameraState {
-  const cx = bound(x, view.w, level.w);
+function settle(x: number, y: number, look: number, view: Size, level: Size, heroX: number, pad: Readonly<PadReach>): CameraState {
+  const cx = boundX(x, view.w, level.w, heroX, pad);
   const cy = bound(y, view.h, level.h);
   return { x: cx, y: cy, look, scrollX: whole(cx), scrollY: whole(cy) };
+}
+
+/**
+ * `bound` on the horizontal axis, widened on a touch screen just enough that the hero's sprite can be
+ * drawn clear of the buttons: past the left wall to `heroX - HERO_HALF_W - pad.left` at most, past the
+ * right one likewise. It only lets the camera go there; it never pushes it (inside the level the dead
+ * zone decides, as without a pad). Whole numbers in, whole bounds out: the hero cannot shimmer.
+ */
+function boundX(pos: number, viewW: number, levelW: number, heroX: number, pad: Readonly<PadReach>): number {
+  const small = levelW <= viewW;
+  const lo0 = small ? Math.floor((levelW - viewW) / 2) : 0;
+  const hi0 = small ? lo0 : levelW - viewW;
+  const lo = pad.left > 0 ? Math.min(lo0, heroX - HERO_HALF_W - pad.left) : lo0;
+  const hi = pad.right > 0 ? Math.max(hi0, heroX + HERO_HALF_W + pad.right - viewW) : hi0;
+  return Math.min(Math.max(pos, lo), hi);
 }
 
 /** Keeps the view inside the level on one axis, or centres a level smaller than the view. */

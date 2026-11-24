@@ -6,7 +6,8 @@
       name="viewport"
       content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
     />
-    <meta name="theme-color" content="#0b0d16" />
+    <!-- Palette colour 0, "void": the page, the bars beside the picture and the browser's own chrome. -->
+    <meta name="theme-color" content="#0b0d1a" />
     <!-- No icon file yet: an empty data URL stops the browser asking for /favicon.ico. -->
     <link rel="icon" href="data:," />
     <title>%GAME_TITLE%</title>
@@ -19,12 +20,25 @@
         padding: 0;
         overflow: hidden;
         overscroll-behavior: none;
-        background: #0b0d16;
+        background: #0b0d1a;
+        -webkit-text-size-adjust: 100%;
       }
 
       body {
         position: fixed;
         inset: 0;
+        touch-action: none;
+      }
+
+      /* The fullscreen target: the canvas, the touch pad (added by src/input/TouchPad.ts) and the rotate message. */
+      #app {
+        position: fixed;
+        inset: 0;
+      }
+
+      /* Without touch-action none a held button is cancelled as soon as the browser decides the finger pans. */
+      #app,
+      #app * {
         touch-action: none;
         user-select: none;
         -webkit-user-select: none;
@@ -32,21 +46,53 @@
         -webkit-tap-highlight-color: transparent;
       }
 
+      /* The canvas is sized in art pixels and placed by a CSS transform (src/shell/applyLayout.ts). */
       #game {
         position: absolute;
         inset: 0;
         overflow: hidden;
-        touch-action: none;
       }
 
       #game canvas {
         display: block;
-        touch-action: none;
+      }
+
+      /* Carries the safe-area insets as padding so script can read them (readSafeInsets). */
+      #safe-probe {
+        position: fixed;
+        left: 0;
+        top: 0;
+        width: 0;
+        height: 0;
+        visibility: hidden;
+        pointer-events: none;
+        padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px)
+          env(safe-area-inset-left, 0px);
+      }
+
+      /* Rotate message: a touch device held upright (installRotateGuard sets the class "upright").
+         Its words are drawn by main.ts in the game's own pixel font. */
+      #rotate {
+        display: none;
+        position: absolute;
+        inset: 0;
+        z-index: 10;
+        background: #0b0d1a;
+        align-items: center;
+        justify-content: center;
+      }
+
+      #app.touch.upright #rotate {
+        display: flex;
       }
     </style>
   </head>
   <body>
-    <div id="game"></div>
-    <script type="module" src="/src/main.ts"></script>
+    <div id="app">
+      <div id="game"></div>
+      <div id="rotate" role="alert" aria-label="Rotate your phone"></div>
+      <div id="safe-probe"></div>
+    </div>
+    <script type="module" src="./src/main.ts"></script>
   </body>
 </html>

@@ -573,7 +573,7 @@ describe('Sfx: the thrust loop and the low-fuel beep follow the state', () => {
     }
   });
 
-  it('beeps at once when the tank runs low and then every 20 ticks, only while thrusting', async () => {
+  it('beeps at once when the tank runs low and then every FUEL_LOW_BEEP_TICKS, only while thrusting', async () => {
     const { sfx, ctx } = await running();
     const beeps = (): number =>
       ctx.sources.filter((source) => source instanceof FakeOscillator && source.frequency.valueAt(source.startTime ?? 0) === 880)
@@ -590,11 +590,12 @@ describe('Sfx: the thrust loop and the low-fuel beep follow the state', () => {
       if (beeps() > before) starts.push(tick);
       ctx.advance(TICK);
     }
-    expect(starts).toEqual([0, 20, 40, 60]);
+    const every = Array.from({ length: Math.floor(61 / FUEL_LOW_BEEP_TICKS) + 1 }, (_, i) => i * FUEL_LOW_BEEP_TICKS);
+    expect(starts).toEqual(every);
     sfx.update(game({ fuel: 16, thrusting: false }));
     ctx.advance(1);
     sfx.update(game({ fuel: 16, thrusting: false }));
-    expect(beeps()).toBe(4);
+    expect(beeps()).toBe(every.length);
   });
 
   it('beeps once per FUEL_LOW_BEEP_TICKS of low fuel while a full tank burns down, starting on the first low tick', async () => {
@@ -610,8 +611,9 @@ describe('Sfx: the thrust loop and the low-fuel beep follow the state', () => {
         ctx.advance(TICK);
       }
       const beeps = ctx.sources.length - before - THRUST_LOOP.voices.length;
-      // With the shipped tank (80 ticks: 16 low) that is ONE beep: the open question noted at FUEL_LOW_BEEP_TICKS.
       expect(beeps, `tank of ${fuelTicks} ticks, ${low.length} of them low`).toBe(Math.ceil(low.length / FUEL_LOW_BEEP_TICKS));
+      // A warning repeats: with the shipped tank (80 ticks: 16 low) it beeps twice, not once.
+      if (fuelTicks === 80) expect(beeps).toBeGreaterThanOrEqual(2);
     }
   });
 

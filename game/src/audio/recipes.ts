@@ -248,12 +248,13 @@ export const GEM_RECIPES: readonly ShotRecipe[] = GEM_LADDER.map(gemRecipe);
 
 /**
  * How often the low-fuel beep repeats while the thruster burns the last FUEL_LOW_PERCENT of its tank,
- * ticks (docs/ART-AND-SOUND.md section 12). OPEN QUESTION for the owner of that document: with the
- * shipped tank of 80 ticks the low part lasts 16 ticks, shorter than this gap, so burning a full tank
- * beeps once, not repeatedly. A shorter gap (8 ticks) or a higher share (40 %) would make it repeat;
- * either is a change of this number or of FUEL_LOW_PERCENT, and Sfx.test.ts counts the beeps by formula.
+ * ticks (docs/ART-AND-SOUND.md section 12). The beep is a warning that REPEATS (section 12). With the
+ * shipped tank of 80 ticks the low part lasts 16 ticks: at the first 20 ticks it sounded once, 0.27 s
+ * before the tank ran dry; at 8 it sounds twice (16 and 8 ticks before), a quickening "beep beep" that
+ * reads as an alarm, still starting at the same moment. A larger tank gives more beeps (Sfx.test.ts
+ * counts them by formula). The beep (35 ms) stays shorter than the gap (133 ms).
  */
-export const FUEL_LOW_BEEP_TICKS = 20;
+export const FUEL_LOW_BEEP_TICKS = 8;
 
 const COG_NOTES: readonly Note[] = [note(NOTE.D5, 0.08), note(NOTE.FS5, 0.08), note(NOTE.A5, 0.08), note(NOTE.D6, 0.32)];
 

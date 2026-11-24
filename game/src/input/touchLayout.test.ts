@@ -4,7 +4,7 @@ import type { TouchTuning } from '../core/types';
 import { TUNING } from '../tuning';
 
 import { REFERENCE_TOUCH } from './testkit';
-import { CONTROL_IDS, hitTest, layoutControls, minimumPadSize } from './touchLayout';
+import { CONTROL_IDS, centreOnDevicePx, hitTest, layoutControls, minimumPadSize, onPadZone, snapRect, toDevicePx } from './touchLayout';
 import type { ControlId, ControlLayout, Rect, SafeInsets } from './touchLayout';
 
 /**
@@ -336,6 +336,17 @@ describe('layoutControls and hitTest on the device table (docs/PHASER4-NOTES.md,
       expect(hitTest(l, ALL, (l.actionZone.x + fire.x) / 2, fire.y + fire.h / 2, null), s.name).toBe('fire');
     }
   });
+
+  it('onPadZone is true exactly where hitTest finds a control', () => {
+    for (const s of TABLE) {
+      const l = layoutOf(s);
+      for (let x = 0; x < s.vw; x += 7) {
+        for (let y = 0; y < s.vh; y += 7) {
+          expect(onPadZone(l, x, y), `${s.name} at ${x}, ${y}`).toBe(hitTest(l, ALL, x, y, null) !== null);
+        }
+      }
+    }
+  });
 });
 
 describe('hitTest: sliding between LEFT and RIGHT', () => {
@@ -645,5 +656,44 @@ describe('the live touch numbers of src/tuning.ts', () => {
       );
     });
     expect(messages.join('\n')).toBe('');
+  });
+});
+
+describe('drawing on whole device pixels (the glyphs are pixel art)', () => {
+  const RATIOS = [1, 1.5, 2, 2.625, 2.75, 3, 3.5, 4.5];
+  const whole = (cssPx: number, dpr: number): boolean => Math.abs(cssPx * dpr - Math.round(cssPx * dpr)) < 1e-6;
+
+  it('every drawn button of every row of the device table has its four edges on device pixels, within half a pixel of the layout', () => {
+    for (const s of TABLE) {
+      const l = layoutOf(s);
+      for (const dpr of RATIOS) {
+        for (const id of CONTROL_IDS) {
+          const b = l.buttons[id];
+          const r = snapRect(b, dpr);
+          for (const v of [r.x, r.y, r.x + r.w, r.y + r.h]) expect(whole(v, dpr), `${s.name} ${id} at ${dpr}`).toBe(true);
+          expect(Math.abs(r.x - b.x)).toBeLessThanOrEqual(0.5 / dpr + 1e-9);
+          expect(Math.abs(r.x + r.w - (b.x + b.w))).toBeLessThanOrEqual(0.5 / dpr + 1e-9);
+        }
+      }
+    }
+  });
+
+  it('a glyph centred in a button lands on device pixels, at most half a device pixel off the true centre', () => {
+    for (const dpr of RATIOS) {
+      for (const space of [60, 64, 76, 36, 59.27]) {
+        for (const glyph of [16, 22, 33]) {
+          const s = toDevicePx(space, dpr);
+          const g = toDevicePx(glyph, dpr); // pixelCanvas makes glyphs a whole number of device px
+          const at = centreOnDevicePx(s, g, dpr);
+          expect(whole(at, dpr), `${space} ${glyph} at ${dpr}`).toBe(true);
+          expect(Math.abs(at - (s - g) / 2)).toBeLessThanOrEqual(0.5 / dpr + 1e-9);
+        }
+      }
+    }
+  });
+
+  it('the review\'s case: 740 x 360 at 2.75 put the FIRE glyph at device x 1602.004; now on a whole device pixel', () => {
+    expect(whole(toDevicePx(1602.004 / 2.75, 2.75), 2.75)).toBe(true);
+    expect(toDevicePx(1602.004 / 2.75, 2.75) * 2.75).toBeCloseTo(1602, 6);
   });
 });
