@@ -259,6 +259,28 @@ describe('layoutControls: where the buttons are', () => {
     expect(l.splitX).toBe(s.safe.left + T.moveMarginSide + T.moveButtonSize + T.moveButtonGap / 2);
   });
 
+  it("in a level without a thruster pack, FIRE takes THRUST's place (the slot beside JUMP), and its zone still holds it", () => {
+    for (const s of TABLE) {
+      const l = layoutControls(s.vw, s.vh, s.safe, T, { fireBesideJump: true });
+      const right = s.vw - s.safe.right;
+      const bottom = s.vh - s.safe.bottom;
+      if (l.scale < 1) continue;
+      expect(l.buttons.fire, s.name).toEqual({
+        x: right - T.thrustMarginSide - T.fireButtonSize,
+        y: bottom - T.thrustMarginBottom - T.fireButtonSize,
+        w: T.fireButtonSize,
+        h: T.fireButtonSize,
+      });
+      // Everything else where it always is.
+      const both = layoutOf(s);
+      for (const id of ['left', 'right', 'jump', 'thrust', 'pause'] as const) expect(l.buttons[id], `${s.name} ${id}`).toEqual(both.buttons[id]);
+      const f = l.buttons.fire;
+      const z = l.actionZone;
+      expect(f.x >= z.x && f.y >= z.y && f.x + f.w <= z.x + z.w && f.y + f.h <= z.y + z.h, `${s.name}: FIRE inside the action zone`).toBe(true);
+      expect(hitTest(l, { fire: true, thrust: false }, f.x + f.w / 2, f.y + f.h / 2, null), s.name).toBe('fire');
+    }
+  });
+
   it('puts LEFT and RIGHT bottom-left, JUMP bottom-right, FIRE left of JUMP, THRUST above JUMP and PAUSE on top', () => {
     for (const s of TABLE) {
       const l = layoutOf(s);

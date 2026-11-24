@@ -15,6 +15,8 @@ import { installRotateGuard, installTouchMode } from './shell/lifecycle';
 import { registerServiceWorker } from './shell/pwa';
 import { PlayScene } from './shell/scenes/PlayScene';
 import { TEXT } from './shell/scenes/strings';
+import { PHONE_FRAME_MS, PHONE_SCALE, PHONE_SIDEWAYS, PHONE_UPRIGHT } from './shell/rotateArt';
+import './shell/rotate.css';
 import { rotateDevicePerArt } from './shell/screenText';
 import { app, pad, pixelCanvas, safeProbe, setAppliedView, sfx, textGrid } from './shell/singletons';
 import { TUNING } from './tuning';
@@ -34,8 +36,10 @@ setAppliedView(first, dpr());
 const game = new Phaser.Game(gameConfig(first));
 registerServiceWorker(); // the offline app (src/shell/pwa.ts): production only, never in a frame, never throws
 
-// The rotate message, in the game's own pixel font (no browser text on screen), as large as the window allows:
-// redrawn when the window's width or pixel ratio changes it (a phone turned upright is the narrowest case).
+// The rotate message: a phone outline turning from upright to sideways (src/shell/rotateArt.ts; still under reduced
+// motion: src/shell/rotate.css) over the words in the game's own pixel font (no browser text on screen), as large
+// as the window allows: redrawn when the window's width or pixel ratio changes it (a phone turned upright is the
+// narrowest case). The phone is drawn PHONE_SCALE times the words' size and is narrower than they are.
 const rotateBox = document.getElementById('rotate');
 const rotateGrid = textGrid(TEXT.rotate);
 const rotateArtW = textWidth(TEXT.rotate);
@@ -46,7 +50,20 @@ const drawRotate = (): void => {
   const key = `${k}@${ratio}`;
   if (!rotateBox || key === rotateDrawn) return;
   rotateDrawn = key;
-  rotateBox.replaceChildren(pixelCanvas(rotateGrid, k / ratio));
+  const phone = document.createElement('div');
+  phone.className = 'rotate__phone';
+  const upright = pixelCanvas(PHONE_UPRIGHT, (k * PHONE_SCALE) / ratio);
+  const sideways = pixelCanvas(PHONE_SIDEWAYS, (k * PHONE_SCALE) / ratio);
+  upright.className = 'rotate__upright';
+  sideways.className = 'rotate__sideways';
+  phone.style.width = upright.style.width;
+  phone.style.height = upright.style.height;
+  phone.style.setProperty('--rotate-turn', `${2 * PHONE_FRAME_MS}ms`);
+  phone.append(upright, sideways);
+  const words = pixelCanvas(rotateGrid, k / ratio);
+  words.dataset.part = 'words';
+  rotateBox.style.gap = `${(6 * k) / ratio}px`; // six art px of the words' size between the phone and them
+  rotateBox.replaceChildren(phone, words);
 };
 
 let appliedDpr = dpr();

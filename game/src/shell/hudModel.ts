@@ -100,10 +100,13 @@ export const SCORE_COUNT_STEP = 10;
 
 /**
  * The score to show after `frames` more frames: up by SCORE_COUNT_STEP a frame, never past the real
- * score. A real score below the shown one (a new session) is shown at once: the bar never counts down.
+ * score. A real score below the shown one (a new session) is shown at once: the bar never counts down; so is
+ * the score at a level's start (`levelStart`: its intro card comes up), which no event of this level earned.
  */
-export function countScore(shown: number, target: number, frames: number): number {
-  if (target <= shown) return target;
+export function countScore(shown: number, target: number, frames: number, levelStart = false): number {
+  // A level's start (its intro card) shows the score carried into it at once: counting up from 00000 under the
+  // card and the ready gate of a CONTINUE (1230 points) looked like points being earned (the route watch).
+  if (levelStart || target <= shown) return target;
   return Math.min(target, shown + SCORE_COUNT_STEP * Math.max(0, frames));
 }
 
@@ -152,9 +155,9 @@ export const PIPS_LOW = 2;
 export const PIP_BLINK_FRAMES = 8;
 
 /** Whether pip `i` is drawn lit (lime) rather than empty (slate), `clock` frames into the level. */
-export function pipLit(i: number, lit: number, clock: number): boolean {
+export function pipLit(i: number, lit: number, clock: number, steady = false): boolean {
   if (i >= lit) return false;
-  if (lit <= PIPS_LOW && Math.floor(clock / PIP_BLINK_FRAMES) % 2 === 1) return false;
+  if (!steady && lit <= PIPS_LOW && Math.floor(clock / PIP_BLINK_FRAMES) % 2 === 1) return false;
   return true;
 }
 
@@ -180,6 +183,27 @@ export const PIP_W = 2;
 export const PIP_STEP = 3;
 /** The toast's row, under the bar (section 8). */
 export const TOAST_Y = 16;
+/**
+ * The bar is a band over the world (section 8): a `void` strip from the top of the view down to this many
+ * px (the bar's row, its 1 px shadow and a row of air), at STRIP_ALPHA. Without it the level's own crystals
+ * and wall tops sat in the bar's row beside the score and the cog, and read as part of the bar.
+ */
+export const STRIP_H = 14;
+/**
+ * Half dark is not enough under white text on an earthlight wall top. At 0.7 the brightest art still read as
+ * slate shapes behind the words (crystals beside `LEVEL 1`, a truss behind the score) and passed for icons of
+ * the bar (the route watch, 24 November 2026); at 0.85 they fade to a hint.
+ */
+export const STRIP_ALPHA = 0.85;
+/**
+ * While the `COG FOUND! AIRLOCK OPEN` toast shows, a band of the same dark hangs under the strip behind it,
+ * as wide as the words plus TOAST_PAD each side, down to this row: the toast is never gold on busy level art.
+ */
+export const TOAST_BAND_BOTTOM = 26;
+export const TOAST_PAD = 4;
+/** Score pop-ups never rise above this row (the strip and a row of air), nor above the toast's band while it shows. */
+export const POPUP_TOP = STRIP_H + 2;
+export const POPUP_TOP_UNDER_TOAST = TOAST_BAND_BOTTOM + 2;
 /**
  * Nothing of the bar comes closer than this to the glass's side edges, CSS px. Phones round their
  * corners, and Android reports a safe-area inset only for a cutout, never for a rounded corner: on the

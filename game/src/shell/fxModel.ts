@@ -23,6 +23,32 @@ export const POINTER_TICKS = 180;
 /** One ember rises from each fire tile on screen every this many ticks. */
 export const EMBER_EVERY_TICKS = 20;
 
+/**
+ * Where a score pop-up's top may be drawn at most: never higher than `minTop` px from the view's top edge
+ * (under the top bar's strip, or under the toast's band while it shows). `worldY` is where it would be drawn
+ * (world px), `camY` the scroll; the answer is the world y to draw it at.
+ */
+export function popupClampY(worldY: number, camY: number, minTop: number): number {
+  return Math.max(worldY, camY + minTop);
+}
+
+/**
+ * Where a pop-up for something scored at (`x`, `y`) appears: centred `lift` px above it, or, when the hero is
+ * rising through it (`rising`), beside it at its height, on the side away from where he travels (`side`: +1
+ * when he moves or faces right), so that he does not fly up into his own `+10`. `textW` is the text's width.
+ * Answers the centre x and the top y, whole px, into `out`.
+ */
+export function popupAnchor(x: number, y: number, lift: number, rising: boolean, side: 1 | -1, textW: number, out: { x: number; y: number }): { x: number; y: number } {
+  if (!rising) {
+    out.x = Math.round(x);
+    out.y = Math.round(y - lift);
+    return out;
+  }
+  out.x = Math.round(x - side * (8 + 2 + textW / 2));
+  out.y = Math.round(y - 4);
+  return out;
+}
+
 /** How far a pop-up has risen `age` frames after it appeared: whole px, 0 to POPUP_RISE_PX. */
 export function popupRise(age: number): number {
   return Math.round((POPUP_RISE_PX * Math.min(Math.max(age, 0), POPUP_FRAMES)) / POPUP_FRAMES);

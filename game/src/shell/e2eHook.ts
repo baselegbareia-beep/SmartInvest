@@ -16,8 +16,15 @@
  *                  every rendered frame inside the page, so no round trip lets a tick slip by)
  *   scenes()       the keys of the running scenes, in draw order
  *   menu()         the buttons of the menu on screen and where to tap them (CSS px)
+ *   menuText()     the words of the menu on screen (headings, the title's prompt) and whether each is drawn now
  *   heroOnPage()   where the hero's sprite was last drawn, in CSS px of the page (to check it is clear of the pad)
+ *   cellOnPage(c, r) where a level cell (the airlock's, a crystal's) was last drawn, in CSS px of the page
+ *   look()         what the last frame drew of the effects: scroll with and without the shake, particles alive,
+ *                  the score pop-ups and how far they have risen,
+ *                  the screen flash and fade, the hero's frame (for the reduced-motion test)
  *   hud()          what the HUD shows: the intro card's lines, the toast, the banner, whether its clocks are held
+ *   hudPixels(r)   how many pixels of a rectangle of the view the HUD scene changes, whatever draws them: the
+ *                  frame is drawn again as it stands (nothing is stepped), without the HUD scene and with it
  *   listeners()    listeners on each scene's own event emitter, to see that scene restarts leave none behind
  *   sound()        the audio's state, for tests of the unlock and the mute
  */
@@ -30,7 +37,7 @@ import { findLevel } from '../levels';
 
 import { HudScene } from './scenes/HudScene';
 import type { HudShown } from './scenes/HudScene';
-import { openMenuTargets } from './scenes/menu';
+import { openMenuTargets, openMenuTexts } from './scenes/menu';
 import { PlayScene } from './scenes/PlayScene';
 import type { PlayData, PlayMode } from './scenes/PlayScene';
 import { devStart } from './scenes/sessions';
@@ -82,13 +89,59 @@ export interface E2EHook {
    * CSS px of the page: `{ label: 'RESUME', focused, x, y, w, h }`. Empty when no menu is up.
    */
   menu(): { readonly label: string; readonly focused: boolean; readonly x: number; readonly y: number; readonly w: number; readonly h: number }[];
+  /** The text entries of the menu on screen (headings, the title's prompt), each with whether it is drawn now (the prompt blinks). */
+  menuText(): { readonly text: string; readonly shown: boolean }[];
   /** The hero's 16 px sprite as last drawn, in CSS px of the page; null before a level. */
   heroOnPage(): { readonly x: number; readonly y: number; readonly w: number; readonly h: number } | null;
+  /**
+   * What the last frame drew of the effects: `scrollX`/`scrollY` as Phaser drew them (the shake included) and
+   * `camX`/`camY`, the camera's own whole-pixel scroll; the shake; particles alive; the screen flash's and the
+   * fade's strength (0 = none); the hero's frame, whether he is shown, and whether he is filled (a death's flash).
+   */
+  look(): ReturnType<PlayScene['lookNow']>;
+  /** The level cell at (col, row), 0-based, as last drawn (the camera's scroll), in CSS px of the page; null before a level. */
+  cellOnPage(col: number, row: number): { readonly x: number; readonly y: number; readonly w: number; readonly h: number } | null;
   /** What the HUD scene shows, or null while it is not running. */
   hud(): HudShown | null;
+  /**
+   * How many pixels of `rect` (art px of the view, which are the canvas's own pixels) the HUD scene changes now,
+   * whatever kind of object draws them (a Graphics or a Text as much as an Image): the frame is drawn again as it
+   * stands, stepping nothing, once with the HUD scene hidden and once with it shown. Null while it is not running.
+   */
+  hudPixels(rect: ViewRect): number | null;
   /** Listeners on each scene's `sys.events` (every scene, running or not), by scene key. */
   listeners(): Record<string, number>;
   sound(): { readonly state: string; readonly muted: boolean; readonly plays: number; readonly thrusting: boolean };
+}
+
+/** A rectangle in art px of the view. */
+export interface ViewRect {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+}
+
+/**
+ * Draws the frame again as it stands (no scene is updated, nothing is stepped) and copies `rect` of the canvas,
+ * clipped to it. Read in the same task as the drawing, so WebGL's drawing buffer still holds the frame.
+ */
+function drawAndRead(game: Phaser.Game, rect: ViewRect): Uint8ClampedArray {
+  const renderer = game.renderer;
+  renderer.preRender();
+  game.scene.render(renderer);
+  renderer.postRender();
+  const x = Math.max(0, Math.floor(rect.x));
+  const y = Math.max(0, Math.floor(rect.y));
+  const w = Math.max(1, Math.min(game.canvas.width, Math.ceil(rect.x + rect.w)) - x);
+  const h = Math.max(1, Math.min(game.canvas.height, Math.ceil(rect.y + rect.h)) - y);
+  const copy = document.createElement('canvas');
+  copy.width = w;
+  copy.height = h;
+  const ctx = copy.getContext('2d');
+  if (!ctx) throw new Error('__E2E__.hudPixels: no 2D context');
+  ctx.drawImage(game.canvas, x, y, w, h, 0, 0, w, h);
+  return ctx.getImageData(0, 0, w, h).data;
 }
 
 function snapshot(game: GameState, mode: PlayMode): E2EState {
@@ -122,6 +175,14 @@ export function installE2EHook(game: Phaser.Game): void {
     game.scene.start('Play', data); // a running Play is shut down (stopping Hud and Pause) and started again
   };
 
+  /** Art px of the view to CSS px of the page: the canvas is placed and enlarged by a CSS transform (applyLayout). */
+  const onPage = (r: { x: number; y: number; w: number; h: number } | null): { x: number; y: number; w: number; h: number } | null => {
+    if (!r) return null;
+    const box = game.canvas.getBoundingClientRect();
+    const k = box.width / Math.max(1, game.scale.width);
+    return { x: box.left + r.x * k, y: box.top + r.y * k, w: r.w * k, h: r.h * k };
+  };
+
   const level = (id: string): ReturnType<typeof findLevel> & object => {
     const found = findLevel(id);
     if (!found) throw new Error(`__E2E__: there is no level "${id}"`);
@@ -141,11 +202,14 @@ export function installE2EHook(game: Phaser.Game): void {
     replay(id, script, ticksPerFrame = 1, options = {}) {
       const levels = typeof id === 'string' ? [level(id)] : id.map(level);
       if (!Number.isInteger(ticksPerFrame) || ticksPerFrame < 1) throw new Error('__E2E__.replay: ticksPerFrame must be a whole number of at least 1');
+      // Numbered as `?level=` would number its first level (`LEVEL 8` for level-08), counting on from there.
+      const first = levels[0] ? devStart(levels[0]).firstNumber : undefined;
       return new Promise<ReplayResult>((resolve) => {
         startPlay({
           levels,
           start: {},
           saved: false,
+          ...(first === undefined ? {} : { firstNumber: first }),
           replay: {
             script,
             ticksPerFrame,
@@ -200,16 +264,35 @@ export function installE2EHook(game: Phaser.Game): void {
         h: t.hit.h * k,
       }));
     },
+    menuText: () => openMenuTexts(),
     heroOnPage() {
-      const r = play()?.heroOnView() ?? null;
-      if (!r) return null;
-      const box = game.canvas.getBoundingClientRect();
-      const k = box.width / Math.max(1, game.scale.width);
-      return { x: box.left + r.x * k, y: box.top + r.y * k, w: r.w * k, h: r.h * k };
+      return onPage(play()?.heroOnView() ?? null);
+    },
+    look: () => play()?.lookNow() ?? null,
+    cellOnPage(col, row) {
+      return onPage(play()?.cellOnView(col, row) ?? null);
     },
     hud() {
       const scene = game.scene.getScene('Hud');
       return scene instanceof HudScene && game.scene.isActive('Hud') ? scene.shown() : null;
+    },
+    hudPixels(rect) {
+      const scene = game.scene.getScene('Hud');
+      if (!(scene instanceof HudScene) || !game.scene.isActive('Hud')) return null;
+      const visible = scene.sys.settings.visible;
+      try {
+        scene.sys.setVisible(false);
+        const without = drawAndRead(game, rect);
+        scene.sys.setVisible(true);
+        const withHud = drawAndRead(game, rect);
+        let changed = 0;
+        for (let i = 0; i < withHud.length; i += 4) {
+          if (withHud[i] !== without[i] || withHud[i + 1] !== without[i + 1] || withHud[i + 2] !== without[i + 2]) changed += 1;
+        }
+        return changed;
+      } finally {
+        scene.sys.setVisible(visible);
+      }
     },
     listeners() {
       const counts: Record<string, number> = {};

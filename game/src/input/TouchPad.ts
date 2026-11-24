@@ -27,8 +27,8 @@ import type { TouchTuning } from '../core/types';
 
 import { BUTTONS } from './Controls';
 import type { Controls } from './Controls';
-import { CONTROL_IDS, centreOnDevicePx, hitTest, layoutControls, onPadZone, snapRect, toDevicePx } from './touchLayout';
-import type { ControlId, ControlLayout, Rect, SafeInsets, ShownItems } from './touchLayout';
+import { BOTH_ITEMS, CONTROL_IDS, centreOnDevicePx, hitTest, layoutControls, onPadZone, snapRect, toDevicePx } from './touchLayout';
+import type { ControlId, ControlLayout, ItemSlots, Rect, SafeInsets, ShownItems } from './touchLayout';
 
 import './touchpad.css';
 
@@ -167,6 +167,11 @@ export interface TouchPad {
    * `setItems(hasBlaster, hasThruster, bolt.active, fuel === 0)`. Cheap when nothing changed.
    */
   setItems(fire: boolean, thrust: boolean, fireDimmed?: boolean, thrustDimmed?: boolean): void;
+  /**
+   * Where the item buttons go in the level about to be played (`layoutControls`' ItemSlots): FIRE beside JUMP in a
+   * level without a thruster pack. Call it when a level starts, never during one: a button must not move under a thumb.
+   */
+  setSlots(slots: ItemSlots): void;
   /** Measures the window and the safe area again. The pad does this by itself on every resize and rotation. */
   layout(): void;
   /**
@@ -277,12 +282,13 @@ export function createTouchPad(parent: HTMLElement, controls: Controls, t: Touch
     };
   };
 
+  let slots: ItemSlots = BOTH_ITEMS;
   const relayout = (): void => {
     const box = root.getBoundingClientRect();
     if (box.width <= 0 || box.height <= 0) return; // not on the page: keep the last layout
     originX = box.left;
     originY = box.top;
-    const l = layoutControls(box.width, box.height, readInsets(), t);
+    const l = layoutControls(box.width, box.height, readInsets(), t, slots);
     root.style.setProperty('--pad-scale', String(l.scale));
     // Drawn on whole device pixels: the buttons, their rims and the glyphs inside them (pixel art). The hit test
     // keeps the exact layout; the two differ by less than half a device pixel.
@@ -406,6 +412,11 @@ export function createTouchPad(parent: HTMLElement, controls: Controls, t: Touch
       applyVisibility();
     },
     isVisible: () => visible,
+    setSlots(next) {
+      if (next.fireBesideJump === slots.fireBesideJump) return;
+      slots = next;
+      relayout();
+    },
     setItems(fire, thrust, fireDimmed = false, thrustDimmed = false) {
       const items = (fire ? 1 : 0) | (thrust ? 2 : 0) | (fireDimmed ? 4 : 0) | (thrustDimmed ? 8 : 0);
       if (items === lastItems) return;

@@ -114,7 +114,7 @@ So a pad on the required route is at least 2 tiles wide. A 1-tile pad with a dro
 | Hardest | 10 to 13 | The level 4-tile gap. 5-tile gap dropping 3 | Once in the whole game, in level 10 |
 | Forbidden | Under 10, or impossible | Everything else, and any landing pad 1 tile wide with a drop behind it | Never on the required route. Fine for an optional crystal if failing costs nothing |
 
-**The comfort proof does not check these classes.** It shows that a route exists without coyote time and jump buffer, with weaker run, jump and fuel. It does not measure how much time the player has: the search finds jumps whose window is 2 frames. So a tight or hardest jump passes the test like any other. The classes are kept by the person who builds the level and checked by the person who reviews it, jump by jump, from these tables. Whether the one hardest jump of the game stays is decided at the owner's playtest of level 10.
+**The comfort proof does not check these classes.** It shows that a route exists without coyote time and jump buffer, with weaker run, jump and fuel. It does not measure how much time the player has: the search finds jumps whose window is 2 frames. So a tight or hardest jump passes the test like any other. The classes are kept by the person who builds the level and checked by the person who reviews it, jump by jump, from these tables. The one hardest jump of the plan, the level 4-tile gap in level 10, was lowered to the tight class before the owner's playtest (section 8); whether it comes back is decided there.
 
 One dependency to know: with the clumsy-thumb numbers the jump is 2.98 tiles high, so every 3-tile step is climbed only thanks to the 3 px ledge catch (`ledgeCatchPx`), and needs jump held for 14 frames instead of 12.
 
@@ -164,7 +164,7 @@ A level is done when every line is ticked.
 - [ ] Every thruster section starts at a pack and stays inside 6 tiles of climb or 8 of level flight (9 with 4 clear tiles above the take-off). Nothing on the route needs two buttons of the right thumb at once.
 - [ ] Every shot the route needs can be made from the ground in the enemy's row (rule 9).
 - [ ] No crystal is out of reach: `LEVELS_CRYSTALS=1 npx vitest run tests/levels.test.ts` prints the crystals the search could not collect, and prints none for this level. About a third of the crystals are off the route.
-- [ ] The validator's own route was watched once in the browser at normal speed, and it looks like something a person would do.
+- [ ] The validator's own route was watched once in the browser at normal speed, and it looks like something a person would do. (Levels 1 to 10, 24 November 2026: watched, by replaying each proof in the built game at one tick per frame on seven windows and looking at its screenshots; the routes do not look like a person's, so that half is left to the owner's playtest. How it was done, what it found and where the results are: section 8, "The browser watch". To watch a route again, see there too.)
 - [ ] The layout is original and keeps clear of the list in rule 11.
 - [ ] Thruster air is small (rule 12): the level's two proofs together cost under 10 million steps in the test's printout.
 
@@ -300,7 +300,7 @@ Both rooms were put through a reference implementation of the validator, written
 
 ## 8. The ten levels as built
 
-Built one at a time and reviewed against the checklist of section 4, then put together and measured as one campaign on 24 November 2026, on the live numbers. A review of the whole campaign followed the same day, and levels 2, 5, 6, 7, 8 and 10 were changed after it (the last list of this section). Each file's `;` comments hold the detail: every required jump with its measured window, the three beats, and each difference from section 5 with its reason. This section is the summary. One checklist line is still open for all ten: the validator's route has not been watched in the browser, because the shell was being built in the same folder at the time.
+Built one at a time and reviewed against the checklist of section 4, then put together and measured as one campaign on 24 November 2026, on the live numbers. A review of the whole campaign followed the same day, and levels 2, 5, 6, 7, 8 and 10 were changed after it (the last list of this section). A second review found a way to leave level 10's cog behind, deaths a player could not see coming in levels 6, 8 and 10, two crystals no jump reached and levels 6 and 8 ending alike, and levels 6, 8 and 10 were changed again (marked "second review" in that list). Each file's `;` comments hold the detail: every required jump with its measured window, the three beats, and each difference from section 5 with its reason. This section is the summary. The checklist line that has the validator's route watched in the browser was done last, for all ten levels at once, after the second review ("The browser watch", below); it changed the shell, not the levels.
 
 ### What is in them
 
@@ -315,11 +315,11 @@ Built one at a time and reviewed against the checklist of section 4, then put to
 | 7 | Thruster Loft | 44 x 24 | 18 | 3 J | - | thruster | 21,16: the 7-tile flight over the coolant pond, from the pack at its edge (85 / 89) | 22 (the loft trench) |
 | 8 | Crucible Run | 64 x 16 | 18 | 4 J | - | thruster | 38,9: the 15-tile crossing, 8 tiles to the floating pack and 7 more (45 / 32) | 18 (the first plain jump) |
 | 9 | Sorting Line | 56 x 24 | 22 | B, 2 J | 4 Cinderpegs, 3 Arc Moths (2 M, 1 H) | blaster, thruster | 26,15: the 4-tile coolant gap landing 1 tile lower (15 / 6, tight) | 15 |
-| 10 | Heart Furnace | 64 x 24 | 26 | B, 4 J | 3 Cinderpegs, 3 Arc Moths (3 M) | blaster, thruster | 29,21: the level 4-tile gap on the way out (11 / 2, the game's one hardest jump) | 11 |
+| 10 | Heart Furnace | 64 x 24 | 26 | B, 4 J | 3 Cinderpegs, 3 Arc Moths (3 M) | blaster, thruster | 29,21: the 4-tile gap on the way out, dropping 1 tile (15 / 6, tight) | 15 |
 
 - **Totals:** 180 crystals, 12 Cinderpegs and 4 blasters, as planned; 13 thruster packs, one more than planned (level 10's two shafts); 12 Arc Moths, two more than planned (level 6's sealed first moth and its fifth vent). Every level has its planned size.
-- **Points:** level 6's first moth is sealed in its slot, so no bolt reaches it and it never pays. Every other enemy can be shot: from the ground in its row, and level 9's H moth in the air (walking or hopping off the lift's lip and pressing FIRE, measured by the campaign review). So the levels pay at most 6,500 points, and 8,000 with three lives left. The plan's totals (section 5) and `docs/SPEC.md` say 6,400 and 7,900: the 100 is level 6's moth in vent 5.
-- **Window classes:** levels 1 to 8 use ordinary jumps only. Level 9 has its one tight jump, and level 10 the game's one hardest jump and no tight one.
+- **Points:** level 6's first moth is sealed in its slot, so no bolt reaches it and it never pays. Every other enemy can be shot: from the ground in its row, and level 9's H moth in the air (walking or hopping off the lift's lip and pressing FIRE, measured by the campaign review). So the levels pay at most 6,500 points, and 8,000 with three lives left, as `docs/SPEC.md` now says. The plan's totals (section 5) say 6,400 and 7,900: the 100 is level 6's moth in vent 5.
+- **Window classes:** levels 1 to 8 use ordinary jumps only. Levels 9 and 10 have one tight jump each. No jump in the game is of the hardest class: level 10's 4-tile gap was one (11 / 2) until the second review raised the bank before it by 1 tile, so that it drops 1.
 - **Level 8's 18:** the 3-tile gap rising 1 that the plan chose. It reads 17 from a standstill at the pillar's very edge, which is not how the tables measure.
 
 ### What the proofs cost, and how long the routes take
@@ -338,28 +338,28 @@ How the time columns are measured:
 | 3 | 0.02 | 0.01 | | 1.09 | 481 / 612 (10.2 s) | 632 (10.5 s) | 60 | 20 to 24 s | 29 s |
 | 4 | 0.12 | 0.07 | | 2.43 | 1076 / 1169 (19.5 s) | 1212 (20.2 s) | 110 | 37 to 44 s | 50 s |
 | 5 | 0.03 | 0.03 | No blaster: `blocked-by-enemies` (guided), 2.55 | 1.22 | 614 / 866 (14.4 s) | 966 (16.1 s) | 86 | 29 to 34 s | 32 s |
-| 6 | 0.02 | 0.02 | | 1.45 | 674 / 911 (15.2 s) | 933 (15.6 s) | 76 | 25 to 30 s, plus the moths | 39 s |
+| 6 | 0.02 | 0.02 | | 1.40 | 666 / 879 (14.7 s) | 906 (15.1 s) | 76 | 25 to 30 s, plus the moths | 39 s |
 | 7 | 0.02 | 0.07 | No thruster: `trophy-unreachable` (map), 0.35 | 12.30 | 849 / 939 (15.7 s) | 961 (16.0 s) | 94 | 31 to 37 s | 41 s |
-| 8 | 0.10 | 0.08 | No thruster: `trophy-unreachable` (map), 0.17 | 8.56 | 772 / 928 (15.5 s) | 906 (15.1 s) | 78 | 26 to 31 s | 42 s |
+| 8 | 0.04 | 0.07 | No thruster: `trophy-unreachable` (map), 0.17 | 7.28 | 775 / 947 (15.8 s) | 937 (15.6 s) | 74 | 25 to 29 s | 42 s |
 | 9 | 0.05 | 0.03 | No blaster: `no-route` (quick), 0.45. No thruster: `trophy-unreachable` (map), 2.50 | 14.29 | 1652 / 1736 (28.9 s) | 1847 (30.8 s) | 167 | 56 to 67 s | 71 s |
-| 10 | 0.06 | 0.05 | No blaster: `no-route` (quick), 0.80. No thruster: `trophy-unreachable` (map), 2.55 | 27.68 | 952 / 1767 (29.4 s) | 1785 (29.8 s) | 170 | 57 to 68 s | 85 s |
+| 10 | 0.06 | 0.04 | No blaster: `no-route` (quick), 0.80. No thruster: `trophy-unreachable` (map), 2.55 | 15.04 | 963 / 1772 (29.5 s) | 1862 (31.0 s) | 173 | 58 to 69 s | 85 s |
 
 What the cost columns show:
 - **Rule 12:** a level's two proofs cost 0.03 M to 0.47 M. The alarm is at 10 M.
-- **All twenty proofs:** 1.26 M together.
+- **All twenty proofs:** 1.20 M together.
 - **The seven `@requires` runs:** 9.37 M. Each one ended in a real verdict; none ended `budget-exceeded`.
-- **The whole levels test** (with `test.txt` and `debug.txt`): 16.35 M of the 90 M budget, in about 5 s of validator time.
-- **The crystal runs:** they found no unreachable crystal in any file. On the four levels with packs, a map-first run costs 8.6 M to 27.7 M (level 10, with four packs, the most). They are not counted against the budget.
+- **The whole levels test** (with `test.txt` and `debug.txt`): 16.27 M of the 90 M budget, in about 5 s of validator time.
+- **The crystal runs:** they found no unreachable crystal in any file. On the four levels with packs, a map-first run costs 7.3 M to 15.0 M (level 10, with four packs, the most; 27.7 M before the second review moved its cog and pack 3). They are not counted against the budget.
 
 **The campaign as one game.** Suite (d) of the levels test plays the ten normal proofs one after another in one session, the way the game chains the levels:
-- It wins the game with no death in 10,266 ticks of play: 2.9 minutes at the validator's pace.
-- The score is 4,830 points in the levels (the route takes only the crystals on its way and shoots only what it must) and 1,500 for three lives left.
+- It wins the game with no death in 10,258 ticks of play: 2.8 minutes at the validator's pace.
+- The score is 4,840 points in the levels (the route takes only the crystals on its way and shoots only what it must) and 1,500 for three lives left.
 
 **Clear times against the plan.**
-- **Total:** the ten routes add up to about 970 tiles. That makes a person's clean run about 5.4 to 6.5 minutes, plus the waits for enemies. The plan says 7.3 minutes.
+- **Total:** the ten routes add up to about 970 tiles. That makes a person's clean run about 5.4 to 6.5 minutes, plus the waits for enemies. The plan says 7.3 minutes; `docs/SPEC.md` now says about 6.
 - **By level:** levels 1, 2 and 5 come close to their planned times; the others come to 60 to 95 % of theirs before the waits (level 6 has seven moth crossings to wait for, level 8 three flights to line up, level 10 both).
-- **The order:** the three shortest routes are levels 1 to 3, and level 10's is the longest, by route (170 tiles against level 9's 167) and by the validator's time (1,767 ticks against 1,736). The saw-tooth of section 5 shows in the lengths too: 65, 64, 60, then 110 for level 4, 86, 76, 94 and 78 for levels 5 to 8, then 167 and 170.
-- **Below the floor of `docs/SPEC.md`:** levels 2 and 3 come to 20 to 26 s by this measure, against its "25 to 90 seconds". A person stopping on level 3's pads, as its hint asks, takes longer; the owner's playtest decides.
+- **The order:** the three shortest routes are levels 1 to 3, and level 10's is the longest, by route (173 tiles against level 9's 167) and by the validator's time (1,772 ticks against 1,736). The saw-tooth of section 5 shows in the lengths too: 65, 64, 60, then 110 for level 4, 86, 76, 94 and 74 for levels 5 to 8, then 167 and 173.
+- **`docs/SPEC.md`:** it said "25 to 90 seconds" a level and "about 7 minutes" for all ten, the plan's numbers. Levels 2 and 3 come to 20 to 26 s by this measure and level 10 to 58 to 69 s, so it now says 20 to 70 seconds and about 6 minutes. A person stopping on level 3's pads, as its hint asks, takes longer; the owner's playtest decides.
 - **Not measurable by proofs:** a first clear (18.5 minutes in the plan) and the expected deaths. The proofs never die.
 
 ### The ramp
@@ -377,7 +377,7 @@ The table counts the moments on the required route where a miss costs a life. Th
 | 7 | Hold thrust to fly. Watch the fuel. | One coolant pond | 1: the pond (the first flight falls back into the start room; the shaft cannot be missed) | 22 |
 | 8 | Fly far. Refuel in the air. | A floor of fire | 7: three flights, two plain jumps out and the same two back | 18 |
 | 9 | Clear the way, then fly. | Spikes, coolant, fire, both enemies (no open pit) | About 9: the first Cinderpeg on deck 1 and its two spike beds, the moth in lift A, two moth gaps, the tight gap, the last platform's Cinderpeg, the fire bed on deck 3 | 15 |
-| 10 | Relight the Heart. Then get home. | Everything | About 12: a spike bed, two pad gaps, the 4-tile gap, two corridor Cinderpegs, two moth vents, the fire pit in the Heart, the flight over the flue, the moth gap, the tunnel's Cinderpeg | 11 |
+| 10 | Relight the Heart. Then get home. | Everything | About 12: a spike bed, two pad gaps, the 4-tile gap, two corridor Cinderpegs, two moth vents, the fire pit in the Heart, the flight over the flue, the moth gap, the tunnel's Cinderpeg | 15 |
 
 This is the saw-tooth of section 5:
 - The pressure rises through levels 2 and 3.
@@ -393,15 +393,17 @@ Each level brings its own idea, and no two look alike. Rendered whole and side b
 | 3 | Pillar tops over a channel |
 | 4 | A zig-zag chimney |
 | 5 | A low corridor, an island and a roofed pen, with the cog up on the roof |
-| 6 | A row of vents under ducts, the last two crossed there and back |
+| 6 | A row of vents under ducts, the last two crossed there and back to a block under a beam |
 | 7 | Stations rising to a loft |
-| 8 | A roofed tunnel over fire, the last two jumps there and back |
+| 8 | A roofed tunnel over fire, the last two jumps there and back to a flat bank |
 | 9 | Three snaking decks |
 | 10 | A there-and-back: a low hall out, two shafts, a loop in the Heart, a flue and a catwalk home |
 
 Levels 2 and 3 share the most: both are 14 rows high and run east. But level 2 has open pits and spike beds and ends by climbing a heap, while level 3 has evenly spaced pillar tops over coolant.
 
-Where the cog is: on the way, near the end, in levels 2, 3, 7 and 9; a place to go to and come back from in levels 1 and 4 (the hook, the chimney); fetched from a branch in levels 5 (the pen's roof), 6 and 8 (past the airlock); and at the far end of a loop in level 10.
+Where the cog is: on the way, near the end, in levels 2, 3, 7 and 9; a place to go to and come back from in levels 1 and 4 (the hook, the chimney); fetched from a branch in levels 5 (a step on the pen's roof), 6 (a block under a beam, past the airlock) and 8 (the floor of the bank's corner, past the airlock); and hanging in a well at the far end of a loop in level 10.
+
+Levels 6 and 8 still share a plan: the airlock right after the hardest obstacle, then two more obstacles to the cog in the east, crossed there and back. Until the second review both cogs also sat on a block 2 tiles high in the east corner; level 8's now lies on the floor. The obstacles differ (moth vents against plain jumps over fire), and so do the levels' ideas.
 
 ### Changes to the plan, and why
 
@@ -434,9 +436,10 @@ Where the cog is: on the way, near the end, in levels 2, 3, 7 and 9; a place to 
   - The airlock is at column 53.
 - **Level 6.**
   - A fifth Arc Moth, sealed in a slot that Sprue walks under, so the first meeting costs nothing.
-  - A fifth vent, with a sixth moth, and the cog on a block at the east end past it. The airlock stands at column 41, right after the hardest vent, so the cog is fetched and vents 4 and 5 are crossed back from their east lips, the unsafe ones (the twist). The route went from about 54 tiles to about 77.
+  - A fifth vent, with a sixth moth, and the cog on a block at the east end past it. The airlock stands at column 41, right after the hardest vent, so the cog is fetched and vents 4 and 5 are crossed back from their east lips, the unsafe ones (the twist). The route went from about 54 tiles to about 77 (76 as the level stands after the second review).
   - So the cog no longer floats over vent 4, where a short hop crossed under it.
   - Vent 4 is 2 tiles wide, not 3, so the last jump is easier than the hardest one.
+  - Second review: a beam hangs 1 tile above the cog's block (row 8, cols 56-58), so every jump off it west is a short arc onto the 2-tile floor before vent 5. Without it a jump held 7 frames or more hit the east face of vent 5's duct and dropped into the vent; with the moths, LEFT and JUMP held off the block died in all 300 phases of vent 5's moth, and now lands safely in all 300.
 - **Level 7.**
   - The pond is 7 tiles wide, not 8. The plan's 40 / 25 frames was measured over an open pit, where a late press still flies out. Over coolant those presses die: 8 tiles gave 23 / 11, and 7 give 34 / 22.
   - Pack 2 hangs over the pond's edge, not 3 tiles before it. From there, RIGHT and THRUST held from pack 1 on, the input station 1 teaches, ran the tank dry over the pond. Now any press from the cliff top on crosses (85 / 89), and the fuel lesson is the shaft's, where running dry is free.
@@ -444,11 +447,13 @@ Where the cog is: on the way, near the end, in levels 2, 3, 7 and 9; a place to 
 - **Level 8.**
   - The long crossing is 15 tiles (8 + 7), not 16. Eight tiles for the second leg left the comfort tank dry over the fire.
   - A second lintel hangs after the floating pack. Without it, THRUST from the middle of pillar 2 carried Sprue over the pack, and pulsed thrust crossed without it.
-  - Pillar 1 is 5 tiles wide, so a flight stopped by the first lintel lands 2 tiles from the fire.
+  - Pillar 1 is 6 tiles wide, so a flight stopped by the first lintel lands 3 tiles from the fire (RIGHT may stay held 33 frames after touchdown).
+  - Second review: the first lintel ends over pillar 1 (cols 18-20), and its tip hangs to 1 tile above the pillar's last tile, which is one tile further east; flight 2 is 7 tiles, not 8. The first build's lintel was 5 tiles long (cols 18-22), 3 of them over the fire, and 2 tiles above the pillar: a THRUST pressed a tile or two before it lifted Sprue a little, held him under it while the tank burned, and dropped him into the fire short of pillar 2, between the safe early presses and the winning ones (17 deadly frames from the pillar's west end, 31 with clumsy thumbs). Now an early press lifts him against the lintel's face and sets him back on the pillar, and every later press up to just after the edge wins: 27 / 30 frames, 26 / 30 when everything is let go at touchdown on pillar 2, 19 / 30 when let go 8 frames after.
   - The plain jumps come rising first, so the tightest window is not the last obstacle.
   - Pack 2 hovers over pillar 1, so the idea is first met where a miss is free.
   - Pack 1 hangs over the fire's edge, not 4 tiles before it: THRUST held from the pack crossed into the fire's middle and no further.
-  - The airlock is on pillar 3, where the crossing lands, and the cog on a block in the far corner, past the plain jumps, which are crossed there and back. The route went from about 61 tiles to about 78.
+  - The airlock is on pillar 3, where the crossing lands, and the cog in the far corner, past the plain jumps, which are crossed there and back. The route went from about 61 tiles to about 78.
+  - Second review: the cog lies on the bank's floor, not on a block 2 tiles high, so level 8 does not end like level 6. The route is about 74 tiles.
 - **Level 9.**
   - The Cinderpeg that makes the blaster necessary walks a tunnel 1 tile high on deck 1, before the first pack (rule 9). That is why its `@requires blaster` run decides in 0.45 M.
   - The combined beat's Cinderpeg walks a tunnel 1 tile high behind a porch at the top of lift B. On the plan's open lip, a fuelled Sprue flew past it.
@@ -456,18 +461,35 @@ Where the cog is: on the way, near the end, in levels 2, 3, 7 and 9; a place to 
   - Deck 2's coolant lies flush with the floor, about a frame tighter than a pit.
 - **Level 10.**
   - The airlock is in a room over the start, reached at the very end by a drop off the top catwalk. A death keeps the cog and puts Sprue back on the start, so an airlock the start can reach lets a death skip the whole way home.
-  - The game's hardest jump, the level 4-tile gap, is on the way out, a sixth of the way along the route: a miss costs about 30 tiles. The first build had it on the catwalk home at three quarters of the route, where each miss re-ran the whole way out. The catwalk's gap is now an ordinary 3-tile gap with a moth over it.
-  - Two shafts, each with a pack at its foot, and the cog at the far end of a loop in the Heart (out along a lower path, up a well past the cog, back along a crawlway), so it cannot be left behind. The plan's one shaft with a moth sweeping its lip was level 9's lift A again; the H moth went with it, and the third moth bobs over the catwalk gap. Four packs, not three.
+  - The level's hardest jump, the 4-tile gap, is on the way out, a sixth of the way along the route: a miss costs about 30 tiles. The first build had it on the catwalk home at three quarters of the route, where each miss re-ran the whole way out. The catwalk's gap is now an ordinary 3-tile gap with a moth over it.
+  - Second review: the 4-tile gap drops 1 tile (15 / 6, tight), not level (11 / 2, the game's one jump of the hardest class). A death keeps the cog and puts Sprue back on the start, so every death after the gap (8 of the level's 12 deadly moments) means jumping it again, with a 2-frame window for clumsy thumbs. The run-up bank (cols 23-27) is raised 1 tile for it, which is section 5's fallback, made where the gap now is; the hop onto the bank from the coolant pad now rises 1 (29 / 20). Emptying row 21 at cols 23-27 restores the level gap.
+  - Two shafts, each with a pack at its foot, and the cog at the far end of a loop in the Heart (out along a lower path, up a well through the cog, back along a crawlway). The plan's one shaft with a moth sweeping its lip was level 9's lift A again; the H moth went with it, and the third moth bobs over the catwalk gap. Four packs, not three.
+  - Second review: the cog hangs at the top of the well (59,4), level with the block's top, so every way from the lower path onto the block and the crawlway passes through it. At the well's foot (59,7), as first built, a running jump east pressed a tile or so before it cleared it and landed on the block (9 of 41 press frames), and the way home without it ended in the airlock room, shut, with no hazard and no way out (rule 7). With fire in the new cell and the cog moved to the tunnel, the map of everything Sprue can reach finds no route.
+  - Second review: pack 3 hangs over the flue's first column, under the lintel (44,7), not on the lip where the drop lands (48,7). From there THRUST had to be pressed while Sprue was under the lintel; a later press dropped him in the fire, and with clumsy thumbs so did 6 earlier ones. Now any press before walking off the lip wins (50 / 52 frames from the drop's landing with an empty tank; with fuel left from shaft 2 an early press sets him back on the lip, then 24 / 25 win), and no press dies early.
   - The corridor's first lane is 1 tile high, not 2. In a lane 2 tiles high a hop held exactly 3 frames slipped past its Cinderpeg (47 of 66,000 tries).
   - The catwalk's Cinderpeg walks a tunnel 1 tile high and must be shot, from the tunnel's mouth, after waiting on a ledge 1 tile above its row where it cannot reach and no bolt can hit it. Every other shot in the game is taken from a porch in the enemy's row.
-  - The route is about 170 tiles, the longest in the game; the first build's was 124, shorter than level 9's.
+  - The route is about 173 tiles, the longest in the game; the first build's was 124, shorter than level 9's.
+  - Second review: the two crystals over the low hall hang 3 tiles above its floor (19,17 and 24,17), where a full jump takes them: from the bank, and from the pad with the shipped numbers (4.6 px to spare; not with clumsy thumbs). One row higher, no jump in the hall reached them, only a fuelled Sprue flown back from shaft 1.
   - The start platform stands 4 tiles above the low hall, so the way out cannot be walked back.
   - The second corridor Cinderpeg's lane runs on to the edge of vent 1, so vent 1 is jumped from a run, not from a 1-tile pillar.
 
+### The browser watch
+
+The checklist line "watched once in the browser at normal speed" was done for all ten levels on 24 November 2026, after the second review, by the agents that build the game, not by a person.
+
+- **How.** Each level's normal proof, the file `e2e/scripts/level-NN.json` that `e2e/levels.spec.ts` replays, was played in a scratch build through the test hook (`window.__E2E__.replay`) at one tick per frame, the game's own speed. It was frozen for a screenshot at the intro card, the ready gate, every 60 ticks, 10 ticks before and after every jump and flight, the cog, the airlock opening and the level clear; then once more for one death per level and its respawn. Seven windows: three phones on touch (568 x 320 at 2, 844 x 390 at 3 with a notch and a home bar, 915 x 412 at 2.625) and four on keys (1280 x 720, 844 x 390, 740 x 360 at 2.75, and a 568 x 232 browser tab at 2), plus a shorter run on touch. Several thousand pictures were looked at, beside the hook's readings for each tick (camera, buttons, top bar).
+- **What it found.** 29 findings from the two passes (some found by both), all met in the shell: no level file was changed for them. The worst: THRUST, then drawn above JUMP, covered level 8's packs before its take-offs. Others: things ahead hidden under the buttons or the top bar, the camera, the cog's toast garbled by pop-ups, the hero hovering on the airlock at a clear, deaths by falling drawn below the screen, the airlock pointer, `?level=` showing LEVEL 1, off-palette particles, and no cue at the ready gate.
+- **What was changed.** Every action button now sits on the bottom row; on touch the camera passes a level's bottom by the buttons' reach; the ground ease moves at most 4 px a tick, and the view looks further up while THRUST is held; the hero is drawn inside the airlock at a clear and at the view's edge when he falls out; the toast has a band of its own and pop-ups keep out of the top bar; and more (`docs/ART-AND-SOUND.md` sections 8 to 10 and 13, `docs/ARCHITECTURE.md` 11.4 and 11.8). Tests hold them: `e2e/routewatch.spec.ts` sees each fault again in the built game, on the tick where the watch found it, and `src/shell/routeView.test.ts` plays the ten proofs through the shipped camera and pad on 14 touch windows and finds nothing a take-off aims for under a thumb button.
+- **Left as it was,** by the fix round's own list: the thruster pack and the THRUST glyph still look alike (they no longer overlap); sideways camera steps of 4 to 6 px; the toast over a hero high in the view; level 6's Cinderpeg still walks past the airlock on its floor (column 41) and is drawn in front of it.
+- **The re-check** of the fixes, done the same way, found three faults still open: on touch phones the bottom pass puts parts of level 9 under the top bar's strip; pop-ups pile up on each other and on the hero at the cog of levels 1 and 2; level 9's pool moth sits under FIRE and THRUST for longer. Two fixes did not hold either (level 9's lift-B Cinderpeg under the strip on the 568 x 320 phone; level 5 at 844 x 390 on touch). `docs/PLAN.md`, Phase 4, lists them with what was measured.
+- **"Looks like something a person would do": no.** The validator jumps every 2.5 to 5 tiles of its route, 15 to 55 times a level (25 times in level 1's 65 tiles), far more often than the gaps and steps on the way ask for: it shows that a level can be crossed, not how a person would cross it. That half of the line is left to the owner's playtest.
+- **Where the results are.** The screenshots and probes were working files of the session that made them; they are not in the repository. What they showed is kept as the two tests above, the changes in the docs named there, and this list. To watch a route again: open the built game with `?e2e=1` and, in the browser's console, run `await window.__E2E__.replay('level-03', script, 1)` with `script` the contents of `e2e/scripts/level-03.json`; or draw it over the whole level with `node src/tools/prove.ts levels/level-03.txt --route <scratch>/level-03.png`.
+
 ### Left to the owner's playtest
 
-- **Fuel at level 9's tight gap.** Level 9's tight gap (15 / 6) is that tight only for a Sprue with an empty tank. Fuel left over from lift A turns it into a choice: by the file's own copy, a jump with a short thrust at the apex crosses even a 5-tile gap. Level 10's 4-tile gap (11 / 2) comes before any pack, so it is always jumped with an empty tank.
+- **Fuel at level 9's tight gap.** Level 9's tight gap (15 / 6) is that tight only for a Sprue with an empty tank. Fuel left over from lift A turns it into a choice: by the file's own copy, a jump with a short thrust at the apex crosses even a 5-tile gap. Level 10's 4-tile gap (15 / 6) comes before any pack, so it is always jumped with an empty tank.
+- **Level 10's gap as the game's hardest jump.** The plan made it level (11 / 2) and left it to this playtest; the second review lowered it to tight before the playtest, because every later death in level 10 means jumping it again. Emptying row 21 at cols 23-27 of `levels/level-10.txt` puts the level gap back.
 - **The clear times** (above).
-- **Level 8's flights.** Their windows run from 23 to 45 frames, depending on where on the pillar THRUST is pressed.
+- **Level 8's flights.** Their windows run from 21 to 45 frames, depending on where on the pillar THRUST is pressed. Flight 2 now lands far along pillar 2, so a player who keeps RIGHT held after landing has less time there: 19 frames when everything is let go 8 frames after touchdown, 15 after 12.
 - **Level 10's tunnel.** Stepping down from the ledge and tapping FIRE wins for 558 of 660 phases of the Cinderpeg's patrol; the rest are the phases when it is right at the mouth. Whether a player reads the ledge as the place to wait is for the playtest.
-- **The browser watch.** For all ten levels, the checklist line that has the validator's route watched in the browser.
+- **How a person crosses each level.** The browser watch (above) could not judge whether the validator's route looks like a person's: it does not, it hops all the way. Whether a player takes the way the crystals show is for this playtest.

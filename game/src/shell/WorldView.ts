@@ -48,8 +48,9 @@ import {
   pickupFrame,
   trophyFrame,
 } from './frames';
+import { prefersReducedMotion } from './motion';
 import { TileLayer } from './TileLayer';
-import { Track, boltDrawX, boltDrawY, fuelBarWidth, heroDrawX, heroDrawY, overlayAt } from './viewModel';
+import { Track, boltDrawX, boltDrawY, deathFill, exitDrawPos, fellDrawY, fuelBarWidth, heroDrawX, heroDrawY, openShare, overlayAt } from './viewModel';
 import type { Point } from './viewModel';
 
 /** Draw depths (docs/PHASER4-NOTES.md section 8: backdrop -10, tiles 0, pickups 5, enemies 8, hero 10, effects 50). */
@@ -69,17 +70,32 @@ export const DEPTH = {
   fuelbar: 10.5,
 } as const;
 
+/** The ready gate's blink dims the hero to this, never hides him (docs/ART-AND-SOUND.md section 9). */
+const READY_DIM_ALPHA = 0.35;
+/**
+ * After this many ticks of waiting in the ready gate, a small white chevron over the hero's head says "press
+ * something" without words (LEVELS.md rule 11): it blinks with him, steady under reduced motion.
+ */
+const READY_PROMPT_AFTER = 90;
+/** Its centre lies this far above the top of his sprite. */
+const READY_PROMPT_LIFT = 6;
+
+/**
+ * The Earth is drawn only while enough of its disc lies over open space: hidden below EARTH_HIDE_BELOW of it, shown
+ * again from EARTH_SHOW_FROM (the gap between keeps it from flickering at the edge of a window in the panels).
+ */
+const EARTH_HIDE_BELOW = 0.35;
+const EARTH_SHOW_FROM = 0.45;
+
 /** The mini fuel bar over the hero while he thrusts (docs/ART-AND-SOUND.md section 8): art numbers. */
 const FUELBAR_W = 12;
 const FUELBAR_H = 2;
 /** Gap between the bar's bottom and the top of the hero's 16 px sprite. */
 const FUELBAR_GAP = 3;
 
-/** The fill of the hero during the hit stop of a death, by cause (docs/ART-AND-SOUND.md section 13). */
-function deathFill(cause: DeathCause | null): number {
-  if (cause === 'fire') return COLOR.amber;
-  if (cause === 'coolant') return COLOR.ice;
-  return COLOR.white;
+/** The fill of the hero during the hit stop of a death (docs/ART-AND-SOUND.md section 13): white first, then by cause. */
+function deathFillColour(cause: DeathCause | null, ticksIn: number): number {
+  return COLOR[deathFill(cause, ticksIn)];
 }
 
 export class WorldView {
@@ -90,6 +106,10 @@ export class WorldView {
   /** Every image by its stable id (`hero`, `enemy:3`, `pickup:7`, `trophy`, `door`, `bolt`, `hero.pack`, ...). */
   private readonly byId = new Map<string, Phaser.GameObjects.Image>();
   private hero: Phaser.GameObjects.Image | null = null;
+  /** The chevron over a hero kept waiting in the ready gate. */
+  private prompt: Phaser.GameObjects.Image | null = null;
+  /** run.tick when the current ready gate began (null outside it). */
+  private readySince: number | null = null;
   private readonly overlays = new Map<OverlayName, Phaser.GameObjects.Image>();
   private flame: Phaser.GameObjects.Image | null = null;
   private fuelBack: Phaser.GameObjects.Rectangle | null = null;
@@ -108,20 +128,40 @@ export class WorldView {
   private heroFill: number | null = null;
   private doorOpenedAt: number | null = null;
   private readonly overlayPoint: Point = { x: 0, y: 0 };
+  /** The hero's eased place in the airlock during a level clear. */
+  private readonly exitAt: Point = { x: 0, y: 0 };
   private drawnCamX = 0;
   private drawnCamY = 0;
+  /** Reduced motion: the hero does not blink in the ready gate (docs/ART-AND-SOUND.md section 13). */
+  private readonly still: boolean;
 
   // Backdrop
   private stars: Phaser.GameObjects.Rectangle[] = [];
   private starXY: { x: number; y: number }[] = [];
   private earth: Phaser.GameObjects.Image | null = null;
   private earthAt = { x: 0, y: 0 };
+  private earthShown = true;
+  private readonly spaceAt = (col: number, row: number): boolean => this.tiles?.showsSpace(col, row) ?? true;
   private ridges: Phaser.GameObjects.Image[] = [];
   private viewW = 0;
   private viewH = 0;
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
+    this.still = prefersReducedMotion();
+  }
+
+  /** Test hook only: how the hero was last drawn (frame, shown, filled by the flash of a death). */
+  heroShown(): { frame: string; visible: boolean; filled: boolean; dim: boolean; prompt: boolean } | null {
+    const hero = this.hero;
+    return hero
+      ? { frame: hero.frame.name, visible: hero.visible, filled: this.heroFill !== null, dim: hero.alpha < 1, prompt: this.prompt?.visible === true }
+      : null;
+  }
+
+  /** Test hook only: the hero's sprite corner as last captured (whole art px in the level): where he is drawn. */
+  heroDrawn(): { x: number; y: number } {
+    return { x: this.heroTrack.curX, y: this.heroTrack.curY };
   }
 
   /** The image of a stable id, for effects that need it (an enemy's last frame, the hero's flash). */
@@ -150,6 +190,13 @@ export class WorldView {
     this.enemyTracks = level.enemies.map(() => new Track());
     this.bolt = image('bolt', 'bolt_0', DEPTH.bolt).setVisible(false);
     this.hero = image('hero', 'hero_idle_0', DEPTH.hero);
+    this.prompt = image('hero.prompt', 'btn_arrow_0', DEPTH.fuelbar)
+      .setOrigin(0.5, 0.5)
+      .setAngle(-90)
+      .setTint(COLOR.white)
+      .setTintMode(Phaser.TintModes.FILL)
+      .setVisible(false);
+    this.readySince = null;
     this.overlays.set('ovl_pack', image('hero.pack', 'ovl_pack_0', DEPTH.overlayBack).setVisible(false));
     this.flame = image('hero.flame', 'thrust_flame_0', DEPTH.flame).setVisible(false);
     this.overlays.set('thrust_flame', this.flame);
@@ -181,9 +228,21 @@ export class WorldView {
    * hero, the enemies, the bolt and the camera scroll.
    */
   capture(game: GameState, cam: CameraState): void {
-    const { player, enemies, bolt } = game.run;
+    const run = game.run;
+    const { player, enemies, bolt } = run;
     const phys = game.phys;
-    this.heroTrack.set(heroDrawX(player, phys), heroDrawY(player, phys), true);
+    let hx = heroDrawX(player, phys);
+    let hy = heroDrawY(player, phys);
+    if (run.phase === 'exiting' && this.level) {
+      // The core holds him where his box first touched the airlock (often in mid-fall on its lintel): eased into the cell.
+      const at = exitDrawPos(hx, hy, this.level.door.col, this.level.door.row, run.phaseTicks, this.exitAt);
+      hx = at.x;
+      hy = at.y;
+    } else if (run.phase === 'dying' && run.deathCause === 'fell') {
+      // He died below the level's bottom row, out of sight: his flash and break-apart play at the view's bottom edge.
+      hy = fellDrawY(hy, cam.scrollY, this.viewH);
+    }
+    this.heroTrack.set(hx, hy, true);
     for (let i = 0; i < this.enemyTracks.length; i++) {
       const e = enemies[i];
       const track = this.enemyTracks[i];
@@ -260,11 +319,17 @@ export class WorldView {
     }
 
     // The hero and the gear he carries
-    const look = heroLook(game, TUNING.timing, this.look);
+    const look = heroLook(game, TUNING.timing, this.look, !this.still);
     const hx = this.heroTrack.x(alpha);
     const hy = this.heroTrack.y(alpha);
-    hero.setFrame(look.frame).setFlipX(look.flip).setPosition(hx, hy).setVisible(look.visible);
-    const fill = look.flash ? deathFill(run.deathCause) : null;
+    hero.setFrame(look.frame).setFlipX(look.flip).setPosition(hx, hy).setVisible(look.visible).setAlpha(look.dim ? READY_DIM_ALPHA : 1);
+    for (const img of this.overlays.values()) img.setAlpha(look.dim ? READY_DIM_ALPHA : 1);
+    // Kept waiting at the gate for a while: a chevron over his head, blinking with him.
+    if (run.phase === 'ready') this.readySince ??= tick;
+    else this.readySince = null;
+    const waited = this.readySince === null ? 0 : tick - this.readySince;
+    this.prompt?.setVisible(run.phase === 'ready' && waited >= READY_PROMPT_AFTER && !look.dim).setPosition(hx + (TILE_SIZE >> 1), hy - READY_PROMPT_LIFT);
+    const fill = look.flash ? deathFillColour(run.deathCause, run.phaseTicks) : null;
     if (fill !== this.heroFill) {
       this.heroFill = fill;
       this.tintHero(hero, fill);
@@ -332,6 +397,7 @@ export class WorldView {
     this.fuelBack = null;
     this.fuelFill = null;
     this.hero = null;
+    this.prompt = null;
     this.flame = null;
     this.trophy = null;
     this.door = null;
@@ -386,7 +452,15 @@ export class WorldView {
       const at = this.starXY[i];
       if (star && at) star.setPosition(starShift(at.x, camX, w), starShift(at.y, camY, h));
     }
-    this.earth?.setPosition(farShift(this.earthAt.x, camX), farShift(this.earthAt.y, camY));
+    const earth = this.earth;
+    if (earth) {
+      const ex = farShift(this.earthAt.x, camX);
+      const ey = farShift(this.earthAt.y, camY);
+      const share = openShare(ex, ey, earth.width, camX, camY, this.spaceAt);
+      if (share < EARTH_HIDE_BELOW) this.earthShown = false;
+      else if (share >= EARTH_SHOW_FROM) this.earthShown = true;
+      earth.setPosition(ex, ey).setVisible(this.earthShown);
+    }
     const ridgeW = spriteSpec('backdrop_ridge').width;
     const maxCamY = Math.max(0, level.height * TILE_SIZE - h);
     const top = ridgeTop(h, camY, maxCamY);

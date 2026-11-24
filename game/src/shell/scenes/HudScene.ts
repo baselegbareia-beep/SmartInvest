@@ -16,7 +16,9 @@
  * - The bar is one row along the TOP, y = 3 to 11 (no status bar along the bottom: docs/LEVELS.md
  *   rule 11): lives at x = 4, `LEVEL n` at x = 36, the score centred (counting up 10 a frame), and the
  *   cog, items and fuel pips in a block 61 px wide ending 4 px left of the touch pad's PAUSE button.
- *   Where each goes is src/shell/hudModel.ts; it is re-placed on every view resize.
+ *   It is a band over the world: a dark strip (void at 70 %) lies behind it, so the level's own crystals
+ *   and wall tops never read as part of the bar. Where each goes is src/shell/hudModel.ts; it is
+ *   re-placed on every view resize.
  * - The intro card: a shutter wipe opens on the dimmed level, with `LEVEL 3` (2x), the name in lime, the
  *   hint and the life icons on a plate, while the Play scene holds the card up (it is not stepped).
  * - The level-clear banner: `LEVEL CLEAR +200` on a plate under the bar, with the score tallied under
@@ -35,6 +37,10 @@ import {
   FrameClock,
   NO_BLINK,
   PIP_Y,
+  STRIP_ALPHA,
+  STRIP_H,
+  TOAST_BAND_BOTTOM,
+  TOAST_PAD,
   TOAST_Y,
   advanceBlink,
   cornerClearPx,
@@ -50,6 +56,7 @@ import type { HudModel, IntroCard, LifeBlink } from '../hudModel';
 import { textPx } from '../menuLayout';
 import { bannerLayout, introLayout } from '../screens';
 import type { PlacedLine } from '../screens';
+import { prefersReducedMotion } from '../motion';
 import { onSceneEnd } from '../sceneEnd';
 import { canvasEdgeGapsCss, cssPerArt } from '../singletons';
 
@@ -76,6 +83,28 @@ export interface HudShown {
   readonly banner: string | null;
   /** The clocks stand still (the pause menu is up). */
   readonly held: boolean;
+  /**
+   * Every object of the scene's display list that is shown now (visible, not transparent) and can give its
+   * bounds, whatever its kind (an Image, a Sprite, a Text, a Rectangle ...), with those bounds in art px of the
+   * view. A Graphics has no bounds and is not listed: the browser test that nothing of the HUD lies along the
+   * bottom of the screen (docs/LEVELS.md rule 11) also compares the pixels with and without the scene
+   * (`__E2E__.hudPixels`), which sees every kind.
+   */
+  readonly drawn: readonly { readonly kind: string; readonly x: number; readonly y: number; readonly w: number; readonly h: number }[];
+}
+
+/** A display-list child that can say where it is drawn. */
+interface Bounded {
+  readonly type: string;
+  readonly visible: boolean;
+  readonly alpha?: number;
+  getBounds(): Phaser.Geom.Rectangle;
+}
+
+/** The child as something with bounds, or null for a kind that has none (a Graphics). */
+function bounded(obj: Phaser.GameObjects.GameObject): Bounded | null {
+  const o = obj as Partial<Bounded>;
+  return typeof o.getBounds === 'function' && typeof o.visible === 'boolean' ? (obj as unknown as Bounded) : null;
 }
 
 /** Darkness of the layer under the intro card. */
@@ -85,9 +114,11 @@ const PANEL_CORNER = 8;
 const NEVER_HELD = (): boolean => false;
 
 /** Draw order inside the HUD scene: the bar, then the dim and the card over it, then the shutter. */
-const DEPTH = { bar: 0, toast: 1, banner: 2, dim: 10, card: 11, cardText: 12, shutter: 100 } as const;
+const DEPTH = { strip: -1, bar: 0, toast: 1, banner: 2, dim: 10, card: 11, cardText: 12, shutter: 100 } as const;
 
 export class HudScene extends Phaser.Scene implements HudEvents {
+  /** The dark strip behind the bar: the bar is a band over the world (hudModel STRIP_H). */
+  private strip: Phaser.GameObjects.Rectangle | null = null;
   private lives: Phaser.GameObjects.Image[] = [];
   private level: Phaser.GameObjects.BitmapText | null = null;
   private score: Phaser.GameObjects.BitmapText | null = null;
@@ -96,6 +127,8 @@ export class HudScene extends Phaser.Scene implements HudEvents {
   private thruster: Phaser.GameObjects.Image | null = null;
   private pips: Phaser.GameObjects.Image[] = [];
   private toast: Phaser.GameObjects.BitmapText | null = null;
+  /** The dark band behind the toast, hanging from the strip (hudModel TOAST_BAND_BOTTOM). */
+  private toastBand: Phaser.GameObjects.Rectangle | null = null;
   private bannerPlate: Phaser.GameObjects.NineSlice | null = null;
   private bannerHeading: Phaser.GameObjects.BitmapText | null = null;
   private bannerTally: Phaser.GameObjects.BitmapText | null = null;
@@ -114,6 +147,8 @@ export class HudScene extends Phaser.Scene implements HudEvents {
   private bannerShown = false;
   private readonly frameClock = new FrameClock();
   private held: () => boolean = NEVER_HELD;
+  /** Reduced motion: nothing blinks (the lost life's icon goes dark at once, the low pips stay lit). */
+  private still = false;
   /** Frames since the scene started: the pips' blink clock. */
   private clock = 0;
   private toastLeft = 0;
@@ -130,6 +165,7 @@ export class HudScene extends Phaser.Scene implements HudEvents {
 
   init(data: HudData = {}): void {
     this.held = data.held ?? NEVER_HELD;
+    this.still = prefersReducedMotion();
     this.frameClock.reset();
     this.lives = [];
     this.pips = [];
@@ -156,16 +192,18 @@ export class HudScene extends Phaser.Scene implements HudEvents {
       this.add.bitmapText(0, 0, FONT_KEY, value, FONT_SIZE * scale).setTint(colour).setDropShadow(1, 1, COLOR.void, 1).setDepth(depth);
     const icon = (frame: string): Phaser.GameObjects.Image => this.add.image(0, 0, TEXTURE_KEY.sprites, frame).setOrigin(0, 0).setDepth(DEPTH.bar);
 
+    this.strip = this.add.rectangle(0, 0, 1, STRIP_H, COLOR.void, STRIP_ALPHA).setOrigin(0, 0).setDepth(DEPTH.strip);
     this.lives = Array.from({ length: TUNING.lives.maxLives }, () => icon('hud_life_0'));
     this.livesShown = this.lives.map(() => true);
     this.level = text(TEXT.level(1), COLOR.white, DEPTH.bar);
     this.score = text(scoreDigits(0), COLOR.gold, DEPTH.bar);
-    this.cog = icon('hud_cog_0');
+    this.cog = icon('hud_cog_1');
     this.blaster = icon('hud_blaster_0').setVisible(false);
     this.thruster = icon('hud_thruster_0').setVisible(false);
     this.pips = Array.from({ length: FUEL_PIPS }, () => icon('hud_pip_1').setVisible(false));
     this.pipsShown = this.pips.map(() => null);
     this.toast = text(TEXT.cogFound, COLOR.gold, DEPTH.toast).setVisible(false);
+    this.toastBand = this.add.rectangle(0, STRIP_H, 1, TOAST_BAND_BOTTOM - STRIP_H, COLOR.void, STRIP_ALPHA).setOrigin(0, 0).setDepth(DEPTH.strip).setVisible(false);
     this.bannerPlate = this.plate(DEPTH.banner).setVisible(false);
     this.bannerHeading = text(TEXT.levelClear(0), COLOR.white, DEPTH.banner + 1, 2).setVisible(false);
     this.bannerTally = text(TEXT.score(0), COLOR.gold, DEPTH.banner + 1).setVisible(false);
@@ -188,7 +226,8 @@ export class HudScene extends Phaser.Scene implements HudEvents {
   show(model: Readonly<HudModel>): void {
     const m = this.model;
     Object.assign(m, model);
-    this.shownScore = countScore(this.shownScore, m.score, 0); // a lower score (a new session) is shown at once
+    // A lower score (a new session) is shown at once, and so is the score a level starts with (its card comes up).
+    this.shownScore = countScore(this.shownScore, m.score, 0, m.intro !== null && m.intro !== this.shownCard);
     if (m.levelNumber !== this.shownLevel) {
       this.shownLevel = m.levelNumber;
       this.level?.setText(TEXT.level(m.levelNumber));
@@ -198,6 +237,11 @@ export class HudScene extends Phaser.Scene implements HudEvents {
     this.draw();
   }
 
+  /** The `COG FOUND! AIRLOCK OPEN` toast is up (the Play scene keeps score pop-ups below its band meanwhile). */
+  get toastShowing(): boolean {
+    return this.toast?.visible === true;
+  }
+
   /** What is on screen now, for the test hook. */
   shown(): HudShown {
     return {
@@ -205,17 +249,23 @@ export class HudScene extends Phaser.Scene implements HudEvents {
       toast: this.toast?.visible === true ? this.toast.text : null,
       banner: this.bannerShown && this.bannerHeading ? this.bannerHeading.text : null,
       held: this.held(),
+      drawn: this.children.list.flatMap((obj) => {
+        const shape = bounded(obj);
+        if (!shape || !shape.visible || (shape.alpha ?? 1) <= 0) return [];
+        const b = shape.getBounds();
+        return [{ kind: shape.type, x: b.x, y: b.y, w: b.width, h: b.height }];
+      }),
     };
   }
 
   cogFound(): void {
     this.toastLeft = TUNING.effects.toastFrames;
-    this.toast?.setVisible(true);
+    this.showToast(true);
   }
 
   levelClear(bonus: number): void {
     this.toastLeft = 0;
-    this.toast?.setVisible(false);
+    this.showToast(false);
     this.bannerBonus = bonus;
     this.bannerShown = true;
     this.placeBanner();
@@ -225,15 +275,21 @@ export class HudScene extends Phaser.Scene implements HudEvents {
   }
 
   lifeLost(lives: number): void {
-    this.blink = lifeBlink(lives);
+    if (!this.still) this.blink = lifeBlink(lives);
   }
 
   /** Takes every toast and banner down (a new level). */
   clearMessages(): void {
     this.toastLeft = 0;
     this.blink = NO_BLINK;
-    this.toast?.setVisible(false);
+    this.showToast(false);
     this.clearBanner();
+  }
+
+  /** The toast and the dark band behind it come and go together. */
+  private showToast(on: boolean): void {
+    this.toast?.setVisible(on);
+    this.toastBand?.setVisible(on);
   }
 
   // -------------------------------------------------------------------------------------
@@ -245,7 +301,7 @@ export class HudScene extends Phaser.Scene implements HudEvents {
     this.clock += whole;
     if (this.toastLeft > 0) {
       this.toastLeft = Math.max(0, this.toastLeft - whole);
-      if (this.toastLeft === 0) this.toast?.setVisible(false);
+      if (this.toastLeft === 0) this.showToast(false);
     }
     this.blink = advanceBlink(this.blink, whole);
     this.shownScore = countScore(this.shownScore, this.model.score, whole);
@@ -281,14 +337,17 @@ export class HudScene extends Phaser.Scene implements HudEvents {
     }
     if (this.cogShown !== m.hasTrophy) {
       this.cogShown = m.hasTrophy;
-      this.cog?.setFrame(m.hasTrophy ? 'hud_cog_1' : 'hud_cog_0');
+      // Before it is taken the slot shows the cog's own filled shape, unlit (rust: the gold lane darkened), not the
+      // light toothed ring of hud_cog_0, which read as a settings gear (the route watch): "a gold cog goes here".
+      const cog = this.cog?.setFrame('hud_cog_1').clearTint();
+      if (!m.hasTrophy) cog?.setTint(COLOR.rust).setTintMode(Phaser.TintModes.FILL);
     }
     this.blaster?.setVisible(m.hasBlaster);
     this.thruster?.setVisible(m.hasThruster);
     for (let i = 0; i < this.pips.length; i++) {
       const pip = this.pips[i];
       if (!pip) continue;
-      const state = m.hasThruster ? pipLit(i, m.fuelPips, this.clock) : null;
+      const state = m.hasThruster ? pipLit(i, m.fuelPips, this.clock, this.still) : null;
       if (this.pipsShown[i] === state) continue;
       this.pipsShown[i] = state;
       pip.setVisible(state !== null).setFrame(state === true ? 'hud_pip_0' : 'hud_pip_1');
@@ -351,6 +410,7 @@ export class HudScene extends Phaser.Scene implements HudEvents {
     const reserve = pauseReservePx(k, TUNING.touch.pauseMarginSide, TUNING.touch.pauseButtonSize);
     const gaps = canvasEdgeGapsCss(); // off a rounded corner of the glass where no inset says so (hudModel)
     const bar = topBarLayout(width, this.lives.length, reserve, cornerClearPx(gaps.left, k), cornerClearPx(gaps.right, k));
+    this.strip?.setSize(width, STRIP_H);
     this.lives.forEach((img, i) => img.setPosition(bar.lives[i] ?? 0, bar.y));
     this.level?.setPosition(bar.levelX, bar.y);
     this.score?.setPosition(bar.scoreX, bar.y);
@@ -358,7 +418,12 @@ export class HudScene extends Phaser.Scene implements HudEvents {
     this.blaster?.setPosition(bar.blasterX, bar.y);
     this.thruster?.setPosition(bar.thrusterX, bar.y);
     this.pips.forEach((pip, i) => pip.setPosition(bar.pips[i] ?? 0, PIP_Y));
-    if (this.toast) this.toast.setPosition(Math.floor((width - textPx(this.toast.text)) / 2), TOAST_Y);
+    if (this.toast) {
+      const w = textPx(this.toast.text);
+      const x = Math.floor((width - w) / 2);
+      this.toast.setPosition(x, TOAST_Y);
+      this.toastBand?.setPosition(x - TOAST_PAD, STRIP_H).setSize(w + 2 * TOAST_PAD, TOAST_BAND_BOTTOM - STRIP_H);
+    }
     this.placeBanner();
     this.introDim?.setSize(width, height);
     if (this.shownCard) {

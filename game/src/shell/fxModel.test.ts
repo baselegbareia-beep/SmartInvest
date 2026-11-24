@@ -11,8 +11,11 @@ import {
   ShakeTimer,
   emberDue,
   fireCells,
+  popupAnchor,
+  popupClampY,
   popupRise,
 } from './fxModel';
+import { POPUP_TOP, POPUP_TOP_UNDER_TOAST, STRIP_H, TOAST_BAND_BOTTOM } from './hudModel';
 
 describe('score pop-ups', () => {
   it('rise POPUP_RISE_PX whole pixels over POPUP_FRAMES frames, and no further', () => {
@@ -24,6 +27,35 @@ describe('score pop-ups', () => {
       expect(Number.isInteger(popupRise(age))).toBe(true);
       if (age > 0) expect(popupRise(age)).toBeGreaterThanOrEqual(popupRise(age - 1));
     }
+  });
+});
+
+describe('score pop-ups stay out of the top bar and the toast (the route watch: "+10" over the score, "+100" through the toast)', () => {
+  it('a pop-up that would rise above POPUP_TOP is held there; lower down it rises freely', () => {
+    expect(POPUP_TOP).toBeGreaterThanOrEqual(STRIP_H);
+    expect(POPUP_TOP_UNDER_TOAST).toBeGreaterThanOrEqual(TOAST_BAND_BOTTOM);
+    const camY = 100;
+    // Taken 20 px from the top of the view: it would appear at view y 4 and rise to -8.
+    for (let age = 0; age <= POPUP_FRAMES; age++) {
+      const y = popupClampY(camY + 4 - popupRise(age), camY, POPUP_TOP);
+      expect(y - camY, `age ${age}`).toBe(POPUP_TOP);
+    }
+    // While the toast shows: below its band.
+    expect(popupClampY(camY + 20, camY, POPUP_TOP_UNDER_TOAST) - camY).toBe(POPUP_TOP_UNDER_TOAST);
+    // Well inside the view: untouched.
+    expect(popupClampY(camY + 90, camY, POPUP_TOP_UNDER_TOAST)).toBe(camY + 90);
+  });
+
+  it('above what scored, or beside it on the side away from a hero rising through it', () => {
+    const out = { x: 0, y: 0 };
+    expect(popupAnchor(200, 100, 16, false, 1, 17, out)).toEqual({ x: 200, y: 84 });
+    // Rising and moving right: to the left of the crystal, at its height, clear of its 16 px tile.
+    const left = { ...popupAnchor(200, 100, 16, true, 1, 17, out) };
+    expect(left.x + 17 / 2).toBeLessThanOrEqual(200 - 8);
+    expect(left.y).toBeGreaterThan(84);
+    // Moving left: to the right.
+    const right = { ...popupAnchor(200, 100, 16, true, -1, 17, out) };
+    expect(right.x - 17 / 2).toBeGreaterThanOrEqual(200 + 8);
   });
 });
 

@@ -56,8 +56,10 @@ export function loopedFrame(name: SpriteName, tick: number, offsetFrames = 0): s
 export interface HeroLook {
   /** Frame name on the sprite sheet. */
   frame: string;
-  /** False on the hidden half of the ready-gate blink. */
+  /** Always true now: the ready gate dims him instead of hiding him (`dim`), so he is never missing from the picture. */
   visible: boolean;
+  /** True on the dim half of the ready-gate blink (the sign that the world waits for a press). */
+  dim: boolean;
   /** True during the hit stop of a death: the last pose, filled white. */
   flash: boolean;
   /** Mirror the sprite (he faces left). */
@@ -65,7 +67,7 @@ export interface HeroLook {
 }
 
 export function newHeroLook(): HeroLook {
-  return { frame: framesOf('hero_idle')[0] ?? 'hero_idle_0', visible: true, flash: false, flip: false };
+  return { frame: framesOf('hero_idle')[0] ?? 'hero_idle_0', visible: true, dim: false, flash: false, flip: false };
 }
 
 /** The pose of a hero in a running world, at a tick: thrusting, in the air, running, standing (first match wins). */
@@ -83,15 +85,18 @@ export function livePose(player: PlayerState, tick: number): string {
  * - dying: for the first `hitStopFrames` ticks the pose he died in, filled white; then the four
  *   `hero_die` frames spread evenly over `deathAnimFrames`; then the last of them while the screen
  *   fades (`screenFade`).
- * - ready gate: his live pose, hidden while `(run.tick >> 3) & 1` is 1 (the blink that says "waiting").
+ * - ready gate: his live pose, dimmed while `(run.tick >> 3) & 1` is 1 (the blink that says "waiting"),
+ *   unless `blink` is false (reduced motion: nothing blinks; he is shown steadily). He was hidden on those
+ *   ticks, and a picture taken then showed no hero at all (the route watch): dimmed, he is always there.
  * - exiting: standing inside the airlock (idle).
  * - playing: thrusting, in the air, running, standing.
  */
-export function heroLook(game: GameState, timing: TimingTuning, out: HeroLook): HeroLook {
+export function heroLook(game: GameState, timing: TimingTuning, out: HeroLook, blink = true): HeroLook {
   const run = game.run;
   const player = run.player;
   out.flip = player.facing < 0;
   out.visible = true;
+  out.dim = false;
   out.flash = false;
   switch (run.phase) {
     case 'dying': {
@@ -113,7 +118,7 @@ export function heroLook(game: GameState, timing: TimingTuning, out: HeroLook): 
       break;
     case 'ready':
       out.frame = livePose(player, run.tick);
-      out.visible = ((run.tick >> 3) & 1) === 0;
+      out.dim = blink && ((run.tick >> 3) & 1) === 1;
       break;
     case 'playing':
       out.frame = livePose(player, run.tick);

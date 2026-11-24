@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { COLOR } from '../src/art/palette.ts';
+import { STRIP_H } from '../src/shell/hudModel.ts';
 import type { InputScript } from '../src/core/types.ts';
 import { GAME_TITLE } from '../src/meta.ts';
 
@@ -302,8 +303,11 @@ test.describe('top bar', () => {
     const [barWhite = 0] = await colourCounts(page, bar, [COLOR.white]);
     expect(barWhite, 'LEVEL 1 in white in the bar').toBeGreaterThan(10);
     // ...and nothing along the bottom of the screen but the level (docs/LEVELS.md rule 11): no status bar, no
-    // "go to the door" line. The HUD's words and numbers are white or gold; at this ready gate the room's bottom
-    // rows hold neither (checked once by eye: floor tiles and the starry backdrop), so any drawn there is the HUD's.
+    // "go to the door" line, in any colour, drawn by any kind of object: the HUD scene changes no pixel of the bottom
+    // 14 rows, and every object of it that has bounds ends above them.
+    await expectNothingAtTheBottom(page, view, 'at the ready gate');
+    // The HUD's words and numbers are white or gold; at this ready gate the room's bottom rows hold neither (checked
+    // once by eye: floor tiles and the starry backdrop), so any drawn there would be the HUD's.
     const [bottomWhite = 0, bottomGold = 0] = await colourCounts(page, { x: 0, y: view.h - 14, w: view.w, h: 14 }, [COLOR.white, COLOR.gold]);
     expect(bottomWhite + bottomGold, 'white or gold along the bottom of the screen').toBe(0);
 
@@ -318,6 +322,7 @@ test.describe('top bar', () => {
     [rightGold = 0, lime = 0] = await colourCounts(page, right, [COLOR.gold, COLOR.lime]);
     expect(rightGold, 'the cog icon turns gold').toBeGreaterThan(8);
     expect(lime, 'fuel pips while the pack is worn').toBeGreaterThan(4);
+    await expectNothingAtTheBottom(page, view, 'with the toast up and the pack worn');
 
     // The airlock: LEVEL CLEAR +200 on a plate under the bar, with the score tallied in gold.
     const room = readScript('test');
@@ -325,9 +330,110 @@ test.describe('top bar', () => {
     const [white = 0, bannerGold = 0] = await colourCounts(page, { x: 0, y: 26, w: view.w, h: 50 }, [COLOR.white, COLOR.gold]);
     expect(white, 'LEVEL CLEAR +200 at 2x').toBeGreaterThan(200);
     expect(bannerGold, 'the score tally').toBeGreaterThan(30);
+    await expectNothingAtTheBottom(page, view, 'with the clear banner up');
     expect(problems).toEqual([]);
   });
 });
+
+test.describe('top bar over the level', () => {
+  test('is a band over the world: a dark strip behind it dims the level in its rows, so no crystal or wall top reads as part of it', async ({ page }) => {
+    const problems = await open(page);
+    const view = await viewSize(page);
+    // Level 1's ready gate: its first crystals and the cog stand in the rows the bar covers (at 844 x 390 and at
+    // 568 x 320 alike: the camera puts the hero's feet at 60 % of the view's height).
+    await playRoom(page, 'level-01');
+    const drawn = (await page.evaluate(() => window.__E2E__?.hud()?.drawn ?? null)) ?? [];
+    const strip = drawn.find((d) => d.kind === 'Rectangle' && d.x <= 0 && d.y <= 0 && d.x + d.w >= view.w);
+    expect.soft(strip, 'a strip behind the bar across the whole view').toBeDefined();
+    expect.soft(strip?.h ?? 0, 'from the top down past the bar and its shadow').toBeGreaterThanOrEqual(12);
+    // Everything in the bar's rows that is not the bar's own text or icons is dark: the level shows through dimmed.
+    const own = drawn.filter((d) => d !== strip);
+    const bright = await brightOutside(page, { x: 0, y: 0, w: view.w, h: 12 }, own);
+    expect(bright, 'bright level pixels in the bar\'s rows, outside its text and icons').toBe(0);
+    expect(problems).toEqual([]);
+  });
+
+  test('never dims the hero: risen to the top of the view, he is drawn below the strip (568 x 320, the 284 x 160 view)', async ({ browser }) => {
+    const context = await browser.newContext({ viewport: { width: 568, height: 320 }, deviceScaleFactor: 2 });
+    const page = await context.newPage();
+    const problems = await open(page);
+    // Tick 119 of the test room's route: he has climbed to the top of the camera's air band, the highest he is drawn
+    // on this route (the review's picture: the strip darkened his hat and antenna there, his sprite's top at row 8).
+    const room = readScript('test');
+    await page.evaluate(async ({ runs }) => window.__E2E__?.replay('test', { runs }, 1, { stopAtTick: 119 }), { runs: room.runs });
+    const hero = await page.evaluate(() => window.__E2E__?.heroOnPage() ?? null);
+    const box = await page.locator('#game canvas').boundingBox();
+    const viewW = await page.locator('#game canvas').evaluate((c) => (c as HTMLCanvasElement).width);
+    if (!hero || !box) throw new Error('no hero or no canvas');
+    const k = box.width / viewW;
+    expect(viewW).toBe(284);
+    const spriteTop = (hero.y - box.y) / k;
+    expect(spriteTop, 'the top of his sprite, art px from the top of the view').toBeGreaterThanOrEqual(STRIP_H);
+    expect(spriteTop, 'he is up at the top of the band, not resting lower').toBeLessThan(40);
+    expect(problems).toEqual([]);
+    await context.close();
+  });
+});
+
+/**
+ * Screen pixels in `rect` (art px of the view) brighter than slate in any channel, outside `skip` (art px, each
+ * grown by a pixel for the text's shadow). The frame is frozen while it is taken.
+ */
+async function brightOutside(page: Page, rect: ArtRect, skip: readonly ArtRect[]): Promise<number> {
+  const box = await page.locator('#game canvas').boundingBox();
+  if (!box) throw new Error('no canvas');
+  const viewW = await page.locator('#game canvas').evaluate((c) => (c as HTMLCanvasElement).width);
+  const k = box.width / viewW;
+  await hook.freeze(page, true);
+  const png = await page.screenshot({ clip: { x: box.x + rect.x * k, y: box.y + rect.y * k, width: rect.w * k, height: rect.h * k } });
+  await hook.freeze(page, false);
+  return page.evaluate(
+    async ({ b64, at, k, skip }) => {
+      const img = new Image();
+      img.src = `data:image/png;base64,${b64}`;
+      await img.decode();
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return -1;
+      ctx.drawImage(img, 0, 0);
+      const data = ctx.getImageData(0, 0, img.width, img.height).data;
+      const scale = img.width / (at.w * k); // screenshot px per CSS px
+      let n = 0;
+      for (let y = 0; y < img.height; y++) {
+        for (let x = 0; x < img.width; x++) {
+          const ax = at.x + x / scale / k;
+          const ay = at.y + y / scale / k;
+          if (skip.some((r) => ax >= r.x - 1 && ax < r.x + r.w + 1 && ay >= r.y - 1 && ay < r.y + r.h + 1)) continue;
+          const i = (y * img.width + x) * 4;
+          if (Math.max(data[i] ?? 0, data[i + 1] ?? 0, data[i + 2] ?? 0) > 120) n += 1;
+        }
+      }
+      return n;
+    },
+    { b64: png.toString('base64'), at: rect, k, skip: [...skip] },
+  );
+}
+
+/**
+ * Nothing of the top bar's scene along the bottom of the screen (docs/LEVELS.md rule 11), whatever its colour and
+ * whatever kind of object would draw it:
+ * - the bottom edge of every object of the HUD scene that has bounds (any kind: an Image, a Sprite, a Text ...) is
+ *   above the bottom 14 art rows;
+ * - and the HUD scene changes no pixel of those rows: the frame drawn again as it stands, with the scene and without
+ *   it, is the same there. This also sees a kind that has no bounds (a Graphics), and anything a future kind draws.
+ * The same comparison over the bar's own rows must find the bar, so a measure that sees nothing cannot pass.
+ */
+async function expectNothingAtTheBottom(page: Page, view: { w: number; h: number }, when: string): Promise<void> {
+  const drawn = (await page.evaluate(() => window.__E2E__?.hud()?.drawn ?? null)) ?? [];
+  expect(drawn.length, `the HUD draws something ${when}`).toBeGreaterThan(3);
+  const low = drawn.filter((d) => d.y + d.h > view.h - 14);
+  expect(low, `HUD objects reaching into the bottom 14 rows ${when}`).toEqual([]);
+  const hudPixels = (rect: ArtRect): Promise<number | null> => page.evaluate((r) => window.__E2E__?.hudPixels(r) ?? null, rect);
+  expect(await hudPixels({ x: 0, y: 0, w: view.w, h: 14 }), `the HUD scene's pixels in the bar's rows ${when}`).toBeGreaterThan(100);
+  expect(await hudPixels({ x: 0, y: view.h - 14, w: view.w, h: 14 }), `pixels the HUD scene draws in the bottom 14 rows ${when}`).toBe(0);
+}
 
 // ---------------------------------------------------------------------------------------
 // Pause
@@ -430,11 +536,23 @@ test.describe('pause menu', () => {
     test('the ROTATE message fits a narrow portrait window, and is redrawn for a narrower one', async ({ page }) => {
       const problems = await open(page, '&touch=1');
       const inside = async (): Promise<{ left: number; right: number; width: number; window: number }> => {
-        await expect(page.locator('#rotate canvas')).toBeVisible();
-        const box = await page.locator('#rotate canvas').boundingBox();
+        await expect(page.locator('#rotate [data-part="words"]')).toBeVisible();
+        // Words and phone measured in one go inside the page: a resize redraws (replaces) both.
+        const at = await page.evaluate(() => {
+          const box = (selector: string): { x: number; y: number; width: number; height: number } | null => {
+            const r = document.querySelector(selector)?.getBoundingClientRect();
+            return r && r.width > 0 ? { x: r.x, y: r.y, width: r.width, height: r.height } : null;
+          };
+          return { words: box('#rotate [data-part="words"]'), phone: box('#rotate .rotate__phone'), window: window.innerWidth };
+        });
+        const { words: box, phone } = at;
         if (!box) throw new Error('no rotate message');
-        const width = await page.evaluate(() => window.innerWidth);
-        return { left: box.x, right: box.x + box.width, width: box.width, window: width };
+        // The phone outline above the words, inside the window too.
+        if (!phone) throw new Error('no phone outline');
+        expect(phone.y + phone.height, 'the phone is above the words').toBeLessThanOrEqual(box.y);
+        expect(phone.x).toBeGreaterThanOrEqual(box.x);
+        expect(phone.x + phone.width).toBeLessThanOrEqual(box.x + box.width);
+        return { left: box.x, right: box.x + box.width, width: box.width, window: at.window };
       };
       // A wide portrait phone: the message at its full 3 CSS px per art px (101 art px: 303 CSS px).
       await page.setViewportSize({ width: 390, height: 844 });
@@ -446,6 +564,29 @@ test.describe('pause menu', () => {
       const narrow = await inside();
       expect(narrow.left).toBeGreaterThanOrEqual(8);
       expect(narrow.right).toBeLessThanOrEqual(narrow.window - 8);
+      expect(problems).toEqual([]);
+    });
+
+    test('the ROTATE message shows a phone outline turning: upright, then sideways, in turn', async ({ page }) => {
+      const problems = await open(page, '&touch=1');
+      await page.setViewportSize({ width: 390, height: 844 });
+      await expect(page.locator('#rotate .rotate__phone')).toBeVisible();
+      // Two frames of 16 x 16 art px on top of each other, drawn at twice the words' size (6 CSS px per art px here).
+      const frames = page.locator('#rotate .rotate__phone canvas');
+      await expect(frames).toHaveCount(2);
+      const size = await frames.first().boundingBox();
+      expect(size?.width).toBeCloseTo(96, 0);
+      // Shown in turn: sample which frame is opaque over two turns; both are seen, never both at once.
+      const seen = new Set<string>();
+      for (let i = 0; i < 16; i++) {
+        const shown = await page.evaluate(() =>
+          [...document.querySelectorAll<HTMLElement>('#rotate .rotate__phone canvas')].filter((c) => getComputedStyle(c).opacity === '1').map((c) => c.className),
+        );
+        expect(shown.length, `one frame at a time: ${shown.join(', ')}`).toBe(1);
+        seen.add(shown[0] ?? '');
+        await page.waitForTimeout(200);
+      }
+      expect([...seen].sort()).toEqual(['rotate__sideways', 'rotate__upright']);
       expect(problems).toEqual([]);
     });
   });

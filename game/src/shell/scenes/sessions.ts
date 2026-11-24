@@ -16,6 +16,12 @@ export interface PlayStart {
    * False for the development rooms and the test hook: the save is never read or written.
    */
   readonly saved: boolean;
+  /**
+   * The number the session's first level carries on its intro card and in the top bar (`LEVEL 7`); the next
+   * ones count on from it. 1 when left out. A one-level session of a campaign level (`?level=level-07`, the test
+   * hook) carries the level's own number, so a playtest or a picture of it is not labelled `LEVEL 1`.
+   */
+  readonly firstNumber?: number;
 }
 
 /** A start with the level number (1-based) its button names: `CONTINUE - LEVEL 7`. */
@@ -36,9 +42,16 @@ export interface TitleOffer {
   readonly noCampaign: boolean;
 }
 
-/** A one-room session that is never saved: `?level=test`, `?level=debug`, the test hook. */
+/** A one-room session that is never saved: `?level=test`, `?level=debug`, `?level=level-07`, the test hook. */
 export function devStart(level: LevelData): PlayStart {
-  return { levels: [level], start: {}, saved: false };
+  const campaign = /^level-(\d+)$/.exec(level.id);
+  const n = campaign ? Number(campaign[1]) : 0;
+  return n >= 1 ? { levels: [level], start: {}, saved: false, firstNumber: n } : { levels: [level], start: {}, saved: false };
+}
+
+/** The number shown for the session's level at `levelIndex` (1-based, from the start's `firstNumber`). */
+export function levelNumberOf(play: PlayStart, levelIndex: number): number {
+  return (play.firstNumber ?? 1) + levelIndex;
 }
 
 /**
@@ -95,7 +108,11 @@ export function againStart(ended: PlayStart, outcome: 'gameOver' | 'won', highes
     if (next !== null) return next;
     return { levelNumber: 1, play: newGameStart(save, ended.levels, ended.levels) };
   }
-  if (outcome === 'won') return { levelNumber: 1, play: { levels: ended.levels, start: {}, saved: false } };
+  const numbered = ended.firstNumber === undefined ? {} : { firstNumber: ended.firstNumber };
+  if (outcome === 'won') return { levelNumber: levelNumberOf(ended, 0), play: { levels: ended.levels, start: {}, saved: false, ...numbered } };
   const levelIndex = Math.max(0, Math.min(highestUnlocked, ended.levels.length - 1));
-  return { levelNumber: levelIndex + 1, play: { levels: ended.levels, start: { levelIndex, highestUnlocked: levelIndex }, saved: false } };
+  return {
+    levelNumber: levelNumberOf(ended, levelIndex),
+    play: { levels: ended.levels, start: { levelIndex, highestUnlocked: levelIndex }, saved: false, ...numbered },
+  };
 }

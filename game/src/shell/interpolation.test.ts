@@ -196,6 +196,11 @@ const CAM: CameraTuning = Object.freeze({
   camVerticalEase: 0.12,
   camAirBandTop: 0.15,
   camAirBandBottom: 0.78,
+  camPassGlideSpeed: 3,
+  camPadClearPx: 16,
+  camRiseBandTop: 0.45,
+  camRiseLookSpeed: 1.5,
+  camVerticalMaxStep: 4,
 });
 
 describe('the whole loop: stepper, gate, camera and lerpPx together keep the hero still on screen', () => {
@@ -206,7 +211,7 @@ describe('the whole loop: stepper, gate, camera and lerpPx together keep the her
     const stepper = new FixedStepper(1000 / TICK_HZ, 5);
     const gate = new InterpolationGate(BELOW_MS);
     let sub = 1000 * 256; // the hero's x in sub-pixels
-    const heroAt = (): CameraTarget => ({ x: sub >> 8, feetY: 400, facing: 1, moving: true, onGround: true });
+    const heroAt = (): CameraTarget => ({ x: sub >> 8, feetY: 400, facing: 1, moving: true, onGround: true, running: true });
     let cam = snapCamera(heroAt(), VIEW, LEVEL, CAM);
     // What PlayScene's view captures after every tick: whole-pixel draw positions of the sprite and the camera.
     let cur = { hero: heroAt().x, cam: cam.scrollX };

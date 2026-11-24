@@ -35,9 +35,16 @@ export class TileLayer {
   private readonly maps: Phaser.Tilemaps.Tilemap[] = [];
   private readonly solid: Phaser.Tilemaps.TilemapLayer;
   private readonly animated: AnimatedCell[] = [];
+  /** 1 for each cell (row by row) through which the backdrop shows: no wall, no far-wall panel, no porthole. */
+  private readonly open: Uint8Array;
+  private readonly width: number;
+  private readonly height: number;
 
   constructor(scene: Phaser.Scene, level: LevelData) {
     const { width, height } = level;
+    this.width = width;
+    this.height = height;
+    this.open = new Uint8Array(width * height);
     const empty = (): number[][] => Array.from({ length: height }, () => Array.from({ length: width }, () => -1));
     const panels = empty();
     const decor = empty();
@@ -56,6 +63,7 @@ export class TileLayer {
           continue;
         }
         const pick = decoration.at(col, row);
+        if (!pick.panel && !pick.over) this.open[row * width + col] = 1;
         if (pick.panel) panelRow[col] = tileIndex(pick.panel);
         if (pick.over) decorRow[col] = tileIndex(pick.over.frame, pick.over.cellX, pick.over.cellY);
         const hazard = hazardPick(level, col, row);
@@ -71,6 +79,15 @@ export class TileLayer {
     this.layer(scene, panels, TILE_DEPTH.panels);
     this.layer(scene, decor, TILE_DEPTH.decor);
     this.solid = this.layer(scene, solid, TILE_DEPTH.solid);
+  }
+
+  /**
+   * Whether the backdrop (space, the Earth) shows through the cell at `col`, `row`: no wall, panel or porthole there.
+   * Beyond the level (where the camera passes its walls or its bottom on a touch screen) space shows too.
+   */
+  showsSpace(col: number, row: number): boolean {
+    if (col < 0 || row < 0 || col >= this.width || row >= this.height) return true;
+    return this.open[row * this.width + col] === 1;
   }
 
   /** Swaps the hazards' pictures to their frame at `tick` (run.tick). Cheap: only cells whose frame changed are touched. */

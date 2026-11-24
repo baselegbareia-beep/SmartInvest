@@ -97,6 +97,9 @@ const inside = (inner: Rect, outer: Rect): boolean =>
   inner.x >= outer.x && inner.y >= outer.y && inner.x + inner.w <= outer.x + outer.w && inner.y + inner.h <= outer.y + outer.h;
 const overlap = (a: Rect, b: Rect): boolean => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 
+/** A view too narrow for the pause menu's labels at 2x (RESTART LEVEL -1 LIFE is 250 px there). */
+const NARROW_1X = 240;
+
 /** The padding above the first item and the gaps between items, read back from a layout. */
 function spacingOf(m: MenuLayout): { pad: number; gaps: number[] } {
   const rects = m.items.map((placed) => placed.rect);
@@ -285,17 +288,18 @@ describe('menuLayout on every window of the device table', () => {
 
   it('gives up the gaps first, then the padding, and only then shares the rows', () => {
     const pause = SCREENS.pause ?? [];
+    // 240 px: too narrow for 2x labels, so the text stays 1x and only the spacing gives way.
     const full = neededPx(pause, 1, PANEL_PAD_PX, ITEM_GAP_PX);
-    expect(spacingOf(menuLayout(300, full, 1, pause))).toEqual({ pad: PANEL_PAD_PX, gaps: [3, 3, 3, 3] });
-    expect(spacingOf(menuLayout(300, full - 1, 1, pause))).toEqual({ pad: PANEL_PAD_PX, gaps: [2, 2, 2, 2] });
-    expect(spacingOf(menuLayout(300, full - 8, 1, pause))).toEqual({ pad: PANEL_PAD_PX, gaps: [1, 1, 1, 1] });
-    expect(spacingOf(menuLayout(300, full - 9, 1, pause))).toEqual({ pad: PANEL_PAD_PX - 1, gaps: [1, 1, 1, 1] });
+    expect(spacingOf(menuLayout(NARROW_1X, full, 1, pause))).toEqual({ pad: PANEL_PAD_PX, gaps: [3, 3, 3, 3] });
+    expect(spacingOf(menuLayout(NARROW_1X, full - 1, 1, pause))).toEqual({ pad: PANEL_PAD_PX, gaps: [2, 2, 2, 2] });
+    expect(spacingOf(menuLayout(NARROW_1X, full - 8, 1, pause))).toEqual({ pad: PANEL_PAD_PX, gaps: [1, 1, 1, 1] });
+    expect(spacingOf(menuLayout(NARROW_1X, full - 9, 1, pause))).toEqual({ pad: PANEL_PAD_PX - 1, gaps: [1, 1, 1, 1] });
     const tightest = neededPx(pause, 1, MIN_SPACING_PX, MIN_SPACING_PX);
-    const tight = menuLayout(300, tightest, 1, pause);
+    const tight = menuLayout(NARROW_1X, tightest, 1, pause);
     expect(tight.fits).toBe(true);
     expect(tight.rowPx).toBe(44);
     expect(spacingOf(tight)).toEqual({ pad: MIN_SPACING_PX, gaps: [1, 1, 1, 1] });
-    expect(menuLayout(300, tightest - 1, 1, pause).fits).toBe(false);
+    expect(menuLayout(NARROW_1X, tightest - 1, 1, pause).fits).toBe(false);
   });
 
   it('in the most extreme window (568 x 232 at ratio 2, one CSS px per art px) the pause menu still gets 44 CSS px rows', () => {
@@ -321,6 +325,43 @@ describe('menuLayout on every window of the device table', () => {
         expect(problems(m, items, v.viewW, v.viewH, c)).toEqual([]);
       }
     }
+  });
+
+  it('a heading keeps its lead over 2x text: PAUSED, GAME OVER and THE FOUNDRY IS LIT! are drawn at 3x there, and their screens still fit', () => {
+    for (const [w, h, dpr] of [[568, 232, 2], [740, 280, 2.75]] as const) {
+      const v = chooseView(w, h, dpr, { left: 0, right: 0, top: 0, bottom: 0 }, TUNING.view);
+      const c = cssPerArtPx(v, dpr);
+      for (const name of ['pause', 'gameOver', 'win']) {
+        const items = SCREENS[name] ?? [];
+        const m = menuLayout(v.viewW, v.viewH, c, items);
+        const scales = items.map((item) => (item.kind === 'text' ? drawnScale(item.scale, m.textScale) : m.textScale));
+        const heading = scales[0] ?? 0;
+        expect({ name, w, h, textScale: m.textScale, heading }).toEqual({ name, w, h, textScale: 2, heading: 3 });
+        expect(Math.max(...scales.slice(1)), `${name}: the heading is the largest line`).toBeLessThan(heading);
+        expect(m.fits).toBe(true);
+        expect(problems(m, items, v.viewW, v.viewH, c)).toEqual([]);
+      }
+    }
+    // The title's first word stays 3x over 2x text: it is larger than everything else already.
+    expect(drawnScale(3, 2)).toBe(3);
+    expect(drawnScale(2, 1)).toBe(2);
+    expect(drawnScale(undefined, 2)).toBe(2);
+  });
+
+  it('where a 3x heading would not fit, the whole menu stays 1x with its heading at 2x: never a heading as small as its text', () => {
+    const found: string[] = [];
+    for (const [name, items] of Object.entries(SCREENS)) {
+      for (let w = 240; w <= 480; w += 7) {
+        for (let h = 120; h <= 260; h += 5) {
+          for (const c of [0.8, 1, 1.25, 1.45]) {
+            const m = menuLayout(w, h, c, items);
+            const heads = items.filter((item) => item.kind === 'text' && (item.scale ?? 1) > 1).map((item) => (item.kind === 'text' ? drawnScale(item.scale, m.textScale) : 0));
+            for (const head of heads) if (head <= m.textScale) found.push(`${name} at ${w} x ${h} (${c}): heading ${head} over text ${m.textScale}`);
+          }
+        }
+      }
+    }
+    expect(found).toEqual([]);
   });
 
   it('keeps 1x text where the pixels are large enough, and where 2x would not fit', () => {

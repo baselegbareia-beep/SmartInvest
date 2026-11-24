@@ -89,15 +89,29 @@ describe('the hero in a running world', () => {
 });
 
 describe('the hero in the ready gate', () => {
-  it('blinks: hidden while (tick >> 3) & 1 is 1', () => {
+  it('blinks: dimmed while (tick >> 3) & 1 is 1, and never hidden (a picture on any tick shows him)', () => {
     const game = createSession([ROOM], REFERENCE_PHYS);
     const seen: boolean[] = [];
     for (let i = 0; i < 16; i++) {
-      seen.push(look(game).visible);
+      const l = look(game);
+      expect(l.visible, `tick ${game.run.tick}`).toBe(true);
+      seen.push(l.dim);
       step(game, NONE);
     }
     expect(game.run.phase).toBe('ready');
-    expect(seen).toEqual([...Array<boolean>(8).fill(true), ...Array<boolean>(8).fill(false)]);
+    expect(seen).toEqual([...Array<boolean>(8).fill(false), ...Array<boolean>(8).fill(true)]);
+  });
+
+  it('under reduced motion (blink off) is shown steadily: nothing blinks', () => {
+    const game = createSession([ROOM], REFERENCE_PHYS);
+    const seen = new Set<string>();
+    for (let i = 0; i < 32; i++) {
+      const l = heroLook(game, TIMING, newHeroLook(), false);
+      seen.add(`${l.visible} ${l.dim}`);
+      step(game, NONE);
+    }
+    expect(game.run.phase).toBe('ready');
+    expect([...seen]).toEqual(['true false']);
   });
 });
 

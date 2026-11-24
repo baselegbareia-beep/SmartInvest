@@ -1,0 +1,61 @@
+/*
+ * The "Rotate your phone" message (src/main.ts draws it, src/shell/rotateArt.ts holds the picture): the phone
+ * outline above the words. The two frames lie on top of each other and are shown in turn, upright then
+ * sideways, each for half of --rotate-turn. Under reduced motion only the sideways phone shows, still.
+ * Its colours are drawn into the canvases; nothing here is a tuned number.
+ */
+#rotate {
+  flex-direction: column;
+}
+
+.rotate__phone {
+  position: relative;
+  flex: none;
+}
+
+.rotate__phone > canvas {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+.rotate__upright {
+  animation: rotate-upright var(--rotate-turn, 1600ms) step-end infinite;
+}
+
+.rotate__sideways {
+  animation: rotate-sideways var(--rotate-turn, 1600ms) step-end infinite;
+}
+
+@keyframes rotate-upright {
+  0% {
+    opacity: 1;
+  }
+
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes rotate-sideways {
+  0% {
+    opacity: 0;
+  }
+
+  50%,
+  100% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rotate__upright,
+  .rotate__sideways {
+    animation: none;
+  }
+
+  .rotate__upright {
+    opacity: 0;
+  }
+}

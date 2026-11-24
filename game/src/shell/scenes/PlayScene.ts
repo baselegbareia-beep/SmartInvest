@@ -32,7 +32,7 @@ import { TICK_HZ, TILE_PX } from '../../core/types';
 import type { DeathCause, GameEvent, GameState, Input, InputScript, ReplayResult } from '../../core/types';
 import { MUTE_KEYS, PAUSE_KEYS, installKeyboard, releaseKeys } from '../../input/keyboard';
 import { TUNING } from '../../tuning';
-import { cameraTarget, levelSize, snapCamera, stepCamera } from '../camera';
+import { NO_CAMERA, cameraTarget, levelSize, snapCamera, stepCamera } from '../camera';
 import type { CameraState, PadReach, Size } from '../camera';
 import { Effects } from '../Effects';
 import { EventRouter } from '../EventRouter';
@@ -43,13 +43,12 @@ import { onSceneEnd } from '../sceneEnd';
 import { HitStop } from '../hitStop';
 import { InterpolationGate } from '../interpolation';
 import { controls, haptics, onPadPause, pad, padReachNow, phys, progress, settings, sfx } from '../singletons';
-import { heroDrawX, heroDrawY } from '../viewModel';
 import { WorldView } from '../WorldView';
 
 import type { EndData } from './EndScene';
 import { FUEL_PIPS, HudScene, newHudModel } from './HudScene';
 import type { HudData, IntroCard } from './HudScene';
-import { againStart } from './sessions';
+import { againStart, levelNumberOf } from './sessions';
 import type { PlayStart } from './sessions';
 
 export type PlayMode = 'intro' | 'running' | 'paused' | 'ended';
@@ -141,12 +140,12 @@ export class PlayScene extends Phaser.Scene {
   private readonly tickEvents: GameEvent[] = [];
   private readonly stepper = new FixedStepper(1000 / TICK_HZ, TUNING.pacing.maxStepsPerFrame);
   private readonly gate = new InterpolationGate(TUNING.pacing.interpolateBelowMs);
-  private cam: CameraState = { x: 0, y: 0, look: 0, scrollX: 0, scrollY: 0 };
+  private cam: CameraState = NO_CAMERA;
   private viewSize: Size = { w: 1, h: 1 };
   private levelPx: Size = { w: 1, h: 1 };
   private snapPending = false;
-  /** How far the touch buttons reach into the view (art px): the camera keeps the hero clear of them at the walls. */
-  private readonly padReach: PadReach = { left: 0, right: 0 };
+  /** How far the touch buttons reach into the view (art px): the view may pass a side wall by that much. */
+  private readonly padReach: PadReach = { left: 0, right: 0, bottom: 0 };
   /** The hold after a kill (TUNING.effects.killHitStopFrames); a replay's ignores every request. */
   private hitStop = new HitStop();
 
@@ -183,11 +182,45 @@ export class PlayScene extends Phaser.Scene {
 
   /** Test hook only: the hero's 16 px sprite as last drawn, art px from the view's top-left corner (null before a level). */
   heroOnView(): { x: number; y: number; w: number; h: number } | null {
-    const sim = this.sim;
     const view = this.view;
-    if (!sim || !view) return null;
-    const p = sim.run.player;
-    return { x: heroDrawX(p, sim.phys) - view.camX, y: heroDrawY(p, sim.phys) - view.camY, w: TILE_PX, h: TILE_PX };
+    if (!this.sim || !view) return null;
+    // Where he is drawn: the core's place, except where the picture moves him (into the airlock, a fall's edge).
+    const at = view.heroDrawn();
+    return { x: at.x - view.camX, y: at.y - view.camY, w: TILE_PX, h: TILE_PX };
+  }
+
+  /** Test hook only: a level cell as last drawn, art px from the view's top-left corner (null before a level). */
+  cellOnView(col: number, row: number): { x: number; y: number; w: number; h: number } | null {
+    const view = this.view;
+    if (!this.sim || !view) return null;
+    return { x: col * TILE_PX - view.camX, y: row * TILE_PX - view.camY, w: TILE_PX, h: TILE_PX };
+  }
+
+  /**
+   * Test hook only: what the last frame drew of the effects: the scroll Phaser drew with (shake included) and the
+   * camera's own (without it), the shake, particles alive, the screen flash and fade, and the hero's look.
+   */
+  lookNow(): {
+    scrollX: number;
+    scrollY: number;
+    camX: number;
+    camY: number;
+    shakeX: number;
+    shakeY: number;
+    particles: number;
+    flash: number;
+    fade: number;
+    popups: number;
+    popupRise: number;
+    popupTop: number | null;
+    pointer: string | null;
+    hero: { frame: string; visible: boolean; filled: boolean; dim: boolean; prompt: boolean } | null;
+  } | null {
+    const view = this.view;
+    const fx = this.effects;
+    if (!view || !fx) return null;
+    const cam = this.cameras.main;
+    return { scrollX: cam.scrollX, scrollY: cam.scrollY, camX: view.camX, camY: view.camY, shakeX: fx.shakeX, shakeY: fx.shakeY, ...fx.shown(), hero: view.heroShown() };
   }
 
   /** Test hook only: a fixed number of frames per rendered frame (null: the real stepper). */
@@ -433,7 +466,7 @@ export class PlayScene extends Phaser.Scene {
     const m = this.hudModel;
     m.lives = sim.session.lives;
     m.maxLives = sim.phys.maxLives;
-    m.levelNumber = sim.session.levelIndex + 1;
+    m.levelNumber = levelNumberOf(this.startData, sim.session.levelIndex);
     m.score = sim.session.score;
     m.hasTrophy = run.hasTrophy;
     m.hasBlaster = p.hasBlaster;
@@ -451,7 +484,7 @@ export class PlayScene extends Phaser.Scene {
     const alpha = this.replay ? 1 : this.gate.alpha(this.stepper);
     const fx = this.effects;
     view.render(sim, alpha, fx?.shakeX ?? 0, fx?.shakeY ?? 0);
-    fx?.place(view.camX, view.camY, sim);
+    fx?.place(view.camX, view.camY, sim, this.hud()?.toastShowing ?? false);
   }
 
   /** The HUD scene once it has run create() (it is launched in create() and starts a frame later). */
@@ -492,6 +525,8 @@ export class PlayScene extends Phaser.Scene {
       if (!sim || !this.view) return;
       this.view.buildLevel(sim);
       this.levelPx = levelSize(sim.level);
+      // FIRE goes beside JUMP in a level without a thruster pack (THRUST's place); before the camera measures the pad.
+      pad.setSlots({ fireBesideJump: !sim.level.pickups.some((p) => p.kind === 'thruster') });
       this.cam = snapCamera(cameraTarget(sim), this.viewSize, this.levelPx, TUNING.camera, padReachNow(this.padReach));
       this.snapPending = true;
       this.stepper.reset();
@@ -505,7 +540,7 @@ export class PlayScene extends Phaser.Scene {
       this.introAge = 0;
       this.introHeld = true;
       this.introCard = {
-        levelNumber: sim.session.levelIndex + 1,
+        levelNumber: levelNumberOf(this.startData, sim.session.levelIndex),
         name: sim.level.name,
         teaches: sim.level.teaches,
         lives: sim.session.lives,

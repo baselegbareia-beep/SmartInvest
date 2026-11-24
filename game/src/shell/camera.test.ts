@@ -6,8 +6,9 @@ import { SUB_SHIFT, TILE_PX } from '../core/types';
 import type { CameraTuning } from '../core/types';
 import { TUNING } from '../tuning';
 
-import { NO_PAD, cameraTarget, levelSize, padReach, snapCamera, stepCamera } from './camera';
+import { NO_PAD, cameraTarget, feetAnchor, levelSize, padReach, riseLookMax, snapCamera, stepCamera } from './camera';
 import type { CameraState, CameraTarget, PadReach, Size } from './camera';
+import { STRIP_H } from './hudModel';
 
 /**
  * The rules of docs/ARCHITECTURE.md 11.4 on a frozen copy of the camera numbers the game shipped with,
@@ -22,6 +23,11 @@ const CAM: CameraTuning = Object.freeze({
   camVerticalEase: 0.12,
   camAirBandTop: 0.15,
   camAirBandBottom: 0.78,
+  camPassGlideSpeed: 3,
+  camPadClearPx: 16,
+  camRiseBandTop: 0.45,
+  camRiseLookSpeed: 1.5,
+  camVerticalMaxStep: 4,
 });
 
 const VIEW: Size = { w: 320, h: 180 };
@@ -33,6 +39,7 @@ const target = (x: number, feetY: number, more: Partial<CameraTarget> = {}): Cam
   facing: 1,
   moving: false,
   onGround: true,
+  running: true,
   ...more,
 });
 
@@ -163,9 +170,9 @@ describe('stepCamera: vertical', () => {
     expect(onScreen(cam, higher).y).toBe(Math.round(CAM.camAnchorY * VIEW.h));
   });
 
-  it('in the air holds still while the feet stay inside the band', () => {
+  it('in the air holds still while the feet stay inside the band (its top measured from under the top bar\'s strip)', () => {
     const start = snapCamera(target(800, 320), VIEW, BIG, CAM);
-    const top = Math.ceil(CAM.camAirBandTop * VIEW.h);
+    const top = Math.ceil(STRIP_H + CAM.camAirBandTop * VIEW.h);
     const bottom = Math.floor(CAM.camAirBandBottom * VIEW.h);
     let cam = start;
     // A jump: up to the top of the band and down to the bottom of it.
@@ -187,9 +194,9 @@ describe('stepCamera: vertical', () => {
     for (let i = 0; i < 40; i++) {
       feet -= 3;
       cam = stepCamera(cam, target(800, feet, { onGround: false }), VIEW, BIG, CAM);
-      expect(feet - cam.y).toBeGreaterThanOrEqual(CAM.camAirBandTop * VIEW.h - 1e-9);
+      expect(feet - cam.y).toBeGreaterThanOrEqual(STRIP_H + CAM.camAirBandTop * VIEW.h - 1e-9);
     }
-    expect(feet - cam.y).toBeCloseTo(CAM.camAirBandTop * VIEW.h, 9);
+    expect(feet - cam.y).toBeCloseTo(STRIP_H + CAM.camAirBandTop * VIEW.h, 9);
     // Falling 4 px a tick: the feet sink to the bottom of the band and the view falls with him.
     for (let i = 0; i < 60; i++) {
       feet += 4;
@@ -204,8 +211,52 @@ describe('stepCamera: vertical', () => {
     const tall: Size = { w: 320, h: 400 };
     const cam = stepCamera(start, target(800, 320), tall, BIG, CAM);
     const feet = 320 - cam.y;
-    expect(feet).toBeGreaterThanOrEqual(CAM.camAirBandTop * tall.h - 1e-9);
+    expect(feet).toBeGreaterThanOrEqual(STRIP_H + CAM.camAirBandTop * tall.h - 1e-9);
     expect(feet).toBeLessThanOrEqual(CAM.camAirBandBottom * tall.h + 1e-9);
+  });
+
+  /** The mini fuel bar over a thrusting hero: 2 px tall, 3 px above his 16 px sprite (WorldView FUELBAR_H, FUELBAR_GAP). */
+  const FUEL_BAR_ABOVE = 5;
+
+  it("a hero flying up a shaft is drawn below the top bar's dark strip, his fuel bar too, with as much undimmed level above him as before the strip", () => {
+    // The review's case: the strip (void at 70 %) darkened his hat and antenna whenever he rose to the top of the view.
+    for (const h of [160, 167, 180, 187, 224]) {
+      const view: Size = { w: 320, h };
+      let feet = 600;
+      let cam = snapCamera(target(800, feet), view, BIG, CAM);
+      for (let i = 0; i < 150; i++) {
+        feet -= 3;
+        cam = stepCamera(cam, target(800, feet, { onGround: false }), view, BIG, CAM);
+        const spriteTop = feet - TILE_PX - cam.scrollY;
+        expect(spriteTop - FUEL_BAR_ABOVE, `view ${h} px tall, tick ${i}`).toBeGreaterThanOrEqual(STRIP_H);
+      }
+      // At the top of the band: the band's top lies camAirBandTop of the view below the strip, so the air above his
+      // head that shows undimmed is what the whole band top showed before the strip was there.
+      expect(feet - TILE_PX - cam.y - STRIP_H).toBeCloseTo(CAM.camAirBandTop * h - TILE_PX, 9);
+    }
+  });
+
+  it('a full jump from rest on the real core stays inside the band on the smallest view: the view holds still', () => {
+    // Fourteen rows of air over a deck with rock beneath, so the hero can rest on camAnchorY with no level edge near.
+    const tall = levelFromRows([...Array.from({ length: 14 }, () => '.'.repeat(40)), '.P..........T.............D.............', ...Array.from({ length: 9 }, () => '#'.repeat(40))]);
+    const smallest: Size = { w: 17 * TILE_PX, h: 10 * TILE_PX };
+    for (const run of ['', 'R']) {
+      const game = playingGame(tall);
+      const level = levelSize(game.level);
+      let cam = snapCamera(cameraTarget(game), smallest, level, CAM);
+      const rest = cam.scrollY;
+      let airborne = 0;
+      let highest = Infinity;
+      for (let tick = 0; tick < 90; tick++) {
+        step(game, IN(`${run}J`), []);
+        cam = stepCamera(cam, cameraTarget(game), smallest, level, CAM);
+        if (!game.run.player.onGround) airborne += 1;
+        highest = Math.min(highest, cameraTarget(game).feetY - cam.scrollY);
+        expect(cam.scrollY, `${run || 'standing'} jump, tick ${tick}`).toBe(rest);
+      }
+      expect(airborne, 'he did jump').toBeGreaterThan(20);
+      expect(highest, 'and rose more than three tiles on screen').toBeLessThan(CAM.camAnchorY * smallest.h - 3 * TILE_PX);
+    }
   });
 });
 
@@ -396,47 +447,87 @@ describe('cameraTarget and the camera on the real core', () => {
   });
 });
 
-describe('the touch pad: the hero is never held under a drawn button by a side wall', () => {
-  // How far LEFT and RIGHT, and JUMP and FIRE, reach into the view: art px, as padReach gives them.
+describe('the touch pad: nothing by a side wall is held under a drawn button (the view passes the wall instead)', () => {
+  // How far LEFT and RIGHT, and JUMP, FIRE, THRUST and PAUSE, reach into the view: art px, as padReach gives them.
   const PAD: PadReach = { left: 80, right: 85 };
   /** Where the hero's sprite (one tile, centred on target.x) is drawn: its left and right edges on screen. */
   const sprite = (cam: CameraState, t: CameraTarget): { left: number; right: number } => ({
     left: t.x - TILE_PX / 2 - cam.scrollX,
     right: t.x + TILE_PX / 2 - cam.scrollX,
   });
+  /** Where a tile at `col` is drawn: its left and right edges on screen. */
+  const tile = (cam: CameraState, col: number): { left: number; right: number } => ({
+    left: col * TILE_PX - cam.scrollX,
+    right: (col + 1) * TILE_PX - cam.scrollX,
+  });
+  const lastCol = BIG.w / TILE_PX - 1;
 
-  it('at the left wall the view passes the wall by just enough to draw the hero right of RIGHT', () => {
-    for (const x of [24, 40, 56, 72, 88]) {
-      const t = target(x, 320);
-      const cam = snapCamera(t, VIEW, BIG, CAM, PAD);
+  it('stopped by the east wall, the level ends where JUMP and FIRE begin: the airlock in the last column is clear of them', () => {
+    // Level 4's case: the airlock one tile from the east wall, the hero walking up to it from 12 tiles away.
+    const door = lastCol - 1;
+    let t = target((door - 12) * TILE_PX + 8, 320, { moving: true });
+    let cam = snapCamera(t, VIEW, BIG, CAM, PAD);
+    for (let x = t.x; x <= door * TILE_PX + 8; x++) {
+      t = target(x, 320, { moving: true });
+      cam = stepCamera(cam, t, VIEW, BIG, CAM, PAD);
+      const tilesLeft = (door * TILE_PX + 8 - x) / TILE_PX;
+      if (tilesLeft <= 4) expect(tile(cam, door).right, `${tilesLeft} tiles from the airlock`).toBeLessThanOrEqual(VIEW.w - PAD.right);
+      expect(sprite(cam, t).right).toBeLessThanOrEqual(VIEW.w - PAD.right);
+    }
+    // At the wall the camera stands where the level's edge meets the buttons, never further.
+    expect(cam.scrollX).toBe(BIG.w - VIEW.w + PAD.right);
+    expect(tile(cam, lastCol).right).toBe(VIEW.w - PAD.right);
+  });
+
+  it('stopped by the west wall, the level begins where RIGHT ends: the first columns are clear of LEFT and RIGHT', () => {
+    let t = target(12 * TILE_PX, 320, { facing: -1, moving: true });
+    let cam = snapCamera(t, VIEW, BIG, CAM, PAD);
+    for (let x = t.x; x >= 8; x--) {
+      t = target(x, 320, { facing: -1, moving: true });
+      cam = stepCamera(cam, t, VIEW, BIG, CAM, PAD);
       expect(sprite(cam, t).left, `hero at ${x}`).toBeGreaterThanOrEqual(PAD.left);
-      // ...and no further than needed: either the hero is exactly clear, or the camera is where it would be anyway.
-      const free = snapCamera(t, VIEW, BIG, CAM);
-      expect(cam.scrollX === free.scrollX || sprite(cam, t).left === PAD.left, `hero at ${x}`).toBe(true);
-      expect(cam.scrollX).toBeLessThanOrEqual(0);
+    }
+    expect(cam.scrollX).toBe(-PAD.left);
+    expect(tile(cam, 0).left).toBe(PAD.left);
+  });
+
+  it('at the ready gate, a hero who starts a few tiles from the airlock by the east wall sees it clear of the buttons', () => {
+    const door = lastCol - 1;
+    for (const tilesAway of [1, 2, 3, 4, 5]) {
+      for (const facing of [1, -1] as const) {
+        const t = target((door - tilesAway) * TILE_PX + 8, 320, { facing });
+        const cam = snapCamera(t, VIEW, BIG, CAM, PAD);
+        if (facing === 1) expect(tile(cam, door).right, `${tilesAway} tiles, facing the airlock`).toBeLessThanOrEqual(VIEW.w - PAD.right);
+        expect(sprite(cam, t).right, `${tilesAway} tiles, facing ${facing}`).toBeLessThanOrEqual(VIEW.w - PAD.right);
+      }
     }
   });
 
-  it('at the right wall it passes that wall by just enough to draw the hero left of JUMP and FIRE', () => {
-    for (const fromWall of [24, 40, 56, 72, 88]) {
-      const t = target(BIG.w - fromWall, 320, { facing: -1 });
-      const cam = snapCamera(t, VIEW, BIG, CAM, PAD);
-      expect(VIEW.w - sprite(cam, t).right, `hero ${fromWall} px from the wall`).toBeGreaterThanOrEqual(PAD.right);
-      expect(cam.scrollX).toBeGreaterThanOrEqual(BIG.w - VIEW.w);
+  it('never shows more than the reach beyond a wall, and the hero is always drawn clear of the buttons there', () => {
+    for (let x = 0; x <= BIG.w; x += 4) {
+      for (const facing of [1, -1] as const) {
+        const t = target(x, 320, { facing });
+        const cam = snapCamera(t, VIEW, BIG, CAM, PAD);
+        expect(cam.scrollX).toBeGreaterThanOrEqual(-PAD.left - TILE_PX / 2);
+        expect(cam.scrollX).toBeLessThanOrEqual(BIG.w - VIEW.w + PAD.right + TILE_PX / 2);
+        if (cam.scrollX <= 0) expect(sprite(cam, t).left, `hero at ${x}`).toBeGreaterThanOrEqual(PAD.left);
+        if (cam.scrollX >= BIG.w - VIEW.w) expect(VIEW.w - sprite(cam, t).right, `hero at ${x}`).toBeGreaterThanOrEqual(PAD.right);
+      }
     }
   });
 
   it('changes nothing away from the walls, nor without a pad', () => {
+    const placed = ({ x, y, look, scrollX, scrollY }: CameraState): Partial<CameraState> => ({ x, y, look, scrollX, scrollY });
     for (const x of [200, 400, 800, BIG.w - 300]) {
       const t = target(x, 320);
-      expect(snapCamera(t, VIEW, BIG, CAM, PAD)).toEqual(snapCamera(t, VIEW, BIG, CAM));
+      expect(placed(snapCamera(t, VIEW, BIG, CAM, PAD))).toEqual(placed(snapCamera(t, VIEW, BIG, CAM)));
     }
     const nearWall = target(24, 320);
     expect(snapCamera(nearWall, VIEW, BIG, CAM, NO_PAD)).toEqual(snapCamera(nearWall, VIEW, BIG, CAM));
     expect(snapCamera(nearWall, VIEW, BIG, CAM, NO_PAD).scrollX).toBe(0);
   });
 
-  it('walking away from the wall, the view comes back into the level without a jump, on the hero\'s whole pixels', () => {
+  it("walking away from the wall, the view comes back into the level without a jump, on the hero's whole pixels", () => {
     let t = target(24, 320, { moving: true });
     let cam = snapCamera(t, VIEW, BIG, CAM, PAD);
     for (let x = 24; x < 400; x++) {
@@ -450,14 +541,18 @@ describe('the touch pad: the hero is never held under a drawn button by a side w
     expect(cam.scrollX).toBeGreaterThan(0); // back inside the level, following as before
   });
 
-  it('a room narrower than the view stays centred unless the hero would stand under a button', () => {
+  it('a room narrower than the view is centred without a pad, and passes its walls like any level with one', () => {
     const room: Size = { w: 15 * TILE_PX, h: 10 * TILE_PX };
     const centred = Math.floor((room.w - VIEW.w) / 2);
-    const middle = target(room.w / 2, 100);
-    expect(snapCamera(middle, VIEW, room, CAM, PAD).scrollX).toBe(centred);
-    const atWall = target(24, 100);
-    const cam = snapCamera(atWall, VIEW, room, CAM, PAD);
-    expect(sprite(cam, atWall).left).toBeGreaterThanOrEqual(PAD.left);
+    expect(snapCamera(target(room.w / 2, 100), VIEW, room, CAM).scrollX).toBe(centred);
+    const atEast = target(room.w - 24, 100);
+    const east = snapCamera(atEast, VIEW, room, CAM, PAD);
+    expect(east.scrollX).toBeLessThanOrEqual(centred + PAD.right);
+    expect(room.w - east.scrollX, 'the room ends where the buttons begin, or before').toBeLessThanOrEqual(VIEW.w - PAD.right);
+    const atWest = target(24, 100, { facing: -1 });
+    const west = snapCamera(atWest, VIEW, room, CAM, PAD);
+    expect(west.scrollX).toBeGreaterThanOrEqual(centred - PAD.left);
+    expect(sprite(west, atWest).left).toBeGreaterThanOrEqual(PAD.left);
   });
 
   it('padReach measures the drawn buttons over the canvas in whole art px, from either edge', () => {
@@ -466,11 +561,289 @@ describe('the touch pad: the hero is never held under a drawn button by a side w
     const right = { x: 143, y: 286, w: 64, h: 64 };
     const jump = { x: 701, y: 274, w: 76, h: 76 };
     const fire = { x: 627, y: 290, w: 60, h: 60 };
-    const out: PadReach = { left: -1, right: -1 };
-    expect(padReach([left, right], [jump, fire], canvas, 2, out)).toBe(out);
-    expect(out).toEqual({ left: Math.ceil((143 + 64 - 47) / 2), right: Math.ceil((47 + 750 - 627) / 2) });
+    const pause = { x: 749, y: 10, w: 36, h: 36 };
+    const out: PadReach = { left: -1, right: -1, bottom: -1 };
+    expect(padReach([left, right], [jump, fire, pause], canvas, 2, out)).toBe(out);
+    // Up from the bottom: the tallest of the bottom row (JUMP, from y 274 on a 390 px canvas), not PAUSE at the top.
+    expect(out).toEqual({ left: Math.ceil((143 + 64 - 47) / 2), right: Math.ceil((47 + 750 - 627) / 2), bottom: Math.ceil((390 - 274) / 2) });
+    // PAUSE counts too at the side: alone it reaches (47 + 750 - 749) / 2 = 24 art px; it is not in the bottom row.
+    expect(padReach([], [pause], canvas, 2, out)).toEqual({ left: 0, right: 24, bottom: 0 });
     // Buttons beyond the canvas (wide bars beside it) reach nothing.
-    expect(padReach([{ x: 0, y: 0, w: 20, h: 20 }], [{ x: 900, y: 0, w: 20, h: 20 }], canvas, 2, out)).toEqual({ left: 0, right: 0 });
+    expect(padReach([{ x: 0, y: 0, w: 20, h: 20 }], [{ x: 900, y: 0, w: 20, h: 20 }], canvas, 2, out)).toEqual({ left: 0, right: 0, bottom: 0 });
+  });
+});
+
+describe("the touch pad's bottom row: a floor at the level's bottom is drawn above the buttons (the view passes the bottom edge)", () => {
+  // The smallest phone (568 x 320 at 2): a 284 x 160 view, the bottom row of buttons reaching 48 art px up.
+  const SE: Size = { w: 284, h: 160 };
+  const PAD: PadReach = { left: 80, right: 121, bottom: 48 };
+  // A 14-row level whose floor is its bottom row (level 2): the hero stands on row 13's top, feet at y 208.
+  const LOW: Size = { w: 64 * TILE_PX, h: 14 * TILE_PX };
+  const floorFeet = 13 * TILE_PX;
+
+  it('without a pad the view stops at the level bottom, and the floor row lies at the height of the buttons', () => {
+    const cam = snapCamera(target(400, floorFeet), SE, LOW, CAM);
+    expect(cam.scrollY).toBe(LOW.h - SE.h);
+    expect(floorFeet - cam.scrollY, 'the feet sit 16 px above the bottom edge').toBe(SE.h - TILE_PX);
+  });
+
+  it('with the pad the view goes below the level by up to the reach, so the feet rest on the anchor and the floor row is above the buttons', () => {
+    let cam = snapCamera(target(400, floorFeet), SE, LOW, CAM, PAD);
+    const anchor = feetAnchor(SE, CAM, PAD);
+    expect(floorFeet - cam.scrollY).toBe(Math.round(anchor));
+    // The floor tile under him, and what walks on it, are above the buttons' top edge.
+    expect(floorFeet + TILE_PX - cam.scrollY).toBeLessThanOrEqual(SE.h - (PAD.bottom ?? 0));
+    expect(cam.scrollY + SE.h - LOW.h, 'never more than the reach below the level').toBeLessThanOrEqual(PAD.bottom ?? 0);
+    // Standing still for a while changes nothing.
+    for (let i = 0; i < 60; i++) cam = stepCamera(cam, target(400, floorFeet), SE, LOW, CAM, PAD);
+    expect(floorFeet - cam.scrollY).toBe(Math.round(anchor));
+  });
+
+  it('feetAnchor keeps camPadClearPx between the feet and the bottom row, and is camAnchorY without a pad', () => {
+    expect(feetAnchor(SE, CAM)).toBe(CAM.camAnchorY * SE.h);
+    for (const bottom of [0, 20, 48, 60, 96]) {
+      const a = feetAnchor(SE, CAM, { left: 0, right: 0, bottom });
+      expect(a).toBeLessThanOrEqual(CAM.camAnchorY * SE.h);
+      if (bottom > 0) expect(a, `reach ${bottom}`).toBeLessThanOrEqual(Math.max(SE.h - bottom - CAM.camPadClearPx, STRIP_H + CAM.camAirBandTop * SE.h));
+      expect(a, `reach ${bottom}`).toBeGreaterThanOrEqual(STRIP_H + CAM.camAirBandTop * SE.h);
+    }
+  });
+
+  it('a hero falling into a pit is followed before his feet reach the buttons', () => {
+    const tall: Size = { w: 64 * TILE_PX, h: 40 * TILE_PX };
+    let feet = 300;
+    let cam = snapCamera(target(400, feet), SE, tall, CAM, PAD);
+    for (let i = 0; i < 40; i++) {
+      feet += 4;
+      cam = stepCamera(cam, target(400, feet, { onGround: false }), SE, tall, CAM, PAD);
+      expect(feet - cam.scrollY, `tick ${i}`).toBeLessThanOrEqual(SE.h - (PAD.bottom ?? 0));
+    }
+  });
+
+  it('touch mode ending: the pass below the level is kept while he stands and given back only as the camera rises with him', () => {
+    let cam = snapCamera(target(400, floorFeet), SE, LOW, CAM, PAD);
+    const start = cam.scrollY;
+    expect(start).toBeGreaterThan(LOW.h - SE.h);
+    for (let i = 0; i < 120; i++) {
+      const next = stepCamera(cam, target(400, floorFeet), SE, LOW, CAM, NO_PAD);
+      expect(Math.abs(next.scrollY - cam.scrollY), `tick ${i}: no jump`).toBeLessThanOrEqual(CAM.camVerticalMaxStep);
+      cam = next;
+    }
+    // Standing, nothing moves: the pass he had is kept (the view would otherwise jump up 48 px to the level's bottom).
+    expect(cam.scrollY).toBe(start);
+    expect(cam.passBottom).toBe(start - (LOW.h - SE.h));
+    // A climb takes him up and the camera with him: the pass shrinks to nothing on the way, without a jump.
+    let feet = floorFeet;
+    for (let i = 0; i < 200; i++) {
+      feet = Math.max(5 * TILE_PX, feet - 1);
+      const next = stepCamera(cam, target(400, feet), SE, LOW, CAM, NO_PAD);
+      expect(Math.abs(next.scrollY - cam.scrollY), `climb tick ${i}`).toBeLessThanOrEqual(CAM.camVerticalMaxStep);
+      cam = next;
+    }
+    expect(cam.passBottom).toBe(0);
+    expect(cam.scrollY + SE.h).toBeLessThanOrEqual(LOW.h);
+  });
+
+  it('touch mode coming back: the pass below grows by camPassGlideSpeed a tick at most, and the view eases down, never jumping', () => {
+    let cam = snapCamera(target(400, floorFeet), SE, LOW, CAM, NO_PAD);
+    expect(cam.passBottom).toBe(0);
+    for (let i = 0; i < 80; i++) {
+      const next = stepCamera(cam, target(400, floorFeet), SE, LOW, CAM, PAD);
+      expect(next.passBottom - cam.passBottom).toBeLessThanOrEqual(CAM.camPassGlideSpeed);
+      expect(Math.abs(next.scrollY - cam.scrollY), `tick ${i}`).toBeLessThanOrEqual(CAM.camVerticalMaxStep);
+      cam = next;
+    }
+    expect(floorFeet - cam.scrollY).toBe(Math.round(feetAnchor(SE, CAM, PAD)));
+  });
+});
+
+describe('a hero thrusting up a shaft sees what is above him (the air band slides down while THRUST is held)', () => {
+  const SMALLEST: Size = { w: 17 * TILE_PX, h: 10 * TILE_PX };
+
+  it('on the 17 x 10 view, after the slide, at least three tiles of undimmed level show above his head', () => {
+    for (const view of [SMALLEST, { w: 339, h: 165 }, { w: 400, h: 180 }]) {
+      let feet = 600;
+      let cam = snapCamera(target(800, feet), view, BIG, CAM);
+      const above: number[] = [];
+      for (let i = 0; i < 90; i++) {
+        feet -= 1.75; // the thruster's top climbing speed
+        cam = stepCamera(cam, target(800, Math.round(feet), { onGround: false, thrusting: true }), view, BIG, CAM);
+        above.push(Math.round(feet) - TILE_PX - cam.scrollY - STRIP_H);
+      }
+      // A 6-tile shaft is 96 px: climbed at 1.75 px a tick in 55 ticks. From then on at least 3 tiles show above him.
+      expect(Math.min(...above.slice(55)), `view ${view.w} x ${view.h}`).toBeGreaterThanOrEqual(3 * TILE_PX);
+      expect(cam.rise).toBeCloseTo(riseLookMax(view, CAM), 9);
+    }
+  });
+
+  it('the slide is gradual (camRiseLookSpeed a tick) and goes back after the thrust, never moving the view by a jump', () => {
+    let feet = 600;
+    let cam = snapCamera(target(800, feet), SMALLEST, BIG, CAM);
+    for (let i = 0; i < 120; i++) {
+      const thrusting = i < 60;
+      if (thrusting) feet -= 2;
+      const next = stepCamera(cam, target(800, feet, { onGround: false, thrusting }), SMALLEST, BIG, CAM);
+      expect(Math.abs(next.rise - cam.rise), `tick ${i}`).toBeLessThanOrEqual(CAM.camRiseLookSpeed + 1e-9);
+      expect(Math.abs(next.y - cam.y), `tick ${i}`).toBeLessThanOrEqual(2 + CAM.camRiseLookSpeed + 1e-9);
+      cam = next;
+    }
+    expect(cam.rise).toBe(0);
+  });
+
+  it('an ordinary jump (no thrust) still leaves the view still: the band only slides for THRUST', () => {
+    let cam = snapCamera(target(800, 600), SMALLEST, BIG, CAM);
+    const rest = cam.scrollY;
+    for (let rise = 0; rise <= 52; rise++) {
+      cam = stepCamera(cam, target(800, 600 - rise, { onGround: false }), SMALLEST, BIG, CAM);
+      expect(cam.scrollY).toBe(rest);
+    }
+  });
+});
+
+describe('the vertical ease never lurches', () => {
+  it('after landing high (a climb of five tiles) the view catches up by at most camVerticalMaxStep a tick', () => {
+    let cam = snapCamera(target(800, 600), VIEW, BIG, CAM);
+    const higher = target(800, 600 - 5 * TILE_PX);
+    const steps: number[] = [];
+    for (let i = 0; i < 60; i++) {
+      const next = stepCamera(cam, higher, VIEW, BIG, CAM);
+      steps.push(cam.y - next.y);
+      cam = next;
+    }
+    expect(Math.max(...steps)).toBeLessThanOrEqual(CAM.camVerticalMaxStep + 1e-9);
+    expect(steps[0], 'the first step is the cap, not 12 % of 80 px').toBeCloseTo(CAM.camVerticalMaxStep, 9);
+    expect(onScreen(cam, higher).y).toBe(Math.round(CAM.camAnchorY * VIEW.h));
+  });
+});
+
+describe('touch mode ending (a key press): the view never jumps', () => {
+  const PAD: PadReach = { left: 80, right: 85 };
+  const levelRightEdge = (cam: CameraState): number => BIG.w - cam.scrollX;
+
+  it('the pass beyond the wall is kept while the hero stands, and given back only as the camera follows him in', () => {
+    // The hero stands by the east wall: the view passes it by the whole reach.
+    const atWall = target(BIG.w - 24, 320);
+    let cam = snapCamera(atWall, VIEW, BIG, CAM, PAD);
+    expect(cam.scrollX).toBe(BIG.w - VIEW.w + PAD.right);
+    // A key press: the reach drops to 0. Standing still, nothing moves, however long.
+    const before = cam;
+    for (let i = 0; i < 120; i++) cam = stepCamera(cam, atWall, VIEW, BIG, CAM, NO_PAD);
+    expect(cam.scrollX).toBe(before.scrollX);
+    expect(cam.passRight).toBe(PAD.right);
+    // He walks west at 1.5 px a tick: the view follows him at his own pace (plus the look-ahead swinging round, under
+    // a pixel a tick), never in a jump, and the pass shrinks with it.
+    let sub = (BIG.w - 24) * 256;
+    let last = cam.scrollX;
+    let heroLast = BIG.w - 24;
+    for (let tick = 0; tick < 400; tick++) {
+      sub -= 384;
+      const t = target(sub >> 8, 320, { facing: -1, moving: true });
+      cam = stepCamera(cam, t, VIEW, BIG, CAM, NO_PAD);
+      expect(last - cam.scrollX, `tick ${tick}`).toBeLessThanOrEqual(heroLast - t.x + 1);
+      expect(cam.scrollX, `tick ${tick}`).toBeLessThanOrEqual(last);
+      expect(cam.passRight).toBe(Math.max(0, cam.x - (BIG.w - VIEW.w)));
+      last = cam.scrollX;
+      heroLast = t.x;
+    }
+    expect(cam.passRight).toBe(0);
+    // Back to the wall with keys: the view stops inside the level, as it always did without a pad.
+    for (let x = heroLast; x <= BIG.w - 8; x++) cam = stepCamera(cam, target(x, 320, { moving: true }), VIEW, BIG, CAM, NO_PAD);
+    expect(levelRightEdge(cam)).toBe(VIEW.w);
+  });
+
+  it('on the west wall likewise', () => {
+    const atWall = target(24, 320, { facing: -1 });
+    let cam = snapCamera(atWall, VIEW, BIG, CAM, PAD);
+    expect(cam.scrollX).toBe(-PAD.left);
+    for (let i = 0; i < 60; i++) cam = stepCamera(cam, atWall, VIEW, BIG, CAM, NO_PAD);
+    expect(cam.scrollX).toBe(-PAD.left);
+    let last = cam.scrollX;
+    for (let x = 24; x < 600; x += 2) {
+      cam = stepCamera(cam, target(x, 320, { moving: true }), VIEW, BIG, CAM, NO_PAD);
+      expect(cam.scrollX - last, `hero at ${x}`).toBeLessThanOrEqual(2 + 1); // his step, and the look-ahead swinging round
+      expect(cam.scrollX - last, `hero at ${x}`).toBeGreaterThanOrEqual(0);
+      last = cam.scrollX;
+    }
+    expect(cam.passLeft).toBe(0);
+    expect(cam.scrollX).toBeGreaterThan(0);
+  });
+
+  it('touch mode coming back: the view glides out past the wall at camPassGlideSpeed a tick, standing or moving, and waits in a frozen world', () => {
+    // At the east wall with keys: the view inside the level, the hero right of the dead zone (the wall stopped the view).
+    const door = BIG.w / TILE_PX - 2; // the airlock one tile from the east wall (level 4's case)
+    const t = target(door * TILE_PX + 8, 320);
+    const keys = snapCamera(t, VIEW, BIG, CAM, NO_PAD);
+    expect(keys.scrollX).toBe(BIG.w - VIEW.w);
+    // A touch while the world is frozen (the ready gate, a death, the exit): the view does not move.
+    let cam = keys;
+    for (let i = 0; i < 30; i++) cam = stepCamera(cam, { ...t, running: false, onGround: false }, VIEW, BIG, CAM, PAD);
+    expect(cam.scrollX).toBe(keys.scrollX);
+    // The world runs and he stands still at the airlock: the view glides out by exactly camPassGlideSpeed a tick (a glide,
+    // not a jump), until the level's edge meets the buttons. The review's case: it waited for him to move, then crept
+    // out at the look-ahead's 0.75 px a tick, with the airlock under JUMP all that time.
+    const ticks = Math.ceil(PAD.right / CAM.camPassGlideSpeed);
+    for (let i = 1; i <= ticks; i++) {
+      const next = stepCamera(cam, t, VIEW, BIG, CAM, PAD);
+      expect(next.x - cam.x, `tick ${i}`).toBeCloseTo(Math.min(CAM.camPassGlideSpeed, BIG.w - VIEW.w + PAD.right - cam.x), 9);
+      cam = next;
+    }
+    expect(cam.scrollX).toBe(BIG.w - VIEW.w + PAD.right);
+    expect(cam.passRight).toBe(PAD.right);
+    expect((door + 1) * TILE_PX - cam.scrollX, 'the airlock clear of JUMP').toBeLessThanOrEqual(VIEW.w - PAD.right);
+  });
+
+  it('touch mode coming back as he walks to the airlock by the east wall: it is clear of the buttons before he is within three tiles of it', () => {
+    const door = BIG.w / TILE_PX - 2;
+    const airlockRight = (cam: CameraState): number => (door + 1) * TILE_PX - cam.scrollX;
+    for (const tilesAway of [4, 5, 6, 8, 10]) {
+      // Keys all the way to the wall and back out to `tilesAway` tiles: the pass is given back as he walks away.
+      let sub = (door * TILE_PX + 8) * 256;
+      let cam = snapCamera(target(sub >> 8, 320), VIEW, BIG, CAM, PAD);
+      for (let i = 0; i < 400 && (sub >> 8) > (door - tilesAway) * TILE_PX + 8; i++) {
+        sub -= 384;
+        cam = stepCamera(cam, target(sub >> 8, 320, { facing: -1, moving: true }), VIEW, BIG, CAM, NO_PAD);
+      }
+      // A touch, and he runs back at 1.5 px a tick: by three tiles out the airlock is clear of JUMP and FIRE.
+      for (let i = 0; i < 400 && (sub >> 8) < door * TILE_PX + 8; i++) {
+        sub += 384;
+        const t = target(sub >> 8, 320, { moving: true });
+        cam = stepCamera(cam, t, VIEW, BIG, CAM, PAD);
+        if (door * TILE_PX + 8 - t.x <= 3 * TILE_PX) expect(airlockRight(cam), `from ${tilesAway} tiles, hero at ${t.x}`).toBeLessThanOrEqual(VIEW.w - PAD.right);
+      }
+    }
+  });
+
+  it('over random walks with touch mode switching on and off, the scroll never moves more than the hero did in a tick or the glide, and never passes a wall by more than the reach', () => {
+    const found: string[] = [];
+    for (let seed = 1; seed <= 200 && found.length === 0; seed++) {
+      const random = seeded(seed);
+      const int = (lo: number, hi: number): number => lo + Math.floor(random() * (hi - lo + 1));
+      const view: Size = { w: int(272, 480), h: int(160, 224) };
+      const level = levelSize({ width: int(17, 64), height: int(10, 24) });
+      const reach: PadReach = { left: int(40, 100), right: int(40, 110) };
+      let x = int(8, level.w - 8);
+      let facing: 1 | -1 = 1;
+      let pad: Readonly<PadReach> = random() < 0.5 ? reach : NO_PAD;
+      let cam = snapCamera(target(x, 200, { facing }), view, level, CAM, pad);
+      for (let tick = 0; tick < 800; tick++) {
+        if (random() < 0.01) pad = pad === NO_PAD ? reach : NO_PAD;
+        if (random() < 0.03) facing = facing === 1 ? -1 : 1;
+        const dx = random() < 0.6 ? facing * int(1, 2) : 0;
+        x = Math.min(level.w - 8, Math.max(8, x + dx));
+        const next = stepCamera(cam, target(x, 200, { facing, moving: dx !== 0 }), view, level, CAM, pad);
+        const where = `seed ${seed} tick ${tick} view ${view.w} level ${level.w} reach ${JSON.stringify(reach)} pad ${pad === NO_PAD ? 'off' : 'on'}`;
+        // One whole pixel more than the hero's step (the look-ahead swings under a pixel a tick), or a growing pass's glide.
+        const most = Math.max(Math.abs(dx) + 1, Math.ceil(CAM.camPassGlideSpeed));
+        if (Math.abs(next.scrollX - cam.scrollX) > most) found.push(`moved ${next.scrollX - cam.scrollX} for a step of ${dx}: ${where}`);
+        const small = level.w <= view.w;
+        const lo0 = small ? Math.floor((level.w - view.w) / 2) : 0;
+        const hi0 = small ? lo0 : level.w - view.w;
+        if (next.x < lo0 - reach.left || next.x > hi0 + reach.right) found.push(`beyond the reach: ${next.x}: ${where}`);
+        if (pad === NO_PAD && next.passLeft === 0 && next.passRight === 0 && (next.x < lo0 || next.x > hi0)) found.push(`outside the level with no pass: ${where}`);
+        cam = next;
+      }
+    }
+    expect(found).toEqual([]);
   });
 });
 
@@ -484,6 +857,12 @@ describe('the live camera numbers of src/tuning.ts', () => {
     expect(t.camVerticalEase, 'camera.camVerticalEase must be above 0 and at most 1').toBeLessThanOrEqual(1);
     expect(t.camDeadzoneHalfW, 'camera.camDeadzoneHalfW cannot be negative').toBeGreaterThanOrEqual(0);
     expect(t.camLookAheadPx, 'camera.camLookAheadPx cannot be negative').toBeGreaterThanOrEqual(0);
+    expect(t.camPassGlideSpeed, 'camera.camPassGlideSpeed must be above 0, or the view never makes room for the buttons again').toBeGreaterThan(0);
+    expect(t.camVerticalMaxStep, 'camera.camVerticalMaxStep must be above 0, or the view never settles vertically').toBeGreaterThan(0);
+    expect(t.camRiseLookSpeed, 'camera.camRiseLookSpeed cannot be negative').toBeGreaterThanOrEqual(0);
+    expect(t.camPadClearPx, 'camera.camPadClearPx cannot be negative').toBeGreaterThanOrEqual(0);
+    expect(t.camRiseBandTop, 'camera.camRiseBandTop must be between camAirBandTop and 1').toBeGreaterThanOrEqual(t.camAirBandTop);
+    expect(t.camRiseBandTop, 'camera.camRiseBandTop must be between camAirBandTop and 1').toBeLessThanOrEqual(1);
   });
 
   it('keep the hero in the picture', () => {
@@ -495,5 +874,8 @@ describe('the live camera numbers of src/tuning.ts', () => {
     expect(t.camAirBandTop, 'camera.camAirBandTop must be between 0 and camAnchorY').toBeLessThanOrEqual(t.camAnchorY);
     expect(t.camAirBandBottom, 'camera.camAirBandBottom must be between camAnchorY and 1').toBeGreaterThanOrEqual(t.camAnchorY);
     expect(t.camAirBandBottom, 'camera.camAirBandBottom must be between camAnchorY and 1').toBeLessThanOrEqual(1);
+    // The band's top lies under the top bar's strip: on the lowest view it must still be above where the feet rest.
+    const lowest = TUNING.view.viewMinRows * TILE_PX;
+    expect(STRIP_H + t.camAirBandTop * lowest, `camera.camAirBandTop: the band's top (${STRIP_H} px of strip + camAirBandTop of the view) must stay above camAnchorY on a ${lowest} px view`).toBeLessThan(t.camAnchorY * lowest);
   });
 });

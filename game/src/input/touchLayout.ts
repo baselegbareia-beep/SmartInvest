@@ -102,12 +102,26 @@ const fromEdges = (x0: number, y0: number, x1: number, y1: number): Rect => ({
   h: Math.max(0, y1 - y0),
 });
 
+/** How the item buttons share the bottom row in this level. */
+export interface ItemSlots {
+  /**
+   * True in a level without a thruster pack: FIRE then takes the place beside JUMP that THRUST has in the other
+   * levels (`thrustMarginSide`), instead of its own one further in (`fireMarginSide`), which would leave a gap and
+   * put FIRE over the floor a few tiles ahead of the hero. Fixed for a whole level, so a button never moves under
+   * a thumb.
+   */
+  readonly fireBesideJump: boolean;
+}
+
+/** Both item buttons in their own places (FIRE, THRUST, JUMP along the bottom row). */
+export const BOTH_ITEMS: ItemSlots = Object.freeze({ fireBesideJump: false });
+
 /**
  * Lays the pad out in a window of `vw` by `vh` CSS px whose safe area is inset by `safe`.
  * Buttons have their tuned size and their tuned distance from the safe edges; see
- * `ControlLayout.scale` for windows that are too small for that.
+ * `ControlLayout.scale` for windows that are too small for that. `slots`: where FIRE goes in this level.
  */
-export function layoutControls(vw: number, vh: number, safe: SafeInsets, t: TouchTuning): ControlLayout {
+export function layoutControls(vw: number, vh: number, safe: SafeInsets, t: TouchTuning, slots: ItemSlots = BOTH_ITEMS): ControlLayout {
   const left = safe.left;
   const right = vw - safe.right;
   const top = safe.top;
@@ -125,7 +139,7 @@ export function layoutControls(vw: number, vh: number, safe: SafeInsets, t: Touc
     left: square(left + k(t.moveMarginSide), moveY, k(t.moveButtonSize)),
     right: square(left + k(t.moveMarginSide + t.moveButtonSize + t.moveButtonGap), moveY, k(t.moveButtonSize)),
     jump: corner(t.jumpMarginSide, t.jumpMarginBottom, t.jumpButtonSize),
-    fire: corner(t.fireMarginSide, t.fireMarginBottom, t.fireButtonSize),
+    fire: slots.fireBesideJump ? corner(t.thrustMarginSide, t.thrustMarginBottom, t.fireButtonSize) : corner(t.fireMarginSide, t.fireMarginBottom, t.fireButtonSize),
     thrust: corner(t.thrustMarginSide, t.thrustMarginBottom, t.thrustButtonSize),
     pause: square(right - k(t.pauseMarginSide + t.pauseButtonSize), top + k(t.pauseMarginTop), k(t.pauseButtonSize)),
   };

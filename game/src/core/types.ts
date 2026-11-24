@@ -236,6 +236,16 @@ export interface CameraTuning {
   /** While airborne the camera holds still unless the hero leaves this band (fractions of the view height). */
   readonly camAirBandTop: number;
   readonly camAirBandBottom: number;
+  /** Touch mode back on: how fast the view may glide out past a side wall to make room for the buttons, px/f, in a running world. */
+  readonly camPassGlideSpeed: number;
+  /** On a touch screen the feet line rests at least this far above the top of the bottom row of buttons, px. */
+  readonly camPadClearPx: number;
+  /** While the hero thrusts, the air band's top line slides down to this fraction of the view under the top bar. */
+  readonly camRiseBandTop: number;
+  /** How fast that line slides down while thrusting, and back up after, px/f. */
+  readonly camRiseLookSpeed: number;
+  /** The vertical ease never moves the view more than this per tick, px/f. */
+  readonly camVerticalMaxStep: number;
 }
 
 /** Shell only. Integer scaling policy (ruling R11), in tiles. */

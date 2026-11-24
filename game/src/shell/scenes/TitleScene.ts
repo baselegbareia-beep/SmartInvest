@@ -14,7 +14,8 @@
  *   and the M key; the choice is saved in the settings.
  * - The first tap (its release) unlocks the audio and, on a touch device outside a frame, asks for
  *   fullscreen (ARCHITECTURE 11.5). A refusal is ignored.
- * - The screen opens with the 12-frame shutter wipe (none under reduced motion).
+ * - The screen opens with the 12-frame shutter wipe. Under reduced motion there is no wipe and the
+ *   prompt does not blink (docs/ART-AND-SOUND.md section 13).
  */
 import * as Phaser from 'phaser';
 
@@ -24,6 +25,7 @@ import { earthSpot, starField } from '../../art/tilePick';
 import { CAMPAIGN, DEV_LEVELS } from '../../levels';
 import { GAME_TITLE } from '../../meta';
 import { onFreshKey } from '../freshKey';
+import { prefersReducedMotion } from '../motion';
 import { cornerClearPx } from '../hudModel';
 import { contains, cornerSwitch } from '../menuLayout';
 import type { Rect } from '../menuLayout';
@@ -56,14 +58,6 @@ let jinglePlayed = false;
 // Shared screen parts (Title, End, Hud)
 // ---------------------------------------------------------------------------------------
 
-/** True when the device asks for reduced motion: no shutter wipe then (docs/ART-AND-SOUND.md section 13). */
-export function prefersReducedMotion(): boolean {
-  try {
-    return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  } catch {
-    return false;
-  }
-}
 
 /**
  * Names what the canvas shows, for screen readers (the words are drawn in the pixel font, which a
@@ -210,6 +204,8 @@ export class TitleScene extends Phaser.Scene {
   /** How many entries the menu has, to keep the scenery off their ink (Menu.inkOf). */
   private entryCount = 0;
   private touchShown = false;
+  /** Reduced motion: the prompt is shown steadily. */
+  private still = false;
   private frames = 0;
   private age = 0;
   /** A press began on the screen (not on the sound switch): its release starts the game. */
@@ -248,6 +244,7 @@ export class TitleScene extends Phaser.Scene {
     const offer = titleOffer(progress.current, CAMPAIGN, [DEV_LEVELS.test, DEV_LEVELS.debug]);
     const { first, rest } = splitTitle(GAME_TITLE);
     this.touchShown = app.classList.contains('touch');
+    this.still = prefersReducedMotion();
     this.newGame = offer.newGame;
 
     const entries: MenuEntry[] = [{ kind: 'text', text: first, scale: 3, colour: COLOR.gold }];
@@ -325,7 +322,7 @@ export class TitleScene extends Phaser.Scene {
       });
     }
     if (this.promptIndex < 0 || !this.menu) return;
-    this.menu.setTextVisible(this.promptIndex, this.age % FRAMES_PER_BLINK < BLINK_ON_FRAMES);
+    this.menu.setTextVisible(this.promptIndex, this.still || this.age % FRAMES_PER_BLINK < BLINK_ON_FRAMES);
     const touch = app.classList.contains('touch');
     if (touch !== this.touchShown) {
       this.touchShown = touch;

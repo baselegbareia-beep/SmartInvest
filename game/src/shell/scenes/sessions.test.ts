@@ -4,7 +4,7 @@ import { defaultSave } from '../../core/save';
 import { levelFromRows } from '../../core/testkit';
 import type { LevelData, SaveData } from '../../core/types';
 
-import { againStart, continueStart, devStart, newGameStart, titleOffer } from './sessions';
+import { againStart, continueStart, devStart, levelNumberOf, newGameStart, titleOffer } from './sessions';
 
 const room = (id: string): LevelData => levelFromRows(['.P.TD', '#####'], { id, frame: true });
 const CAMPAIGN = [room('level-01'), room('level-02'), room('level-03')];
@@ -90,5 +90,28 @@ describe('the End screen', () => {
       play: { levels: DEV, start: { levelIndex: 1, highestUnlocked: 1 }, saved: false },
     });
     expect(againStart(devRun, 'won', 1, null)).toEqual({ levelNumber: 1, play: { levels: DEV, start: {}, saved: false } });
+  });
+});
+
+describe('one-level sessions of a campaign level (`?level=level-07`, the test hook)', () => {
+  it('carry the level\'s own number for the intro card and the top bar, not LEVEL 1 (the route watch)', () => {
+    const seventh = devStart(room('level-07'));
+    expect(seventh.firstNumber).toBe(7);
+    expect(levelNumberOf(seventh, 0)).toBe(7);
+    expect(levelNumberOf(devStart(room('level-10')), 0)).toBe(10);
+  });
+
+  it('a development room and the campaign count from 1', () => {
+    expect(devStart(room('debug')).firstNumber).toBeUndefined();
+    expect(levelNumberOf(devStart(room('test')), 0)).toBe(1);
+    expect(levelNumberOf(newGameStart(save({}), CAMPAIGN, DEV), 2)).toBe(3);
+  });
+
+  it('TRY AGAIN and PLAY AGAIN after such a session name the level\'s own number and keep it', () => {
+    const fifth = devStart(room('level-05'));
+    const again = againStart(fifth, 'gameOver', 0, null);
+    expect(again.levelNumber).toBe(5);
+    expect(levelNumberOf(again.play, 0)).toBe(5);
+    expect(againStart(fifth, 'won', 0, null).levelNumber).toBe(5);
   });
 });

@@ -12,15 +12,15 @@ Sprue is a small robot that the moon foundry built from its own casting scrap, a
 4. Ore crystals along the way are worth points. None of them is needed to finish.
 5. One touch of anything dangerous costs a life.
 
-A level takes 25 to 90 seconds without mistakes. All ten take about 7 minutes without mistakes and under 20 minutes on a first try.
+A level takes 20 to 70 seconds without mistakes. All ten take about 6 minutes without mistakes and under 20 minutes on a first try.
 
 ## Controls
 | Action | Keyboard | Touch |
 |---|---|---|
 | Move | Arrow keys, or A and D | LEFT and RIGHT buttons, bottom left |
 | Jump | Space, Up or W | JUMP button, bottom right |
-| Fire the blaster | X | FIRE button, left of JUMP. Shown only while Sprue holds the blaster |
-| Thrust | Z or Shift | THRUST button, above JUMP. Shown only while Sprue wears the pack |
+| Fire the blaster | X | FIRE button, bottom right, left of JUMP (left of THRUST in a level with thruster packs). Shown only while Sprue holds the blaster |
+| Thrust | Z or Shift | THRUST button, bottom right, just left of JUMP. Shown only while Sprue wears the pack |
 | Pause | Esc or P | PAUSE button, top right |
 | Sound on or off | M | A switch on the title and pause screens |
 
@@ -31,7 +31,7 @@ A level takes 25 to 90 seconds without mistakes. All ten take about 7 minutes wi
 ## Items
 Each item lasts until Sprue dies or the level ends. Every level starts with empty hands.
 - **Bolt blaster.** Fires one bolt at a time, level, in the direction Sprue faces. A bolt flies 10 tiles. Shots are unlimited.
-- **Thruster pack.** Hold thrust to fly. A full tank is 1.3 seconds of thrust (about 8 tiles straight up, or about 11 tiles across) and does not refill by itself. No level asks for more than 6 tiles up or 9 tiles across on one tank. Another pack fills the tank. If the tank runs dry, the level's packs reappear where they were, so Sprue is never stranded without fuel.
+- **Thruster pack.** Hold thrust to fly. A full tank is 1.3 seconds of thrust (about 8½ tiles straight up, or about 12 tiles across) and does not refill by itself. No level asks for more than 6 tiles up or 8 tiles across on one tank. Another pack fills the tank. If the tank runs dry, the level's packs reappear where they were, so Sprue is never stranded without fuel.
 
 ## Enemies
 Neither enemy notices Sprue: each keeps to its own path. Touching one from any side costs a life, and jumping on them does not work. One bolt destroys either.
@@ -60,12 +60,12 @@ Furnace fire, coolant pools, spikes, and falling out of the bottom of a level. E
 | Level cleared | 200 |
 | Each life left when the game is won | 500 |
 
-An enemy pays only the first time it is destroyed in a level, so dying on purpose earns nothing. With the planned levels the highest possible score is 7,900.
+An enemy pays only the first time it is destroyed in a level, so dying on purpose earns nothing. With the ten levels as built the highest possible score is 8,000.
 
 ## Screens
 - **Title.** The name, "Tap to start", the best score and a sound switch. With saved progress: "Continue" and "New game". The first tap also asks the phone for full screen, where the browser allows it (iPhones do not; there, add the game to the home screen).
 - **Level intro.** The level number, its name and a one-line hint.
-- **Play.** Along the top: lives, level, score, the cog (an outline until found), the items held and the fuel left.
+- **Play.** Along the top: lives, level, score, the cog (dark until found), the items held and the fuel left.
 - **Pause.** Resume, Restart level, Quit to title, and switches for sound and vibration. The game also pauses by itself when the phone is locked, the browser is hidden or the phone is turned upright. Resuming always goes through the frozen start.
 - **Level clear**, **Game over** (score, best score, "Try again") and **Win** (score, bonus for lives left, total).
 - **Rotate your phone.** Shown when a phone is held upright. The game is played sideways only.

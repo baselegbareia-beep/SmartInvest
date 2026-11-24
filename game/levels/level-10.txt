@@ -1,23 +1,25 @@
 @name Heart Furnace
 @teaches Relight the Heart. Then get home.
-@hardest 29,21 the level 4-tile gap on the way out, open below (11 / 2), a sixth of the way along
+@hardest 29,21 the 4-tile gap on the way out, dropping 1 tile, open below (15 / 6, tight), a sixth of the way along
 @requires blaster
 @requires thruster
 ; Level 10 of 10. There and back: every idea of the game, in the order it was taught. Out along the
 ; floor of the low hall, east; up two shafts to the Heart, a loop under the furnace's roof where the
 ; cog sits; home along the top catwalk, west, over the flue, and down into the airlock room, right
-; over the start. About 170 tiles, the longest route in the game.
+; over the start. About 173 tiles, the longest route in the game.
 ; Teach, test, twist: free at the start (the locked airlock stands in its room over Sprue's head,
 ; 4 tiles up and out of reach, and the drop off the start platform cannot be climbed back, so the
 ; way home can only be the long way round); costly on the way out (every older hazard in turn, and
-; the game's hardest jump among them); combined on the way home, cog in hand (a flight joined by a
-; pack in mid-air, a moth over a pit, a Cinderpeg in a tunnel).
+; the level's one tight jump among them); combined on the way home, cog in hand (a flight joined by
+; a pack in mid-air, a moth over a pit, a Cinderpeg in a tunnel).
 ; Why the airlock is in a room over the start and not beside it: a death keeps the cog, so the door
 ; stays open, and puts Sprue back on the start (docs/ARCHITECTURE.md, section 6). An airlock the
 ; start could reach would let a death after the cog skip the whole way home.
 ; Why the hardest jump is on the way out: a miss there costs about 30 tiles of route (a spike bed
 ; and two coolant gaps, 10 to 12 s), not the whole way out. On the way home a death costs everything
-; before it, so nothing there is tighter than ordinary.
+; before it, so nothing there is tighter than ordinary. But every death after it means jumping it
+; again (8 of the level's 12 deadly moments come after it), so it is tight, not hardest: the bank
+; before it is raised 1 tile and the gap drops 1 (docs/LEVELS.md, section 5: "land 1 tile lower").
 ; What is where, by column and row (0-based), with every window: the table's cell (docs/LEVELS.md,
 ; section 2), then the reading on this file with the protocol of src/core/limits.test.ts, live /
 ; comfort, worst of 16 alignments of the run-up.
@@ -28,10 +30,12 @@
 ;   13     a 1-tile spike bed (27 / 24; read 26 / 24), then 3 tiles of floor
 ;   17-22  a coolant pad 2 tiles wide between two 2-tile gaps, the coolant 1 below. Onto the pad
 ;          (27 / 24 stopping at once, 23 / 24 after 4 frames, 19 / 21 after 8; read 27 / 24, 24 / 24,
-;          20 / 22); off it onto the bank, from a run 26 / 21, from a standstill at its back 28 / 23
-;   23-27  the bank: a run-up of 5 tiles
-;   28-31  the hardest jump: a level 4-tile gap, open below, 6 clear tiles above (11 / 2; read 11 / 2,
-;          12 / 2 from the bank's back). The only one in the game. A miss falls out of the level
+;          20 / 22); off it onto the bank, a 2-tile gap rising 1: from a run 29 / 20 (read
+;          29 / 20), from a standstill at its back 28 / 20
+;   23-27  the bank, 1 tile above the hall's floor: a run-up of 5 tiles
+;   28-31  the hardest jump: a 4-tile gap dropping 1, open below, 5 clear tiles above (15 / 6; read
+;          15 / 6, 16 / 6 from rest at the bank's back): tight, the level's only tight jump. A miss
+;          falls out of the level. Every winning jump takes the crystal at 30,18
 ;   33,21  the blaster, on the landing bank (cols 32-34)
 ;   35-46  the corridor under the furnace: lane 1 (cols 36-39) 1 tile high between 1-tile dips (cols
 ;          35 and 40), lane 2 (cols 41-46) 2 tiles high, a Cinderpeg in each. Shoot the first from the
@@ -55,21 +59,26 @@
 ;          72); RIGHT may be held with THRUST from the first frame
 ;   50-58  the Heart's lower path, under the crawlway: a fire pit 1 tile wide sunk 1 tile (col 54;
 ;          read 34 / 32, a 1-tile gap); the crawlway overhead only shortens a full jump
-;   59,7   the cog, at the foot of a well 1 tile wide at the path's east end: the only way on is up
-;          the well, so the cog cannot be left behind. A 3-tile step up from the well onto the block
-;          (cols 60-61; read 30 / 30 standing, 38 / 38 from a run, ordinary), then a 1-tile gap
-;          rising 2 back west onto the crawlway (35 / 27; read 26 / 22 standing, 24 / 20 running:
-;          the frame above caps the jump)
+;   59,4   the cog, hanging in the well at the path's east end, level with the block's top: the
+;          only way on is a 3-tile step up past it onto the block (cols 60-61; read 30 / 30
+;          standing, 38 / 38 from a run, ordinary), and every way from the lower path onto the
+;          block passes through the cog, so it cannot be left behind (with fire in its cell and
+;          the cog moved to the tunnel, the map of everything Sprue can reach finds no route).
+;          Then a 1-tile gap rising 2 back west onto the crawlway (35 / 27; read 26 / 22
+;          standing, 24 / 20 running: the frame above caps the jump)
 ;   48-58  the crawlway, 2 tiles high, west; at its end a drop of 5 tiles (col 48) onto the flue's
-;          lip, marked by crystals
-;   48,7   pack 3, on the lip where the drop lands
+;          lip (cols 45-48), marked by crystals
+;   44,7   pack 3, hanging over the flue's first column under the lintel (cols 44-45, rows 4-6):
+;          walking off the lip's west end takes it, so the flight starts under the lintel
 ;   31-44  the flue: 14 tiles of fire 1 below the floor, under a roof 3 tiles above the lip (row 4).
 ;          Pack 4 hangs right under the roof at 37,5, 7 tiles from the lip's edge and 6 from the
-;          catwalk: holding LEFT and THRUST carries Sprue along the roof into it. With LEFT held from
-;          the lip, the press of THRUST wins for 23 frames (comfort 18): it must come while Sprue is
-;          under the lintel (cols 44-45). Too early lifts him against the lintel's face, and an empty
-;          tank sets him down on the lip, where pack 3 comes back; too late drops him in the fire.
-;          Both legs use most of a tank, so THRUST simply held lands on the catwalk's east end
+;          catwalk: holding LEFT and THRUST carries Sprue along the roof into it. With LEFT held
+;          from rest on the lip and THRUST pressed on any frame before walking off: arriving with
+;          an empty tank, every press wins, for 50 frames from col 48 (comfort 52); with fuel left
+;          from shaft 2 (12 or 24 frames), a press before the lintel lifts him against its face
+;          and sets him down on the lip when the tank runs dry, then 24 frames win (comfort 25).
+;          No press dies early; too late drops him in the fire. Both legs use most of a tank, so
+;          THRUST simply held lands on the catwalk's east end
 ;   24-30  the catwalk's east end: a run-up of 7 tiles
 ;   21-23  a level 3-tile gap over coolant 3 tiles down (22 / 13; read 22 / 13), an Arc Moth (M)
 ;          bobbing in its middle column from the ceiling to the coolant: out of the jump's way while
@@ -89,31 +98,46 @@
 ; the fire pit, the crawlway, the drop onto the lip, the flue, the moth gap, the tunnel, the drop
 ; into the airlock room); 9 off it (the start room's corner, two high over the catwalk, the
 ; landing's corner, over the block, high over the coolant pad, in the second vent moth's lane, high
-; in the low hall, the airlock room's corner).
+; over the bank, the airlock room's corner). The two in the low hall hang 3 tiles above its
+; floor (19,17 and 24,17): a full jump takes them, from the bank, and from the pad on the live
+; numbers (4.6 px to spare; not on the comfort numbers). One row higher, as first built, no jump
+; in the hall reached them, only a fuelled Sprue flown back from shaft 1.
 ; Differences from the plan (docs/LEVELS.md, section 5):
 ; - The hardest gap is on the way out (cols 28-31), not on the way home: the first build had it on
 ;   the catwalk at about three quarters of the route, where every miss re-ran the whole way out.
 ;   The catwalk gap is now an ordinary 3-tile gap with a moth.
+; - The 4-tile gap drops 1 tile (15 / 6, tight), not level (11 / 2, the hardest class): a death
+;   anywhere after it keeps the cog and puts Sprue back on the start, so the gap is jumped again
+;   after every later death, 2 frames wide with clumsy thumbs. The run-up bank is raised 1 tile for
+;   it, so the hop onto the bank from the coolant pad rises 1 (29 / 20). To restore the level gap,
+;   empty row 21 at cols 23-27. The game then has no jump of the hardest class.
 ; - The airlock is in a room over the start, reached by a drop at the end of the way home.
 ; - The climb is in two shafts, and the cog sits at the far end of a loop in the Heart: up shaft 2,
-;   east along the lower path to the cog, up the well, back west along the crawlway. The plan's one
-;   shaft with a moth sweeping its lip was level 9's lift A again, numbers and all.
+;   east along the lower path, up the well through the cog, back west along the crawlway. The plan's
+;   one shaft with a moth sweeping its lip was level 9's lift A again, numbers and all.
+; - The cog hangs at the top of the well (59,4), not at its foot (59,7): there a running jump east
+;   along the lower path, pressed a tile or so before the cog, cleared it and landed on the block
+;   (9 of 41 press frames, comfort 8), and the way home then ended in the airlock room, shut, with
+;   no hazard and no way out (rule 7): only Restart level left it.
 ; - The three moths are all M: two in the vents, one over the catwalk gap. No H moth: its one place
 ;   in the plan was that shaft.
 ; - The catwalk's Cinderpeg walks a tunnel 1 tile high and must be shot (see the tunnel above).
-; - Four packs, not three: one per shaft, one on the flue's lip, one in mid-air.
+; - Four packs, not three: one per shaft, one at the flue's edge, one in mid-air. Pack 3 hangs
+;   under the lintel, not on the lip where the drop lands (48,7): from there THRUST had to be
+;   pressed while Sprue was under the lintel, a later press dropped him in the fire, and with
+;   the clumsy-thumb numbers 6 earlier frames did too, a tile before the lintel.
 ; - Lane 1 of the corridor is 1 tile high, not 2: in a lane 2 tiles high a hop held exactly 3
 ;   frames slipped past its Cinderpeg (47 of 66,000 tries); rule 9 says to lower it then.
-; - The route is about 170 tiles, so a clean run is about 60 to 70 s, not 85 s (rule 10); it is
+; - The route is about 173 tiles, so a clean run is about 60 to 70 s, not 85 s (rule 10); it is
 ;   the longest level of the game, by route and by the validator's time.
 ################################################################
 ################################################..............##
 ################################################.....G........##
 ############.....G.........G...###############...##########.G.##
-############..........M........###############..G#............##
+############..........M........###############..G#.........T..##
 ############.........G...............J......##..G#....G.....####
 ############............................G...##...#..........####
-#.....G.C....###................................J#.........T####
+#.....G.C....###............................J....#..........####
 #..##################...#######..............#####.###F#########
 #........############...#######FFFFFFFFFFFFFF#####.#############
 #G..G....############...##########################G#.......G####
@@ -122,11 +146,11 @@
 #.......D#########################################J.........####
 #########################################################...####
 #...G...............................#####################...####
-#..................G....G...........#####################.G.####
-#.P.................................#########...........#...####
+#...................................#####################.G.####
+#.P................G....G...........#########...........#...####
 #########G...G................G.....#########...M...M...#...####
 #########...........................#########..G..........J.####
 #########G..........................####............G..#########
-#########....S...................B....C...CG...........#########
+#########....S.........#####.....B....C...CG...........#########
 #################..##..#####....###.####.######..##..###########
 #################WW##WW#####....###############..##..###########

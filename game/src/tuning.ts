@@ -158,6 +158,11 @@ export const TUNING: Tuning = {
     camVerticalEase: 0.12, // Share of the remaining distance the camera closes each frame when settling vertically. Higher = snappier.
     camAirBandTop: 0.15, // In mid-air the camera only moves if the hero rises above this line...
     camAirBandBottom: 0.78, // ...or drops below this one, so ordinary jumps do not shake the view.
+    camPassGlideSpeed: 3, // px/f. When the touch buttons come back (a touch after a key press), the view glides out past a side wall at this pace to make room for them: 80 px in under half a second. Higher = quicker, but more of a jump.
+    camPadClearPx: 16, // px. On a touch screen the hero's feet rest at least this far (a tile) above the buttons of the bottom row, so the floor beside him is never under a thumb. More shows a pit's depth, but hides as much above him.
+    camRiseBandTop: 0.45, // While THRUST is held the top line of the air band slides down to this share of the view (under the top bar), so a flying hero sees 3 tiles above his head.
+    camRiseLookSpeed: 1.5, // px/f. How fast that line slides down while thrusting, and back up afterwards. Lower = calmer.
+    camVerticalMaxStep: 4, // px/f. The vertical ease never moves the view more than this in one frame (no lurch after a long climb).
   },
 
   // How much of the level is visible. In tiles.
@@ -182,12 +187,14 @@ export const TUNING: Tuning = {
     jumpMarginSide: 20, // Gap between JUMP and the right edge.
     jumpMarginBottom: 20, // Gap between JUMP and the bottom edge.
     fireButtonSize: 60, // FIRE circle (shown only while holding the blaster).
-    fireMarginSide: 110, // FIRE sits this far from the right edge (left of JUMP).
+    fireMarginSide: 182, // FIRE sits this far from the right edge (left of THRUST, on the bottom row).
     fireMarginBottom: 20, // Gap between FIRE and the bottom edge.
     thrustButtonSize: 60, // THRUST circle (shown only while wearing the pack).
-    thrustMarginSide: 28, // THRUST sits this far from the right edge (above JUMP).
-    thrustMarginBottom: 110, // THRUST sits this far up from the bottom edge.
-    actionZoneSize: 198, // Touches inside this bottom-right square go to the nearest shown action button.
+    thrustMarginSide: 110, // THRUST sits this far from the right edge (just left of JUMP, so a thumb slides from JUMP onto it).
+    thrustMarginBottom: 20, // Gap between THRUST and the bottom edge. Every action button stays on the bottom row, below the hero's
+    // feet line: above it (where THRUST sat until 24 Nov 2026, 110 up) a button covers the hero's own row 8 to 10 tiles ahead,
+    // which is where a long flight lands and where its mid-air pack floats.
+    actionZoneSize: 250, // Touches inside this bottom-right square go to the nearest shown action button.
     pauseButtonSize: 36, // PAUSE as drawn...
     pauseHitSize: 56, // ...and the larger area that counts as touching it.
     pauseMarginTop: 10, // Gap between PAUSE and the top edge.

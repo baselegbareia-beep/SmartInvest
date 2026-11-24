@@ -4,14 +4,21 @@ import { textWidth } from '../art/font';
 import { REFERENCE_TOUCH } from '../input/testkit';
 
 import {
+  BAR_Y,
   BLOCK_W,
   FUEL_PIPS,
+  ICON_PX,
   LIFE_BLINK_FRAMES,
   LIFE_BLINK_TOTAL,
   LEVEL_X,
   NO_BLINK,
   PIP_BLINK_FRAMES,
   SCREEN_CORNER_CSS,
+  STRIP_ALPHA,
+  TOAST_BAND_BOTTOM,
+  TOAST_PAD,
+  STRIP_H,
+  TOAST_Y,
   FrameClock,
   advanceBlink,
   cornerClearPx,
@@ -105,6 +112,13 @@ describe('pipLit', () => {
     expect(pipLit(0, 2, PIP_BLINK_FRAMES)).toBe(false);
     expect(pipLit(0, 2, 2 * PIP_BLINK_FRAMES)).toBe(true);
     expect(pipLit(0, 3, PIP_BLINK_FRAMES)).toBe(true);
+  });
+
+  it('steady (reduced motion): the low pips stay lit, the empty ones dark', () => {
+    for (let clock = 0; clock < 4 * PIP_BLINK_FRAMES; clock++) {
+      expect(pipLit(0, 2, clock, true)).toBe(true);
+      expect(pipLit(1, 1, clock, true)).toBe(false);
+    }
   });
 });
 
@@ -244,5 +258,27 @@ describe('FrameClock (the HUD clocks)', () => {
     expect(clock.advance(-50, false)).toBe(0);
     expect(clock.advance(Number.NaN, false)).toBe(0);
     expect(clock.advance(FRAME, false)).toBe(1);
+  });
+});
+
+describe('the score at a level start (the route watch: CONTINUE counted up from 00000 under the card)', () => {
+  it('is shown at once when the level starts, and counts up only after that', () => {
+    expect(countScore(0, 1230, 0, true)).toBe(1230);
+    expect(countScore(0, 1230, 1)).toBe(10); // SCORE_COUNT_STEP a frame
+    expect(countScore(1230, 1240, 1)).toBe(1240);
+  });
+});
+
+describe('the strip behind the top bar', () => {
+  it("covers the bar's row and its shadow, and stops above the toast", () => {
+    expect(STRIP_H).toBeGreaterThanOrEqual(BAR_Y + ICON_PX + 1); // icons 3..10, text 3..9 with its shadow to 10
+    expect(STRIP_H).toBeLessThanOrEqual(TOAST_Y);
+    expect(STRIP_ALPHA).toBeGreaterThan(0.5);
+    expect(STRIP_ALPHA).toBeLessThan(1); // the world still shows through: a hero jumping high is seen under it
+  });
+
+  it("hangs a band under the toast's words while it shows: the toast's row and its shadow, with a row of air", () => {
+    expect(TOAST_BAND_BOTTOM).toBeGreaterThanOrEqual(TOAST_Y + 7 + 1 + 1); // 7 px glyphs, a 1 px shadow, a row of air
+    expect(TOAST_PAD).toBeGreaterThan(0);
   });
 });

@@ -22,6 +22,7 @@ import { TUNING } from '../../tuning';
 import type { SessionEnd } from '../EventRouter';
 import type { Rect } from '../menuLayout';
 import { onSceneEnd } from '../sceneEnd';
+import { prefersReducedMotion } from '../motion';
 import { blinkShown, endLines, glowBands } from '../screens';
 import type { ScreenLine } from '../screens';
 import { controls, pad, sfx } from '../singletons';
@@ -30,7 +31,7 @@ import { Menu } from './menu';
 import type { MenuEntry } from './menu';
 import type { NumberedStart } from './sessions';
 import { TEXT } from './strings';
-import { Backdrop, Shutter, prefersReducedMotion, setScreenLabel } from './TitleScene';
+import { Backdrop, Shutter, setScreenLabel } from './TitleScene';
 
 export interface EndData {
   /** How the session ended (from the EventRouter). */
@@ -58,7 +59,7 @@ export class EndScene extends Phaser.Scene {
   private age = 0;
   /** Lines already revealed (their tick sound played). */
   private revealed = 0;
-  /** The device asks for reduced motion: the glow holds still. */
+  /** The device asks for reduced motion: the glow holds still and NEW BEST! does not blink. */
   private still = false;
 
   constructor() {
@@ -132,7 +133,7 @@ export class EndScene extends Phaser.Scene {
       const shown = this.age >= line.showAt;
       if (shown && i >= this.revealed && line.showAt > 0) sfx.play('uiOk'); // "each with a tick sound"
       if (shown) this.revealed = Math.max(this.revealed, i + 1);
-      menu.setTextVisible(i, shown && (!line.blink || blinkShown(this.age - line.showAt)));
+      menu.setTextVisible(i, shown && (!line.blink || blinkShown(this.age - line.showAt, this.still)));
     });
   }
 

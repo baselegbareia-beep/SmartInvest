@@ -40,13 +40,15 @@ interface Held {
 /** The fields of `window.__E2E__` this file uses. */
 interface TouchHook {
   held(): Held;
-  state(): { tick: number; mode: string; phase: string; player: { x: number } };
+  state(): { tick: number; mode: string; phase: string; player: { x: number; vx: number } };
   scenes(): string[];
   menu(): { label: string; x: number; y: number; w: number; h: number }[];
   freeze(on: boolean): void;
   pace(framesPerRender: number | null): void;
   freezeAtTick(tick: number): Promise<number>;
   heroOnPage(): { x: number; y: number; w: number; h: number } | null;
+  cellOnPage(col: number, row: number): { x: number; y: number; w: number; h: number } | null;
+  replay(id: string, script: InputScript, ticksPerFrame?: number, options?: { stopAtTick?: number }): Promise<{ won: boolean; ticks: number }>;
 }
 interface HookWindow {
   __E2E__?: TouchHook;
@@ -395,4 +397,174 @@ test('the debug room is won with real touches on the pad, FIRE and THRUST includ
   // Every button of the pad was pressed on the way, FIRE and THRUST among them.
   expect([...seen].sort()).toEqual(['fire', 'jump', 'left', 'right', 'thrust']);
   expect(problems).toEqual([]);
+});
+
+// ---------------------------------------------------------------------------------------
+// The airlock by an east wall (docs/ARCHITECTURE.md 11.4): the view passes the wall by the buttons' reach, so what
+// stands in the last columns is never held under JUMP, FIRE, THRUST or PAUSE.
+// ---------------------------------------------------------------------------------------
+
+interface Box {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** The cell of the first `ch` in a level file's grid (0-based column and row). */
+function cellOf(levelFile: string, ch: string): { col: number; row: number } {
+  const grid = readFileSync(path.join(import.meta.dirname, '..', 'levels', levelFile), 'utf8')
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .filter((line) => line !== '' && !line.startsWith('@') && !line.startsWith(';'));
+  const row = grid.findIndex((line) => line.includes(ch));
+  if (row < 0) throw new Error(`no ${ch} in ${levelFile}`);
+  return { col: grid[row]?.indexOf(ch) ?? -1, row };
+}
+
+/** The pad's drawn buttons now (FIRE and THRUST only while shown), page CSS px. */
+const drawnButtons = (page: Page): Promise<(Box & { id: string })[]> =>
+  page.evaluate(() =>
+    [...document.querySelectorAll<HTMLElement>('.touchpad.is-visible [data-btn]')]
+      .filter((el) => !el.classList.contains('touchpad__btn--item') || el.classList.contains('is-shown'))
+      .map((el) => {
+        const r = el.getBoundingClientRect();
+        return { id: el.dataset.btn ?? '', x: r.x, y: r.y, w: r.width, h: r.height };
+      }),
+  );
+
+/** The buttons a rectangle overlaps (by more than a hair: the pad sits on whole device pixels). */
+const under = (r: Box, buttons: (Box & { id: string })[]): string[] =>
+  buttons
+    .filter((b) => Math.min(r.x + r.w, b.x + b.w) - Math.max(r.x, b.x) > 0.5 && Math.min(r.y + r.h, b.y + b.h) - Math.max(r.y, b.y) > 0.5)
+    .map((b) => b.id);
+
+for (const phone of [
+  { width: 568, height: 320, ratio: 2 },
+  { width: 844, height: 390, ratio: 3 },
+  { width: 863, height: 360, ratio: 2.625 },
+]) {
+  test.describe(`a phone of ${phone.width} x ${phone.height} at ${phone.ratio}`, () => {
+    test.use({ viewport: { width: phone.width, height: phone.height }, deviceScaleFactor: phone.ratio });
+
+    test("level 4's airlock beside the east wall is clear of the pad at the ready gate, and so is the hero", async ({ page }) => {
+      const door = cellOf('level-04.txt', 'D');
+      await page.goto('./?level=level-04&touch=1&e2e=1');
+      await page.waitForFunction(() => (window as unknown as HookWindow).__E2E__?.state().mode === 'running');
+      await page.locator('.touchpad.is-visible').waitFor({ state: 'visible' });
+      expect(await phase(page)).toBe('ready');
+      const at = await page.evaluate((d) => {
+        const hook = (window as unknown as HookWindow).__E2E__;
+        return { door: hook?.cellOnPage(d.col, d.row) ?? null, hero: hook?.heroOnPage() ?? null };
+      }, door);
+      if (!at.door || !at.hero) throw new Error('no airlock or hero on the page');
+      const buttons = await drawnButtons(page);
+      expect(buttons.map((b) => b.id).sort()).toEqual(['jump', 'left', 'pause', 'right']);
+      expect(at.door.x + at.door.w, 'the airlock is on screen').toBeGreaterThan(0);
+      expect(under(at.door, buttons), `airlock at ${JSON.stringify(at.door)}`).toEqual([]);
+      expect(under(at.hero, buttons), `hero at ${JSON.stringify(at.hero)}`).toEqual([]);
+    });
+  });
+}
+
+test.describe('the smallest phone, 568 x 320 at 2', () => {
+  test.use({ viewport: { width: 568, height: 320 }, deviceScaleFactor: 2 });
+
+  test("the debug room's airlock is clear of FIRE over the hero's last steps to it (it lay under FIRE all the way)", async ({ page }) => {
+    const script = JSON.parse(readFileSync(path.join(import.meta.dirname, 'scripts', 'debug.json'), 'utf8')) as InputScript & { winTick: number };
+    const door = cellOf('debug.txt', 'D');
+    await page.goto('./?level=test&touch=1&e2e=1');
+    await page.waitForFunction(() => (window as unknown as HookWindow).__E2E__ !== undefined);
+    const seen: { tick: number; under: string[] }[] = [];
+    // The last 40 ticks before the airlock: the hero is 4 tiles from it, then 3, 2, 1.
+    for (const stopAt of [script.winTick - 40, script.winTick - 25, script.winTick - 10, script.winTick - 1]) {
+      const result = await page.evaluate(
+        async (a) => (window as unknown as HookWindow).__E2E__?.replay('debug', { runs: a.runs }, 20, { stopAtTick: a.stopAt }),
+        { runs: script.runs, stopAt },
+      );
+      expect(result?.won).toBe(false);
+      const box = await page.evaluate((d) => (window as unknown as HookWindow).__E2E__?.cellOnPage(d.col, d.row) ?? null, door);
+      if (!box) throw new Error('no airlock on the page');
+      const buttons = await drawnButtons(page);
+      expect(buttons.map((b) => b.id), 'the blaster is held: FIRE is drawn').toContain('fire');
+      seen.push({ tick: stopAt, under: under(box, buttons) });
+    }
+    expect(seen).toEqual(seen.map((s) => ({ tick: s.tick, under: [] })));
+  });
+
+  test("after keys, a touch brings the pad back and the view glides off level 4's airlock within half a second, though the hero stands still", async ({ page }) => {
+    const door = cellOf('level-04.txt', 'D');
+    // No ?touch=1: touch mode comes from this emulated phone, and a key press ends it.
+    await page.goto('./?level=level-04&e2e=1');
+    await page.waitForFunction(() => (window as unknown as HookWindow).__E2E__?.state().mode === 'running');
+    await page.locator('.touchpad.is-visible').waitFor({ state: 'visible' });
+    const heroX = async (): Promise<number> => (await page.evaluate(() => (window as unknown as HookWindow).__E2E__?.state().player.x ?? 0)) / 256;
+    /** Holds `key` until the hero's left edge has passed `px` (checked every frame in the page, which freezes the game there), then lets go. */
+    const walk = async (key: string, px: number, west: boolean): Promise<void> => {
+      await page.keyboard.down(key);
+      await page.evaluate(
+        async (a) =>
+          new Promise<void>((resolve) => {
+            const check = (): void => {
+              const hook = (window as unknown as HookWindow).__E2E__;
+              const x = (hook?.state().player.x ?? 0) / 256;
+              if (a.west ? x < a.px : x > a.px) {
+                hook?.freeze(true);
+                resolve();
+              } else requestAnimationFrame(check);
+            };
+            check();
+          }),
+        { px, west },
+      );
+      await page.keyboard.up(key);
+      await page.evaluate(() => {
+        (window as unknown as HookWindow).__E2E__?.freeze(false);
+      });
+    };
+    // Keys: west along the floor until the view has come back inside the level, then east again to two tiles from the
+    // airlock, and stop. The view stays inside the level (no pad, no pass), so the airlock is at the view's right edge.
+    await walk('ArrowLeft', (door.col - 14) * 16, true);
+    await expect(page.locator('.touchpad.is-visible')).toHaveCount(0);
+    await walk('ArrowRight', (door.col - 3) * 16, false);
+    await expect.poll(async () => (await page.evaluate(() => (window as unknown as HookWindow).__E2E__?.state().player.vx ?? 1)) === 0).toBe(true);
+
+    // The world stands still for the touch: then the airlock lies in JUMP's column, as the view is still inside the
+    // level. (Since the bottom row of buttons got a pass of its own, the floor he stands on, the airlock's too, is drawn
+    // above the buttons from the level's start, and a key press keeps that view: so it is not under JUMP's top edge.)
+    await page.evaluate(() => {
+      (window as unknown as HookWindow).__E2E__?.freeze(true);
+    });
+    const cdp = await page.context().newCDPSession(page);
+    const box = await page.locator('#game canvas').boundingBox();
+    if (!box) throw new Error('no canvas');
+    const spot = { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 3), id: 0 }; // no button, no move zone
+    await touch(cdp, 'touchStart', [spot]);
+    await touch(cdp, 'touchEnd', []);
+    await expect(page.locator('.touchpad.is-visible')).toHaveCount(1);
+    const airlock = (): Promise<Box | null> => page.evaluate((d) => (window as unknown as HookWindow).__E2E__?.cellOnPage(d.col, d.row) ?? null, door);
+    const before = await airlock();
+    if (!before) throw new Error('no airlock on the page');
+    const standing = await heroX();
+    const jumpButton = (await drawnButtons(page)).find((b) => b.id === 'jump');
+    if (!jumpButton) throw new Error('no JUMP');
+    expect(before.x + before.w, "the airlock reaches into JUMP's column when the pad comes back").toBeGreaterThan(jumpButton.x + 0.5);
+    const tickNow = (): Promise<number> => page.evaluate(() => (window as unknown as HookWindow).__E2E__?.state().tick ?? 0);
+    const from = await tickNow();
+    await page.evaluate(() => {
+      (window as unknown as HookWindow).__E2E__?.freeze(false);
+    });
+
+    // He stands; the view glides out past the wall until the level ends where JUMP begins (it used to wait for him to
+    // move, then crept at 0.75 px a tick). 85 art px of reach at 3 px a tick: 29 ticks, under half a second.
+    await expect
+      .poll(async () => {
+        const at = await airlock();
+        return at ? at.x + at.w <= jumpButton.x + 0.5 && under(at, await drawnButtons(page)).length === 0 : false;
+      }, { timeout: 3000 })
+      .toBe(true);
+    expect((await tickNow()) - from, 'ticks from the touch until the airlock is clear').toBeLessThanOrEqual(45);
+    expect(await heroX(), 'he did not move').toBe(standing);
+    expect(standing, 'two or three tiles from the airlock').toBeLessThan((door.col - 1) * 16);
+  });
 });

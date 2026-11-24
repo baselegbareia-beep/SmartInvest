@@ -131,18 +131,21 @@ export function canvasEdgeGapsCss(): { left: number; right: number } {
 const canvasRect = { x: 0, y: 0, w: 0, h: 0 };
 const NO_RECT = { x: 0, y: 0, w: 0, h: 0 };
 const moveButtons = [NO_RECT, NO_RECT];
-const actionButtons = [NO_RECT, NO_RECT, NO_RECT];
+const rightButtons = [NO_RECT, NO_RECT, NO_RECT, NO_RECT];
 
 /**
  * How far the touch pad's drawn buttons reach into the canvas now, art px, written into `out`: zeros
- * unless touch mode is on (the pad is used, even while a menu hides it). The camera keeps the hero
- * clear of them at the level's side walls. Allocates nothing; the Play scene asks once per frame.
+ * unless touch mode is on (the pad is used, even while a menu hides it). The camera lets the view pass
+ * the level's side walls and its bottom edge by that much, and rests the hero's feet clear of the bottom
+ * row, so nothing by a wall or on a floor beside him is held under a button (camera.ts).
+ * Allocates nothing; the Play scene asks once per frame.
  */
 export function padReachNow(out: PadReach): PadReach {
   const buttons = pad.buttonsOnPage();
   if (!appliedView || !buttons || !app.classList.contains('touch')) {
     out.left = 0;
     out.right = 0;
+    out.bottom = 0;
     return out;
   }
   const k = cssPerArtPx(appliedView, appliedDpr);
@@ -152,10 +155,11 @@ export function padReachNow(out: PadReach): PadReach {
   canvasRect.h = appliedView.viewH * k;
   moveButtons[0] = buttons.left;
   moveButtons[1] = buttons.right;
-  actionButtons[0] = buttons.jump;
-  actionButtons[1] = buttons.fire;
-  actionButtons[2] = buttons.thrust;
-  return padReach(moveButtons, actionButtons, canvasRect, k, out);
+  rightButtons[0] = buttons.jump;
+  rightButtons[1] = buttons.fire;
+  rightButtons[2] = buttons.thrust;
+  rightButtons[3] = buttons.pause;
+  return padReach(moveButtons, rightButtons, canvasRect, k, out);
 }
 
 // ---------------------------------------------------------------------------------------

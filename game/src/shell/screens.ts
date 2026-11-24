@@ -73,9 +73,10 @@ export const WIN_LINE_FRAMES = 30;
 export const BEST_BLINK_ON = 20;
 export const BEST_BLINK_PERIOD = 30;
 
-/** Whether a blinking line is drawn `age` frames after it appeared. */
-export function blinkShown(age: number): boolean {
-  return age < 0 ? false : age % BEST_BLINK_PERIOD < BEST_BLINK_ON;
+/** Whether a blinking line is drawn `age` frames after it appeared; `steady` (reduced motion): always, once it has appeared. */
+export function blinkShown(age: number, steady = false): boolean {
+  if (age < 0) return false;
+  return steady || age % BEST_BLINK_PERIOD < BEST_BLINK_ON;
 }
 
 /**
@@ -131,7 +132,7 @@ export function screenLabel(lines: readonly string[]): string {
 /** A line placed on the view: top-left corner on whole pixels. */
 export interface PlacedLine {
   readonly text: string;
-  readonly scale: 1 | 2;
+  readonly scale: 1 | 2 | 3;
   readonly colour: ColorName;
   readonly x: number;
   readonly y: number;
@@ -159,24 +160,38 @@ export interface IntroLayout {
  * (lime), its hint (white), and the life icons, on a plate.
  *
  * Where one art px is under LARGE_TEXT_BELOW CSS px (`cssPerArt`; a browser tab with toolbars), the name
- * and the hint are drawn at 2x each if it fits across the view, as the menus' labels are, provided the
- * whole card still fits the view's height; a long hint stays 1x.
+ * and the hint are drawn at 2x each if it fits across the view, as the menus' labels are, and `LEVEL 3`
+ * at 3x, so the heading keeps its lead, provided the whole card still fits the view. Where the heading
+ * cannot grow (too narrow, or the card too tall) the card stays as elsewhere: heading 2x, name and hint 1x.
  */
 export function introLayout(viewW: number, viewH: number, card: IntroCard, cssPerArt = 2): IntroLayout {
   const small = cssPerArt > 0 && cssPerArt < LARGE_TEXT_BELOW;
-  const fitsAt2 = (text: string): boolean => small && textPx(text, 2) + 2 * CARD_PAD_X <= viewW;
+  const fitsAt = (text: string, scale: number): boolean => textPx(text, scale) + 2 * CARD_PAD_X <= viewW;
+  const heading = TEXT.level(card.levelNumber);
   const name = card.name.toUpperCase();
   const hint = card.teaches.toUpperCase();
-  const all: { text: string; scale: 1 | 2; colour: ColorName }[] = [
-    { text: TEXT.level(card.levelNumber), scale: 2, colour: 'white' },
-    { text: name, scale: fitsAt2(name) ? 2 : 1, colour: 'lime' },
-    { text: hint, scale: fitsAt2(hint) ? 2 : 1, colour: 'white' },
+  const large = small && fitsAt(heading, 3);
+  const plain: { text: string; scale: 1 | 2 | 3; colour: ColorName }[] = [
+    { text: heading, scale: 2, colour: 'white' },
+    { text: name, scale: 1, colour: 'lime' },
+    { text: hint, scale: 1, colour: 'white' },
   ];
-  let texts = all.filter((t) => t.text.length > 0); // a level file may leave out its name or hint
+  // A name or hint too wide for one 2x line is wrapped onto two 2x lines at a word boundary (the plate has the room),
+  // rather than left at 1x under a 3x heading: level 3's hint was a millimetre tall on a 568 x 232 tab.
+  const grown = plain.flatMap((t, i) => {
+    if (i === 0) return [t];
+    if (fitsAt(t.text, 2)) return [{ ...t, scale: 2 as const }];
+    const two = wrapInTwo(t.text, (line) => fitsAt(line, 2));
+    return two ? two.map((line) => ({ ...t, text: line, scale: 2 as const })) : [t];
+  });
+  // The heading grows to 3x only over 2x text: over a 1x name and hint it leads them at 2x already.
+  const big = grown.map((t, i) => (i === 0 && grown.some((g, j) => j > 0 && g.scale === 2 && g.text.length > 0) ? { ...t, scale: 3 as const } : t));
   const iconH = 8;
-  const heightOf = (lines: readonly { scale: 1 | 2 }[]): number =>
+  const heightOf = (lines: readonly { scale: number }[]): number =>
     lines.reduce((h, t) => h + textLinePx(t.scale) + CARD_LINE_GAP, 0) + (card.maxLives > 0 ? iconH : -CARD_LINE_GAP) + 2 * CARD_PAD_Y;
-  if (heightOf(texts) > viewH) texts = texts.map((t, i) => (i === 0 ? t : { ...t, scale: 1 })); // too short: back to 1x
+  const nonEmpty = (lines: typeof plain): typeof plain => lines.filter((t) => t.text.length > 0); // a level file may leave out its name or hint
+  // Large text only where the heading can lead it and the whole card fits; else the card of a phone in full screen.
+  const texts = large && heightOf(nonEmpty(big)) <= viewH ? nonEmpty(big) : nonEmpty(plain);
   const rowW = livesRowPx(card.maxLives);
   const contentW = Math.max(rowW, ...texts.map((t) => textPx(t.text, t.scale)));
   const contentH = texts.reduce((h, t) => h + textLinePx(t.scale) + CARD_LINE_GAP, 0) + (card.maxLives > 0 ? iconH : -CARD_LINE_GAP);
@@ -191,6 +206,21 @@ export function introLayout(viewW: number, viewH: number, card: IntroCard, cssPe
   }
   const livesX = Math.floor((viewW - rowW) / 2);
   return { plate, lines, lives: Array.from({ length: Math.max(0, card.maxLives) }, (_, i) => livesX + i * LIFE_STEP), livesY: y };
+}
+
+/**
+ * `text` split at one space into two lines that both pass `fits`, the longer of the two as short as can be;
+ * null when no split fits (or there is no space).
+ */
+export function wrapInTwo(text: string, fits: (line: string) => boolean): [string, string] | null {
+  let best: [string, string] | null = null;
+  for (let i = text.indexOf(' '); i > 0; i = text.indexOf(' ', i + 1)) {
+    const a = text.slice(0, i);
+    const b = text.slice(i + 1);
+    if (!fits(a) || !fits(b)) continue;
+    if (!best || Math.max(a.length, b.length) < Math.max(best[0].length, best[1].length)) best = [a, b];
+  }
+  return best;
 }
 
 /** The level-clear banner's top edge: under the top bar and the toast's row, clear of the hero in the airlock. */

@@ -21,8 +21,10 @@
  *
  * Large text: where one art pixel is under LARGE_TEXT_BELOW CSS px (a phone's browser tab with its
  * toolbars, zoom 2 at ratio 2: 1.0 CSS px), a 1x letter is only 5 x 7 CSS px, about a millimetre on the
- * glass, inside buttons 44 CSS px tall. There every 1x line and label is drawn at 2x (`textScale`),
- * provided the whole menu still fits the view at full row height; otherwise it stays 1x.
+ * glass, inside buttons 44 CSS px tall. There every 1x line and label is drawn at 2x (`textScale`) and a
+ * 2x heading (`PAUSED`, `GAME OVER`) at 3x, so it keeps its lead over the text under it, provided the whole
+ * menu still fits the view at full row height, its heading included; otherwise the menu stays at 1x with
+ * its heading at 2x.
  *
  * Pure: no Phaser, no DOM.
  */
@@ -99,7 +101,8 @@ export interface MenuLayout {
   readonly fits: boolean;
   /**
    * The scale of every line given at 1x, button labels and switch labels included: 2 where the pixels are
-   * small and the menu still fits (see the header), else 1. Lines given at 2x or 3x keep their scale.
+   * small and the menu still fits (see the header), else 1. A line given at 2x is drawn at 3x when this is 2
+   * (a heading keeps its lead); a line given at 3x keeps its scale (`drawnScale`).
    */
   readonly textScale: 1 | 2;
   /** One per item, in the order given. */
@@ -157,9 +160,13 @@ export function menuLayout(viewW: number, viewH: number, cssPerArt: number, item
   return layoutAt(viewW, viewH, cssPerArt, items, 1).layout;
 }
 
-/** The scale a line is drawn at: a 1x line at `textScale`, a heading at its own. */
+/**
+ * The scale a line is drawn at: a 1x line at `textScale`; a 2x heading at 3x when the text under it is 2x,
+ * so that it still stands out (ART-AND-SOUND section 7: "1x, 2x for headings"); a 3x line at 3x.
+ */
 export function drawnScale(scale: 1 | 2 | 3 | undefined, textScale: 1 | 2): 1 | 2 | 3 {
-  return scale === undefined || scale === 1 ? textScale : scale;
+  if (scale === undefined || scale === 1) return textScale;
+  return scale === 2 && textScale === 2 ? 3 : scale;
 }
 
 function layoutAt(

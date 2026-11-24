@@ -9,12 +9,14 @@
  * - `overlayAt`: where an overlay sits on the hero this frame (overlayOffsetOn, mirrored when he faces
  *   left), or null on frames that carry no gear.
  * - `fuelBarWidth`: the lit part of the mini fuel bar.
+ * - `exitDrawPos`, `fellDrawY`, `deathFill`: where and how the hero is drawn when the world stops for him
+ *   (in the airlock, at a fall out of the level, in a death's flash).
  * - `airlockPointer`: where the lime chevron goes at the screen edge while the airlock is off screen.
  */
 import { TILE_SIZE, overlayOffsetOn, spriteSpec } from '../art/manifest';
 import type { OverlayName } from '../art/manifest';
 import { SUB_SHIFT } from '../core/types';
-import type { BoltState, Phys, PlayerState } from '../core/types';
+import type { BoltState, DeathCause, Phys, PlayerState } from '../core/types';
 
 import { lerpPx } from './interpolation';
 
@@ -146,6 +148,76 @@ export function fuelBarWidth(fuel: number, fuelTicks: number, barW: number): num
 }
 
 // ---------------------------------------------------------------------------------------
+// The hero when the world stops for him (ART-AND-SOUND sections 9 and 13)
+// ---------------------------------------------------------------------------------------
+
+/** Ticks over which the hero settles into the airlock at a level clear. */
+export const EXIT_SETTLE_TICKS = 6;
+
+/**
+ * Where the hero's sprite is drawn while he stands in the airlock (run.phase 'exiting'), written into `out`.
+ * The core ends the level as soon as his box touches the airlock and freezes him there, mostly in mid-fall on
+ * its lintel or half outside the frame; the picture instead eases him, over EXIT_SETTLE_TICKS from where he
+ * was frozen (`fromX`, `fromY`: the sprite's corner then), into the cell: centred on it, feet on its floor.
+ * `ticksIn` is run.phaseTicks (0 on the tick of the win). Whole pixels.
+ */
+export function exitDrawPos(fromX: number, fromY: number, doorCol: number, doorRow: number, ticksIn: number, out: Point): Point {
+  const t = Math.min(1, Math.max(0, ticksIn) / EXIT_SETTLE_TICKS);
+  const k = 1 - (1 - t) * (1 - t); // eases out: quick at first, settling gently
+  out.x = Math.round(fromX + (doorCol * TILE_SIZE - fromX) * k);
+  out.y = Math.round(fromY + (doorRow * TILE_SIZE - fromY) * k);
+  return out;
+}
+
+/**
+ * The sprite's top while the hero dies of a fall out of the level: the core kills him once he is wholly below
+ * its bottom row, by then under the view's bottom edge, so his flash and break-apart would play out of sight.
+ * They are drawn at the view's bottom edge instead, the whole sprite showing.
+ */
+export function fellDrawY(drawY: number, camY: number, viewH: number): number {
+  return Math.min(drawY, camY + viewH - TILE_SIZE);
+}
+
+/** Ticks of a death's flash that are white whatever the cause, so the silhouette stands out from amber flames and ice. */
+export const DEATH_WHITE_TICKS = 3;
+
+/** The colour the hero is filled with `ticksIn` ticks (run.phaseTicks) into a death's flash: white first, then the cause's own. */
+export function deathFill(cause: DeathCause | null, ticksIn: number): 'white' | 'amber' | 'ice' {
+  if (ticksIn < DEATH_WHITE_TICKS) return 'white';
+  if (cause === 'fire') return 'amber';
+  if (cause === 'coolant') return 'ice';
+  return 'white';
+}
+
+// ---------------------------------------------------------------------------------------
+// The Earth behind the level (ART-AND-SOUND section 6)
+// ---------------------------------------------------------------------------------------
+
+/**
+ * How much of the Earth's disc (`size` px across, its box's top-left at screen `x`, `y`) lies over cells through
+ * which space shows (`open(col, row)`, level cells), with the view scrolled to `camX`, `camY`: 0 to 1, sampled every
+ * 4 px. Seen through a small gap in the far-wall panels the crescent was a loose light-steel fragment beside an
+ * Arc Moth (a third wing) or under a chain hook (a dish): the view hides it below a share (WorldView).
+ */
+export function openShare(x: number, y: number, size: number, camX: number, camY: number, open: (col: number, row: number) => boolean): number {
+  const r = size / 2;
+  const cx = x + r;
+  const cy = y + r;
+  let inDisc = 0;
+  let seen = 0;
+  for (let sy = 2; sy < size; sy += 4) {
+    for (let sx = 2; sx < size; sx += 4) {
+      const dx = x + sx - cx;
+      const dy = y + sy - cy;
+      if (dx * dx + dy * dy > r * r) continue;
+      inDisc += 1;
+      if (open(Math.floor((x + sx + camX) / TILE_SIZE), Math.floor((y + sy + camY) / TILE_SIZE))) seen += 1;
+    }
+  }
+  return inDisc === 0 ? 0 : seen / inDisc;
+}
+
+// ---------------------------------------------------------------------------------------
 // The airlock pointer (ART-AND-SOUND section 13)
 // ---------------------------------------------------------------------------------------
 
@@ -173,6 +245,10 @@ export interface EdgeInsets {
  * nearest the airlock (its centre clamped into the view minus `inset`) and points along the axis on
  * which the airlock is further out of view.
  *
+ * "On screen" is a real overlap: a cell flush with an edge (its top exactly at the view's height) shows
+ * nothing and counts as off screen. `visibleTop` is where the picture starts to count from the top: the
+ * top bar's strip (STRIP_H), under which a cell is only seen dimmed behind the bar.
+ *
  * @param doorCol, doorRow   the airlock's cell
  * @param camX, camY         the scroll the view is drawn with (whole art px)
  * @param viewW, viewH       the view, art px
@@ -186,22 +262,24 @@ export function airlockPointer(
   viewH: number,
   inset: EdgeInsets,
   out: PointerPlace,
+  visibleTop = 0,
 ): PointerPlace | null {
   const left = doorCol * TILE_SIZE - camX;
   const top = doorRow * TILE_SIZE - camY;
   const right = left + TILE_SIZE;
   const bottom = top + TILE_SIZE;
-  // How far outside the view the cell lies on each axis (0 when it overlaps on that axis).
-  const outX = right <= 0 ? -right : left >= viewW ? left - viewW : 0;
-  const outY = bottom <= 0 ? -bottom : top >= viewH ? top - viewH : 0;
-  // Off screen means outside on at least one axis: overlapping on both is visible.
-  if (outX === 0 && outY === 0) return null;
+  // Visible only where the cell overlaps the picture on both axes.
+  if (right > 0 && left < viewW && bottom > visibleTop && top < viewH) return null;
+  // How far outside the picture the cell lies on each axis (0 where it overlaps on that axis), counting a cell
+  // flush with an edge as one pixel out.
+  const outX = right <= 0 ? 1 - right : left >= viewW ? 1 + left - viewW : 0;
+  const outY = bottom <= visibleTop ? 1 + visibleTop - bottom : top >= viewH ? 1 + top - viewH : 0;
 
   const cx = left + (TILE_SIZE >> 1);
   const cy = top + (TILE_SIZE >> 1);
   out.x = clamp(cx, inset.left, viewW - inset.right);
   out.y = clamp(cy, inset.top, viewH - inset.bottom);
-  out.dir = outX >= outY ? (cx < 0 ? 'left' : 'right') : cy < 0 ? 'up' : 'down';
+  out.dir = outX >= outY ? (cx < 0 ? 'left' : 'right') : cy < visibleTop ? 'up' : 'down';
   return out;
 }
 

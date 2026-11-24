@@ -12,22 +12,25 @@
  *                 (timers count those, also while the core is held by a hit stop or the intro card);
  *                 reads the shake from `shakeX` / `shakeY` (whole pixels, added to the camera scroll by
  *                 WorldView.render); `place(...)` after the world is drawn, for what is pinned to the
- *                 screen edge; `setPaused` with the pause menu; `resize` on a new view size.
+ *                 screen edge and the score pop-ups (kept under the top bar, and under the cog's toast while
+ *                 the HUD shows it); `setPaused` with the pause menu; `resize` on a new view size.
  *
  * Particles. One emitter, burst-only, never more than MAX_PARTICLES alive. Each burst sets how its
  * particles move (MOTION) and which frames they show: a fixed frame (sparks, scrap bits) or a sequence
  * played once over the particle's life (fx_sparkle twinkles, fx_dust drifts apart), by a Particle
  * subclass; Phaser's animation manager is not used.
  *
- * Reduced motion (prefers-reduced-motion): the shake and the screen flash are off, as section 13 says
- * for effects that move or flash the whole screen. The fade after a death stays: it is the death.
+ * Reduced motion (prefers-reduced-motion, docs/ART-AND-SOUND.md section 13): no shake, no screen flash
+ * and no particles (no burst is fired); score pop-ups appear where they would rise from and stay there; the
+ * airlock pointer does not nudge. Kept, because each is the event itself, once, on one sprite: the enemy's
+ * white fill and its fx_poof, and the fades of a death and a respawn (the hero's own fill is WorldView's).
  *
  * Draw order inside the world: particles, the enemy flash and fx_poof at EFFECTS_DEPTH, above the hero;
  * pop-ups, the pointer, the flash and the fade above those. The top bar is its own scene above all.
  */
 import * as Phaser from 'phaser';
 
-import { FONT_LINE_HEIGHT, FONT_SIZE } from '../art/font';
+import { FONT_LINE_HEIGHT, FONT_SIZE, textWidth } from '../art/font';
 import { ENEMY_SPRITE, FONT_KEY, FX_SCRAP_FRAMES, TEXTURE_KEY, TILE_SIZE } from '../art/manifest';
 import { COLOR } from '../art/palette';
 import { SUB_SHIFT, TILE_PX } from '../core/types';
@@ -47,13 +50,26 @@ import {
   ShakeTimer,
   emberDue,
   fireCells,
+  popupAnchor,
+  popupClampY,
   popupRise,
 } from './fxModel';
+import { POPUP_TOP, POPUP_TOP_UNDER_TOAST, STRIP_H } from './hudModel';
+import { prefersReducedMotion } from './motion';
 import { airlockPointer, heroDrawX, heroDrawY, overlayAt } from './viewModel';
 import type { EdgeInsets, Point, PointerPlace } from './viewModel';
 
-/** At most this many particles alive at once (docs/ART-AND-SOUND.md section 4). */
+/** At most this many particles alive at once (docs/ART-AND-SOUND.md section 4), shared by the two emitters below. */
 export const MAX_PARTICLES = 48;
+/** Of them, the tinted ones (sparks, sparkles, embers, exhaust); the rest are drawn in their own colours (dust, scrap). */
+const MAX_TINTED = 36;
+/**
+ * The tinted particles' texture: pure white copies of fx_spark and fx_sparkle. The art's white is the palette's
+ * #f5f8fc, so a tint multiplied over it came out about 4 % darker than the palette (amber #ea932a for #f4972a):
+ * the only off-palette pixels of the canvas (the route watch). Over pure white a tint is the palette colour itself.
+ */
+const WHITE_FX_KEY = 'fx-white';
+const WHITE_FX_FRAMES = ['fx_spark', 'fx_sparkle'] as const;
 /** Depth of the particles, the enemy flash and the poof: above the hero (10). */
 export const EFFECTS_DEPTH = 50;
 const DEPTH = { popup: EFFECTS_DEPTH + 1, pointer: EFFECTS_DEPTH + 2, flash: EFFECTS_DEPTH + 3, fade: EFFECTS_DEPTH + 4 } as const;
@@ -104,6 +120,8 @@ const POPUP_LIFT_PX = 16;
 const POINTER_INSET: EdgeInsets = { left: 12, right: 12, top: 32, bottom: 56 };
 /** The pointer nudges 1 px toward the airlock every this many ticks. */
 const POINTER_NUDGE_TICKS = 16;
+/** After its first POINTER_TICKS the pointer stays, still and dimmed to this, for as long as the airlock is off screen. */
+const POINTER_LATER_ALPHA = 0.55;
 
 const toPx = (sub: number): number => sub >> SUB_SHIFT;
 
@@ -150,7 +168,10 @@ export type SpriteLookup = (id: string) => Phaser.GameObjects.Image | undefined;
 
 export class Effects implements EffectsApi {
   private readonly spriteOf: SpriteLookup;
+  /** Particles drawn in their own colours (dust, scrap). */
   private readonly emitter: Phaser.GameObjects.Particles.ParticleEmitter;
+  /** Particles of one palette colour each (sparks, sparkles, embers, the exhaust), over pure white frames. */
+  private readonly tinted: Phaser.GameObjects.Particles.ParticleEmitter;
   private readonly flashRect: Phaser.GameObjects.Rectangle;
   private readonly fadeRect: Phaser.GameObjects.Rectangle;
   private readonly pointer: Phaser.GameObjects.Image;
@@ -174,8 +195,16 @@ export class Effects implements EffectsApi {
   private level: LevelData | null = null;
   private fires: Int32Array = new Int32Array(0);
   private tickNow = 0;
-  /** run.tick until which the airlock pointer may show (-1: not since the last level start). */
+  /** run.tick until which the airlock pointer shows at full strength (-1: the airlock has not opened since the level start). */
   private pointerUntil = -1;
+  /** The cog's toast shows under the top bar (the HUD says so each frame): pop-ups keep below its band meanwhile. */
+  private toastUp = false;
+  /** The hero as of the last tick: rising through the air, and the side he travels to (a pop-up goes the other way). */
+  private heroRising = false;
+  /** True while the cog's own pop-up is being placed (the toast goes up on the same tick). */
+  private cogNow = false;
+  private heroSide: 1 | -1 = 1;
+  private readonly popupAt = { x: 0, y: 0 };
   private readonly pointerAt: PointerPlace = { x: 0, y: 0, dir: 'right' };
   private readonly flamePoint: Point = { x: 0, y: 0 };
   /** The view as last drawn (scroll without the shake), for embers and the pointer. */
@@ -193,29 +222,63 @@ export class Effects implements EffectsApi {
     return this.shaker.y;
   }
 
+  /**
+   * Test hook only: particles alive, how strong the screen flash and the fade are as drawn now (0 = none), the
+   * score pop-ups on screen, how far the highest-risen of them is drawn above where it appeared, px (0 under
+   * reduced motion), the top of the highest one in view px, and which way the airlock pointer points (null: hidden).
+   */
+  shown(): { particles: number; flash: number; fade: number; popups: number; popupRise: number; popupTop: number | null; pointer: string | null } {
+    let popups = 0;
+    let popupRise = 0;
+    let popupTop: number | null = null;
+    for (const p of this.popups) {
+      if (!p.text.visible) continue;
+      popups += 1;
+      popupRise = Math.max(popupRise, p.y - p.text.y);
+      const top = p.text.y - this.camY;
+      popupTop = popupTop === null ? top : Math.min(popupTop, top);
+    }
+    return {
+      particles: this.emitter.getAliveParticleCount() + this.tinted.getAliveParticleCount(),
+      flash: this.flashRect.visible ? this.flashRect.alpha : 0,
+      fade: this.fadeRect.visible ? this.fadeRect.alpha : 0,
+      popups,
+      popupRise,
+      popupTop,
+      pointer: this.pointer.visible ? this.pointerAt.dir : null,
+    };
+  }
+
   constructor(scene: Phaser.Scene, spriteOf: SpriteLookup) {
     this.spriteOf = spriteOf;
     this.reducedMotion = prefersReducedMotion();
-    // One emitter, burst-only. No tint in its config: the colour is set per burst (docs/PHASER4-NOTES.md
-    // section 10). maxAliveParticles, not maxParticles: Phaser counts the pool of dead particles
-    // against maxParticles, so that cap would stop all bursts for good after the 48th particle.
-    this.emitter = scene.add
-      .particles(0, 0, TEXTURE_KEY.sprites, {
-        frame: 'fx_spark_0',
-        lifespan: MOTION.spark.lifespan,
-        speed: MOTION.spark.speed,
-        angle: MOTION.spark.angle,
-        accelerationY: 0,
-        emitting: false,
-        maxAliveParticles: MAX_PARTICLES,
-        particleClass: FxParticle,
-      })
-      .setDepth(EFFECTS_DEPTH);
-    // Every particle takes its burst's gravity as its own acceleration (see Motion); none is shared.
-    this.emitter.acceleration = true;
-    this.emitter.onParticleEmit((particle) => {
-      if (particle instanceof FxParticle) particle.sequence = this.burstSeq;
-    });
+    // Two emitters, burst-only, 48 particles between them: one for what is drawn in its own colours (dust, scrap),
+    // one for the tinted sparks and sparkles over pure white frames. No tint in their configs: the colour is set
+    // per burst (docs/PHASER4-NOTES.md section 10). maxAliveParticles, not maxParticles: Phaser counts the pool of
+    // dead particles against maxParticles, so that cap would stop all bursts for good after the 48th particle.
+    const emitter = (texture: string, frame: string, max: number): Phaser.GameObjects.Particles.ParticleEmitter => {
+      const e = scene.add
+        .particles(0, 0, texture, {
+          frame,
+          lifespan: MOTION.spark.lifespan,
+          speed: MOTION.spark.speed,
+          angle: MOTION.spark.angle,
+          accelerationY: 0,
+          emitting: false,
+          maxAliveParticles: max,
+          particleClass: FxParticle,
+        })
+        .setDepth(EFFECTS_DEPTH);
+      // Every particle takes its burst's gravity as its own acceleration (see Motion); none is shared.
+      e.acceleration = true;
+      e.onParticleEmit((particle) => {
+        if (particle instanceof FxParticle) particle.sequence = this.burstSeq;
+      });
+      return e;
+    };
+    whiteFxTexture(scene);
+    this.emitter = emitter(TEXTURE_KEY.sprites, 'fx_dust_0', MAX_PARTICLES - MAX_TINTED);
+    this.tinted = emitter(WHITE_FX_KEY, 'fx_spark_0', MAX_TINTED);
 
     const { width, height } = scene.scale;
     this.viewW = width;
@@ -248,7 +311,8 @@ export class Effects implements EffectsApi {
     this.scrapEnemy = FX_SCRAP_FRAMES.enemyKilled.map((i) => `fx_scrap_${i}`);
     this.scrapHero = FX_SCRAP_FRAMES.playerDied.map((i) => `fx_scrap_${i}`);
     const texture = scene.textures.get(TEXTURE_KEY.sprites);
-    this.sparkleSeq = framesOf('fx_sparkle').map((name) => texture.get(name));
+    const white = scene.textures.get(WHITE_FX_KEY);
+    this.sparkleSeq = framesOf('fx_sparkle').map((name) => white.get(name));
     this.dustSeq = framesOf('fx_dust').map((name) => texture.get(name));
   }
 
@@ -265,8 +329,7 @@ export class Effects implements EffectsApi {
       for (const p of this.popups) {
         if (p.age >= POPUP_FRAMES) continue;
         p.age += frames;
-        if (p.age >= POPUP_FRAMES) p.text.setVisible(false);
-        else p.text.setPosition(p.x, p.y - popupRise(p.age));
+        if (p.age >= POPUP_FRAMES) p.text.setVisible(false); // placed in `place`, under the top bar
       }
       const poofLength = this.poofFrames.length * POOF_FRAME_TICKS;
       for (const poof of this.poofs) {
@@ -293,24 +356,35 @@ export class Effects implements EffectsApi {
    * After the world is drawn: the scroll it was drawn with (whole px, without the shake). Places what is
    * pinned to the screen edge: the airlock pointer, while the airlock is off screen.
    */
-  place(camX: number, camY: number, game: GameState): void {
+  place(camX: number, camY: number, game: GameState, toastUp = false): void {
     this.camX = camX;
     this.camY = camY;
+    this.toastUp = toastUp;
     const level = this.level;
     const tick = game.run.tick;
+    // Score pop-ups: risen by their age, but never into the top bar, nor into the toast's band while it shows.
+    const minTop = toastUp ? POPUP_TOP_UNDER_TOAST : POPUP_TOP;
+    for (const p of this.popups) {
+      if (p.age >= POPUP_FRAMES) continue;
+      p.text.setPosition(p.x, popupClampY(p.y - this.rise(p.age), camY, minTop));
+    }
+    // The airlock pointer: from the cog on, whenever the airlock is off screen (or only dimmed under the top bar);
+    // nudging at full strength for its first POINTER_TICKS, then still and dimmed.
     const at =
-      level && tick < this.pointerUntil && game.run.hasTrophy
-        ? airlockPointer(level.door.col, level.door.row, camX, camY, this.viewW, this.viewH, POINTER_INSET, this.pointerAt)
+      level && this.pointerUntil >= 0 && game.run.hasTrophy
+        ? airlockPointer(level.door.col, level.door.row, camX, camY, this.viewW, this.viewH, POINTER_INSET, this.pointerAt, STRIP_H)
         : null;
     if (!at) {
       this.pointer.setVisible(false);
       return;
     }
-    const nudge = Math.floor(tick / POINTER_NUDGE_TICKS) & 1;
+    const fresh = tick < this.pointerUntil;
+    const nudge = this.reducedMotion || !fresh ? 0 : Math.floor(tick / POINTER_NUDGE_TICKS) & 1;
     const dx = at.dir === 'right' ? nudge : at.dir === 'left' ? -nudge : 0;
     const dy = at.dir === 'down' ? nudge : at.dir === 'up' ? -nudge : 0;
     this.pointer
       .setVisible(true)
+      .setAlpha(fresh ? 1 : POINTER_LATER_ALPHA)
       .setPosition(at.x + dx, at.y + dy)
       .setFlipX(at.dir === 'left')
       .setAngle(at.dir === 'down' ? 90 : at.dir === 'up' ? -90 : 0);
@@ -318,8 +392,10 @@ export class Effects implements EffectsApi {
 
   /** The pause menu: particles stand still under it (pop-ups and timers wait anyway: `update` is not called). */
   setPaused(paused: boolean): void {
-    if (paused) this.emitter.pause();
-    else this.emitter.resume();
+    for (const e of [this.emitter, this.tinted]) {
+      if (paused) e.pause();
+      else e.resume();
+    }
   }
 
   /** The view changed size: the screen-sized layers follow. */
@@ -336,22 +412,22 @@ export class Effects implements EffectsApi {
 
   /** `count` 2 x 2 sparks of one palette colour from (x, y). */
   sparks(colour: number, count: number, x: number, y: number, motion: Motion = MOTION.spark): void {
-    this.burst(motion, 'fx_spark_0', true, null, colour, count, x, y);
+    this.burst(this.tinted, motion, 'fx_spark_0', true, null, colour, count, x, y);
   }
 
   /** Puffs of fx_dust, drifting apart. */
   dust(count: number, x: number, y: number): void {
-    this.burst(MOTION.dust, 'fx_dust_0', true, this.dustSeq, 0xffffff, count, x, y);
+    this.burst(this.emitter, MOTION.dust, 'fx_dust_0', true, this.dustSeq, 0xffffff, count, x, y);
   }
 
   /** Twinkles of fx_sparkle, tinted. */
   sparkle(colour: number, count: number, x: number, y: number): void {
-    this.burst(MOTION.sparkle, 'fx_sparkle_0', true, this.sparkleSeq, colour, count, x, y);
+    this.burst(this.tinted, MOTION.sparkle, 'fx_sparkle_0', true, this.sparkleSeq, colour, count, x, y);
   }
 
   /** Debris: `count` bits of the given fx_scrap frames, picked at random, or each in turn when `inTurn`. */
   scrap(frames: readonly string[], count: number, x: number, y: number, inTurn = false): void {
-    this.burst(MOTION.scrap, frames, !inTurn, null, 0xffffff, count, x, y);
+    this.burst(this.emitter, MOTION.scrap, frames, !inTurn, null, 0xffffff, count, x, y);
   }
 
   /** The fx_poof burst, 16 x 16 with its top-left corner at (x, y). */
@@ -380,7 +456,7 @@ export class Effects implements EffectsApi {
       let moved = false;
       for (const p of this.popups) {
         if (p === free || p.age >= POPUP_FRAMES) continue;
-        const py = p.y - popupRise(p.age);
+        const py = p.y - this.rise(p.age);
         if (Math.abs(p.x - free.x) <= w && Math.abs(py - free.y) < FONT_LINE_HEIGHT) {
           free.y = py - FONT_LINE_HEIGHT;
           moved = true;
@@ -388,7 +464,8 @@ export class Effects implements EffectsApi {
       }
       if (!moved) break;
     }
-    free.text.setPosition(free.x, free.y).setVisible(true);
+    // The cog's own +100 comes with the toast, which the HUD puts up on the same tick: below its band from the start.
+    free.text.setPosition(free.x, popupClampY(free.y, this.camY, this.toastUp || this.cogNow ? POPUP_TOP_UNDER_TOAST : POPUP_TOP)).setVisible(true);
   }
 
   /** The whole view flashes a colour at `alpha`, fading over `frames`. Off under reduced motion. */
@@ -408,6 +485,7 @@ export class Effects implements EffectsApi {
   /** Clears everything in flight. */
   clear(): void {
     this.emitter.killAll();
+    this.tinted.killAll();
     for (const p of this.popups) {
       p.age = POPUP_FRAMES;
       p.text.setVisible(false);
@@ -426,6 +504,7 @@ export class Effects implements EffectsApi {
     this.shaker.stop();
     this.fall.reset();
     this.pointerUntil = -1;
+    this.toastUp = false;
     this.pointer.setVisible(false);
   }
 
@@ -443,13 +522,18 @@ export class Effects implements EffectsApi {
     }
     this.tickNow = run.tick;
     const playing = run.phase === 'playing';
+    this.heroRising = playing && !p.onGround && p.vy < 0;
+    this.heroSide = p.vx > 0 ? 1 : p.vx < 0 ? -1 : p.facing;
     const feet = toPx(p.y + phys.heroH);
     this.fall.observe(playing, p.onGround, feet);
     this.embers(run.tick);
 
     if (run.phase === 'dying' && run.phaseTicks === deathBreakTick(TUNING.timing)) {
-      // The crucible splits (hero_die_1): its four pieces fly, each once.
-      this.scrap(this.scrapHero, this.scrapHero.length, toPx(p.x + (phys.heroW >> 1)), toPx(p.y + (phys.heroH >> 1)), true);
+      // The crucible splits (hero_die_1): its four pieces fly, each once. After a fall out of the level, from where
+      // he is drawn: at the view's bottom edge (WorldView, fellDrawY).
+      const midY = toPx(p.y + (phys.heroH >> 1));
+      const y = run.deathCause === 'fell' ? Math.min(midY, this.camY + this.viewH - (TILE_SIZE >> 1)) : midY;
+      this.scrap(this.scrapHero, this.scrapHero.length, toPx(p.x + (phys.heroW >> 1)), y, true);
     }
     if (!playing) return;
 
@@ -488,7 +572,7 @@ export class Effects implements EffectsApi {
     const px = toPx(x);
     const py = toPx(y);
     this.sparkle(kind === 'crystal' ? COLOR.white : COLOR.lime, 4, px, py);
-    if (score > 0) this.popup(`+${score}`, px, py - POPUP_LIFT_PX);
+    if (score > 0) this.scorePopup(score, px, py);
   }
 
   pickupRestored(_kind: ItemKind, x: number, y: number): void {
@@ -500,7 +584,9 @@ export class Effects implements EffectsApi {
     const py = toPx(y);
     this.sparkle(COLOR.gold, 6, px, py);
     this.flashScreen(COLOR.gold, COG_FLASH_ALPHA, COG_FLASH_FRAMES);
-    if (score > 0) this.popup(`+${score}`, px, py - POPUP_LIFT_PX);
+    this.cogNow = true;
+    if (score > 0) this.scorePopup(score, px, py);
+    this.cogNow = false;
   }
 
   doorOpened(): void {
@@ -561,8 +647,9 @@ export class Effects implements EffectsApi {
   // Inside
   // -------------------------------------------------------------------------------------
 
-  /** One burst from the one emitter: how its particles move, which frames they show, in which colour. */
+  /** One burst from one of the two emitters: how its particles move, which frames they show, in which colour. */
   private burst(
+    e: Phaser.GameObjects.Particles.ParticleEmitter,
     motion: Motion,
     frames: string | readonly string[],
     randomFrame: boolean,
@@ -572,8 +659,7 @@ export class Effects implements EffectsApi {
     x: number,
     y: number,
   ): void {
-    if (count <= 0) return;
-    const e = this.emitter;
+    if (count <= 0 || this.reducedMotion) return; // reduced motion: no particles at all
     // Load the burst's motion into the emitter's operators (what setConfig does, without rebuilding the rest).
     e.ops.lifespan.loadConfig(motion);
     e.ops.angle.loadConfig(motion);
@@ -586,6 +672,21 @@ export class Effects implements EffectsApi {
     this.burstSeq = sequence;
     e.explode(count, x, y);
     this.burstSeq = null;
+  }
+
+  /**
+   * `+score` for something scored at (x, y): above it, or beside it when the hero is rising through it (he would
+   * fly up into his own pop-up), on the side away from where he travels.
+   */
+  private scorePopup(score: number, x: number, y: number): void {
+    const text = `+${score}`;
+    const at = popupAnchor(x, y, POPUP_LIFT_PX, this.heroRising, this.heroSide, textWidth(text), this.popupAt);
+    this.popup(text, at.x, at.y);
+  }
+
+  /** How far a pop-up has risen at `age` frames: not at all under reduced motion. */
+  private rise(age: number): number {
+    return this.reducedMotion ? 0 : popupRise(age);
   }
 
   /** The enemy's white flash is over: fx_poof, its scrap (legs and plates) and the pop-up. */
@@ -611,10 +712,36 @@ export class Effects implements EffectsApi {
   }
 }
 
-function prefersReducedMotion(): boolean {
-  try {
-    return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  } catch {
-    return false;
+/**
+ * The tinted particles' texture, made once per game: each frame of WHITE_FX_FRAMES copied from the sprite sheet
+ * with every drawn pixel made pure white (#ffffff), under the same frame names.
+ */
+function whiteFxTexture(scene: Phaser.Scene): void {
+  if (scene.textures.exists(WHITE_FX_KEY)) return;
+  const sheet = scene.textures.get(TEXTURE_KEY.sprites);
+  const source = sheet.getSourceImage() as CanvasImageSource;
+  const frames = WHITE_FX_FRAMES.flatMap((name) => framesOf(name)).map((name) => sheet.get(name));
+  const width = frames.reduce((w, f) => w + f.cutWidth + 1, 0);
+  const height = Math.max(1, ...frames.map((f) => f.cutHeight));
+  const tex = scene.textures.createCanvas(WHITE_FX_KEY, width, height);
+  if (!tex) return;
+  const ctx = tex.getContext();
+  let x = 0;
+  for (const f of frames) {
+    ctx.drawImage(source, f.cutX, f.cutY, f.cutWidth, f.cutHeight, x, 0, f.cutWidth, f.cutHeight);
+    tex.add(f.name, 0, x, 0, f.cutWidth, f.cutHeight);
+    x += f.cutWidth + 1;
   }
+  const img = ctx.getImageData(0, 0, width, height);
+  const d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    if ((d[i + 3] ?? 0) > 0) {
+      d[i] = 255;
+      d[i + 1] = 255;
+      d[i + 2] = 255;
+      d[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  tex.refresh(); // uploads the canvas to the GPU (docs/PHASER4-NOTES.md section 4)
 }

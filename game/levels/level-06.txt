@@ -33,12 +33,19 @@
 ;           then on from rest 30 / 24. With the moths, a jump pressed at the lip
 ;           wins after 440 of 600 waits at vent 5 (comfort 424).
 ;   columns 55-58  the cog, on a block 2 tiles high at the east end (2 up from
-;           the face, any press). The way back crosses vents 5 and 4 from their
-;           east lips, the unsafe ones: wait back from the edge, then go. Vent 5
-;           west onto the 3-tile floor 25 / 20 (the same letting go after 0, 4
-;           or 8 frames), vent 4 west from rest 33 / 24; with the moths a jump
-;           wins after 376 of 600 waits at vent 5 and 340 at vent 4 (comfort
-;           404 and 372). Then the Cinderpeg's floor again, and the airlock.
+;           the face, any press), under a beam (row 8, cols 56-58) that leaves
+;           1 tile of headroom over the block. So every jump off it west is a
+;           short arc: jump held 1 to 40 frames lands on the floor at cols 55-56
+;           from col 57, and back on the block from col 58 (live and comfort).
+;           Without the beam a jump held 7 frames or more from col 57 (13 from
+;           col 58; comfort 8 and 16) hit the east face of vent 5's duct and
+;           dropped into the vent. The way back crosses vents 5 and 4 from
+;           their east lips, the unsafe ones: wait back from the edge, then
+;           go. Vent 5 west onto the 3-tile floor 25 / 20 (the same letting go
+;           after 0, 4 or 8 frames), vent 4 west from rest 33 / 24; with the
+;           moths a jump wins after 376 of 600 waits at vent 5 and 340 at vent
+;           4 (comfort 404 and 372). Then the Cinderpeg's floor again, and the
+;           airlock.
 ; Differences from the plan (docs/LEVELS.md, section 5):
 ; - A fifth Arc Moth, in the slot at column 9, so that the first meeting costs
 ;   nothing (rule 1), and a sixth, in vent 5. Enemies: 6 Arc Moths (M) and 1
@@ -50,6 +57,9 @@
 ;   about 54 tiles, and a short hop crossed the vent under the cog.
 ; - Vent 4 is 2 tiles wide, not 3, so that the last jump before the airlock is
 ;   easier than the hardest one (rule 4).
+; - The beam over the cog's block: with the moths bobbing, LEFT and JUMP held
+;   off the block died in all 300 phases of vent 5's moth (fell or hit), and
+;   now lands safely on the floor in all 300.
 ############################################################
 ############################################################
 ############################################################
@@ -58,7 +68,7 @@
 #.......###...##......##.............###........##...##....#
 #.......###...##......##.............###........##...##....#
 #.......###...##......##.............###........##...##....#
-#.......#.#................................................#
+#.......#.#.............................................####
 #....G..#M#...G...G...G....G.....G....G.....G...G....G.....#
 #.......#.#............M..................................T#
 #.......###......................................M....M..###

@@ -16,6 +16,7 @@ import {
   glowBands,
   inkRect,
   introLayout,
+  wrapInTwo,
   ridgeRow,
   screenLabel,
   shutterBlades,
@@ -90,6 +91,9 @@ describe('endLines', () => {
     expect(blinkShown(19)).toBe(true);
     expect(blinkShown(20)).toBe(false);
     expect(blinkShown(BEST_BLINK_PERIOD)).toBe(true);
+    // Steady under reduced motion: shown once it has appeared, never hidden.
+    expect([0, 19, 20, 29, BEST_BLINK_PERIOD + 25].every((age) => blinkShown(age, true))).toBe(true);
+    expect(blinkShown(-1, true)).toBe(false);
   });
 
   it('screenLabel joins the words for the canvas name', () => {
@@ -112,8 +116,12 @@ describe('introLayout', () => {
     it(`fits a ${w} x ${h} view at ${css} CSS px per art px: plate inside, lines inside the plate, centred, on whole pixels`, () => {
       const layout = introLayout(w, h, card, css);
       expect(inside(layout.plate, w, h)).toBe(true);
-      expect(layout.lines.map((l) => l.text)).toEqual(['LEVEL 10', 'HEART FURNACE', 'EVERYTHING AT ONCE, ONE LAST TIME, CAREFULLY.']);
-      expect(layout.lines.map((l) => l.colour)).toEqual(['white', 'lime', 'white']);
+      // The hint may be wrapped onto two lines (a 2x line too wide for the view): the same words, in order.
+      const [heading, name, ...hint] = layout.lines;
+      expect([heading?.text, name?.text, hint.map((l) => l.text).join(' ')]).toEqual(['LEVEL 10', 'HEART FURNACE', 'EVERYTHING AT ONCE, ONE LAST TIME, CAREFULLY.']);
+      expect(layout.lines.map((l) => l.colour)).toEqual(['white', 'lime', ...hint.map(() => 'white')]);
+      expect(hint.length).toBeLessThanOrEqual(2);
+      expect(new Set(hint.map((l) => l.scale)).size).toBe(1);
       for (const line of layout.lines) {
         const box = { x: line.x, y: line.y, w: textPx(line.text, line.scale), h: textLinePx(line.scale) };
         expect(inside(box, w, h), line.text).toBe(true);
@@ -128,14 +136,46 @@ describe('introLayout', () => {
     });
   }
 
-  it('draws the name and a short hint at 2x where the pixels are small, a long hint at 1x, and nothing at 2x on a phone in full screen', () => {
+  it('draws the name and the hint at 2x where the pixels are small (a long hint on two lines), and nothing at 2x on a phone in full screen', () => {
     const short = { ...card, teaches: 'Jump the gaps.' };
-    expect(introLayout(480, 224, short, 1).lines.map((l) => l.scale)).toEqual([2, 2, 2]);
-    expect(introLayout(480, 224, card, 1).lines.map((l) => l.scale)).toEqual([2, 2, 1]); // 45 characters: 538 px at 2x
+    // LEVEL 10 grows to 3x over 2x lines, so the heading still leads (ART-AND-SOUND section 7: "2x for headings").
+    expect(introLayout(480, 224, short, 1).lines.map((l) => l.scale)).toEqual([3, 2, 2]);
+    // 45 characters: 538 px at 2x, too wide for one line: two 2x lines at a word boundary (it was one 1x line).
+    expect(introLayout(480, 224, card, 1).lines.map((l) => [l.text, l.scale])).toEqual([
+      ['LEVEL 10', 3],
+      ['HEART FURNACE', 2],
+      ['EVERYTHING AT ONCE, ONE', 2],
+      ['LAST TIME, CAREFULLY.', 2],
+    ]);
+    // Level 3's hint on the 568 x 232 tab (the route watch): 41 characters, never 1x.
+    const l3 = { ...card, levelNumber: 3, name: 'Quench Hall', teaches: 'Coolant freezes robots. Stop on the pads.' };
+    expect(introLayout(480, 224, l3, 1).lines.map((l) => l.scale)).toEqual([3, 2, 2, 2]);
     expect(introLayout(480, 224, short, 2).lines.map((l) => l.scale)).toEqual([2, 1, 1]);
     expect(introLayout(480, 224, short).lines.map((l) => l.scale)).toEqual([2, 1, 1]);
-    // Too short a view for 2x lines and the life icons: back to 1x.
+    // Too short a view for 2x lines and the life icons: back to 1x, the heading at 2x.
     expect(introLayout(480, 60, short, 1).lines.map((l) => l.scale)).toEqual([2, 1, 1]);
+    // A name too long for 2x and a hint too, even on two lines: nothing to lead, the heading stays 2x.
+    const long = { ...card, name: 'Anamethatisfartoolongfortwo', teaches: 'Unbreakablewordsthatcannotwrap atall.' };
+    expect(introLayout(300, 224, long, 1).lines.map((l) => l.scale)).toEqual([2, 1, 1]);
+  });
+
+  it('the heading is always the largest line of the card, wherever the card is drawn', () => {
+    for (const [w, h] of [[272, 160], [284, 160], [300, 224], [480, 192], [480, 224], [339, 165], [480, 100]] as const) {
+      for (const css of [1, 1.45, 2, 3]) {
+        for (const c of [card, { ...card, teaches: 'Jump the gaps.' }, { ...card, name: 'Up' }]) {
+          const scales = introLayout(w, h, c, css).lines.map((l) => l.scale);
+          expect(Math.max(...scales.slice(1)), `${w} x ${h} at ${css}: ${JSON.stringify(scales)}`).toBeLessThan(scales[0] ?? 0);
+        }
+      }
+    }
+  });
+});
+
+describe('wrapInTwo', () => {
+  it('splits at the space that keeps the longer line shortest, both lines fitting', () => {
+    expect(wrapInTwo('AB CD EF GH', (l) => l.length <= 6)).toEqual(['AB CD', 'EF GH']);
+    expect(wrapInTwo('ABCDEFGH', () => true)).toBeNull();
+    expect(wrapInTwo('ABCDEFG HIJKLMN OP', (l) => l.length <= 5)).toBeNull();
   });
 });
 

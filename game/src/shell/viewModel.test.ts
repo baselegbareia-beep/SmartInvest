@@ -4,7 +4,22 @@ import { OVERLAY_OFFSET } from '../art/manifest';
 import { REFERENCE_PHYS, levelFromRows, playingGame, sub } from '../core/testkit';
 
 import { TELEPORT_PX } from './interpolation';
-import { Track, airlockPointer, boltDrawX, boltDrawY, fuelBarWidth, heroDrawX, heroDrawY, overlayAt } from './viewModel';
+import {
+  DEATH_WHITE_TICKS,
+  EXIT_SETTLE_TICKS,
+  Track,
+  airlockPointer,
+  boltDrawX,
+  boltDrawY,
+  deathFill,
+  exitDrawPos,
+  fellDrawY,
+  fuelBarWidth,
+  openShare,
+  heroDrawX,
+  heroDrawY,
+  overlayAt,
+} from './viewModel';
 import type { EdgeInsets, Point, PointerPlace } from './viewModel';
 
 describe('Track: whole-pixel draw positions blended between two ticks', () => {
@@ -177,5 +192,88 @@ describe('the airlock pointer', () => {
   it('off on both axes: points along the axis where the airlock is further out', () => {
     expect(place(40, 11, 0, 0)?.dir).toBe('right'); // far right, a little low
     expect(place(18, 40, 0, 0)?.dir).toBe('down'); // a little right, far below
+  });
+
+  it('a cell flush with an edge shows nothing, so it is off screen and pointed at (level 7 after the cog: top exactly at 160)', () => {
+    // Below: the cell's top is exactly the view's height (the review's case on the 284 x 160 view).
+    expect(place(4, 10, 0, 0)).toEqual({ x: 72, y: 160 - 16, dir: 'down' });
+    // Above: its bottom exactly at 0.
+    expect(place(4, 4, 0, 80)?.dir).toBe('up');
+    // Right: its left edge exactly at the view's width.
+    expect(place(10, 5, 160 - 284, 0)?.dir).toBe('right');
+    // Left: its right edge exactly at 0.
+    expect(place(4, 5, 80, 0)?.dir).toBe('left');
+    // One pixel in, on each edge: on screen.
+    expect(place(4, 10, 0, 1)).toBeNull();
+    expect(place(4, 4, 0, 79)).toBeNull();
+    expect(place(10, 5, 160 - 284 + 1, 0)).toBeNull();
+    expect(place(4, 5, 79, 0)).toBeNull();
+  });
+
+  it('a cell wholly under the top bar\'s strip counts as off screen when the strip is given', () => {
+    const underStrip = (camY: number): PointerPlace | null =>
+      airlockPointer(4, 4, 0, camY, 284, 160, INSET, { x: 0, y: 0, dir: 'left' }, 14);
+    expect(underStrip(64 + 2)?.dir).toBe('up'); // the cell at y -2..14: only dimmed behind the bar
+    expect(underStrip(64 - 1)).toBeNull(); // its bottom row is below the strip
+  });
+});
+
+describe('the hero when the world stops for him', () => {
+  it('at a level clear he settles into the airlock cell over EXIT_SETTLE_TICKS: centred, feet on its floor', () => {
+    const out = { x: 0, y: 0 };
+    // Level 1's case: frozen in mid-fall on the lintel, 15 px above the floor and a little off-centre.
+    const from = { x: 117, y: 147 };
+    const door = { col: 7, row: 10 };
+    expect(exitDrawPos(from.x, from.y, door.col, door.row, 0, out)).toEqual(from);
+    let last = { ...from };
+    for (let t = 1; t <= EXIT_SETTLE_TICKS; t++) {
+      const at = { ...exitDrawPos(from.x, from.y, door.col, door.row, t, out) };
+      expect(Number.isInteger(at.x) && Number.isInteger(at.y)).toBe(true);
+      // Always moving toward the cell, never past it.
+      expect(Math.abs(at.x - door.col * 16)).toBeLessThanOrEqual(Math.abs(last.x - door.col * 16));
+      expect(Math.abs(at.y - door.row * 16)).toBeLessThanOrEqual(Math.abs(last.y - door.row * 16));
+      last = at;
+    }
+    expect(last).toEqual({ x: door.col * 16, y: door.row * 16 });
+    expect(exitDrawPos(from.x, from.y, door.col, door.row, 59, out)).toEqual({ x: 112, y: 160 });
+  });
+
+  it('a hero who walked in a little off-centre (levels 5 and 10) is centred too', () => {
+    expect(exitDrawPos(400 - 9, 160, 25, 10, EXIT_SETTLE_TICKS, { x: 0, y: 0 })).toEqual({ x: 400, y: 160 });
+  });
+
+  it('a death by falling is drawn at the bottom edge of the view, whole, never lower', () => {
+    // The camera stopped at the level's bottom (y 64 on a 160 px view of a 224 px level); he died at y 222.
+    expect(fellDrawY(222, 64, 160)).toBe(64 + 160 - 16);
+    // Already in the picture: unchanged.
+    expect(fellDrawY(150, 64, 160)).toBe(150);
+  });
+
+  it("a death's flash is white for its first ticks whatever the cause, then the cause's colour", () => {
+    for (let t = 0; t < DEATH_WHITE_TICKS; t++) {
+      expect(deathFill('fire', t)).toBe('white');
+      expect(deathFill('coolant', t)).toBe('white');
+    }
+    expect(deathFill('fire', DEATH_WHITE_TICKS)).toBe('amber');
+    expect(deathFill('coolant', DEATH_WHITE_TICKS)).toBe('ice');
+    expect(deathFill('spikes', DEATH_WHITE_TICKS)).toBe('white');
+    expect(deathFill(null, 5)).toBe('white');
+  });
+});
+
+describe('the Earth seen through the far-wall panels', () => {
+  it('measures how much of its disc lies over open space', () => {
+    const all = (): boolean => true;
+    const none = (): boolean => false;
+    expect(openShare(10, 10, 48, 0, 0, all)).toBe(1);
+    expect(openShare(10, 10, 48, 0, 0, none)).toBe(0);
+    // Space only in the left half of the view (columns 0 to 1): the disc at x 0..48 is half over it.
+    const left = (col: number): boolean => col < 2;
+    expect(openShare(8, 0, 48, 0, 0, left)).toBeCloseTo(0.5, 1);
+    // One 2 x 2 window in the panels (level 9's case): a sliver, well under half.
+    const window = (col: number, row: number): boolean => col === 3 && (row === 1 || row === 2);
+    expect(openShare(16, 0, 48, 0, 0, window)).toBeLessThan(0.35);
+    // The scroll moves the level, not the disc.
+    expect(openShare(8, 0, 48, 32, 0, (col) => col >= 2 && col < 4)).toBeCloseTo(0.5, 1);
   });
 });

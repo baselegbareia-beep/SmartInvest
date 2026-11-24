@@ -84,6 +84,13 @@ export function openMenuTargets(): MenuTargetInfo[] {
   return newest ? newest.targetInfo() : [];
 }
 
+/** The words of the menu on screen (headings and prompts, not buttons), each with whether it is drawn now; for the test hook. */
+export function openMenuTexts(): { readonly text: string; readonly shown: boolean }[] {
+  let newest: Menu | null = null;
+  for (const menu of OPEN) newest = menu;
+  return newest ? newest.textInfo() : [];
+}
+
 export class Menu {
   private readonly scene: Phaser.Scene;
   private readonly entries: readonly MenuEntry[];
@@ -231,6 +238,11 @@ export class Menu {
   }
 
   /** The tappable items as they are now (the test hook). */
+  /** Its text entries (headings, prompts) and whether each is drawn now (the title's prompt blinks). */
+  textInfo(): { text: string; shown: boolean }[] {
+    return this.drawn.flatMap((d) => (d.kind === 'text' ? [{ text: d.text.text, shown: d.text.visible }] : []));
+  }
+
   targetInfo(): MenuTargetInfo[] {
     return this.targets.map((t, i) => ({ label: t.label(), focused: i === this.focused, hit: t.hit }));
   }
