@@ -103,6 +103,66 @@ const coreImportsRule = {
 const DETERMINISM =
   'src/core is a deterministic simulation: the same state and input must always give the same result.';
 
+/**
+ * Clocks and randomness: banned in every file of src/core, tests included.
+ *
+ * ESLint replaces a rule's whole option list when a later block sets the rule
+ * again, so every block below that sets no-restricted-properties spreads this
+ * list first.
+ */
+const CLOCK_AND_RANDOM_BANS = [
+  {
+    object: 'Math',
+    property: 'random',
+    message: `Keep any randomness as seeded data in the state. ${DETERMINISM}`,
+  },
+  {
+    object: 'Date',
+    property: 'now',
+    message: `No clocks in src/core: time advances only by step(). ${DETERMINISM}`,
+  },
+];
+
+/**
+ * The simulation computes with integers only (docs/ARCHITECTURE.md, section 1).
+ * It may use Math.min, max, abs, sign, floor, trunc and imul; every other
+ * member of Math is listed here, except random (above) and round (below).
+ * The transcendental functions may also differ in their last bit between
+ * JavaScript engines.
+ */
+const MATH_BANS = [
+  ...['acos', 'acosh', 'asin', 'asinh', 'atan', 'atan2', 'atanh', 'cos', 'cosh', 'sin', 'sinh', 'tan', 'tanh'],
+  ...['cbrt', 'exp', 'expm1', 'hypot', 'log', 'log10', 'log1p', 'log2', 'pow', 'sqrt'],
+  ...['ceil', 'clz32', 'f16round', 'fround', 'sumPrecise'],
+  ...['E', 'LN10', 'LN2', 'LOG10E', 'LOG2E', 'PI', 'SQRT1_2', 'SQRT2'],
+].map((property) => ({
+  object: 'Math',
+  property,
+  message: `Integers only in src/core: use + - * and Math.min, max, abs, sign, floor, trunc, imul. ${DETERMINISM}`,
+}));
+
+/** Fractions exist only where tuning is compiled: Math.round is allowed in those two files and nowhere else in the core. */
+const MATH_ROUND_BAN = {
+  object: 'Math',
+  property: 'round',
+  message: `Fractions and Math.round belong to compileTuning.ts and validate/handicap.ts only. ${DETERMINISM}`,
+};
+
+const CORE_SYNTAX_BANS = [
+  {
+    selector: "BinaryExpression[operator='**'], AssignmentExpression[operator='**=']",
+    message: `No ** in src/core: its result need not be an integer. Multiply instead. ${DETERMINISM}`,
+  },
+  {
+    selector: 'ForInStatement',
+    message: `No for...in in src/core: its order depends on how the object was built. Use for...of. ${DETERMINISM}`,
+  },
+  {
+    selector: 'CallExpression[arguments.length=0][callee.property.name=/^(?:sort|toSorted)$/]',
+    message: `No sort() without a comparator in src/core: it orders numbers as text. ${DETERMINISM}`,
+  },
+];
+
 export default defineConfig(
   globalIgnores(['dist/', 'node_modules/', 'docs/phaser-skills/', 'test-results/', 'playwright-report/']),
 
@@ -142,19 +202,25 @@ export default defineConfig(
           message: `No clocks (performance.now) in src/core: time advances only by step(). ${DETERMINISM}`,
         },
       ],
-      'no-restricted-properties': [
-        'error',
-        {
-          object: 'Math',
-          property: 'random',
-          message: `Keep any randomness as seeded data in the state. ${DETERMINISM}`,
-        },
-        {
-          object: 'Date',
-          property: 'now',
-          message: `No clocks in src/core: time advances only by step(). ${DETERMINISM}`,
-        },
-      ],
+      'no-restricted-properties': ['error', ...CLOCK_AND_RANDOM_BANS],
+    },
+  },
+  {
+    // The source rules of docs/ARCHITECTURE.md, section 1, for the game files of the core, so that an editor
+    // shows them while typing. Test files are left out, as they are in src/core/purity.test.ts, which applies
+    // the same rules and is the gate: a test may convert pixels with Math.round or check a result with **.
+    files: ['src/core/**'],
+    ignores: ['src/core/**/*.test.ts'],
+    rules: {
+      'no-restricted-syntax': ['error', ...CORE_SYNTAX_BANS],
+      'no-restricted-properties': ['error', ...CLOCK_AND_RANDOM_BANS, ...MATH_BANS, MATH_ROUND_BAN],
+    },
+  },
+  {
+    // The two files that turn the owner's fractional numbers into integers.
+    files: ['src/core/compileTuning.ts', 'src/core/validate/handicap.ts'],
+    rules: {
+      'no-restricted-properties': ['error', ...CLOCK_AND_RANDOM_BANS, ...MATH_BANS],
     },
   },
 );

@@ -72,6 +72,7 @@ An enemy pays only the first time it is destroyed in a level, so dying on purpos
 
 ## What is saved on the device
 - The highest level reached, the best score, and the run in progress (level, score and lives), so a closed game can be continued. Continuing restarts the current level with the score it began with and the lives left now.
+- A cleared level is saved the moment Sprue enters the airlock, so closing the game during the clear banner loses nothing. Entering the last airlock wins the game there and then; only the bonus for lives left needs the banner to finish before it counts towards the best score.
 - After a game over, "Continue" starts at the highest level reached with 3 lives and a score of 0. "New game" starts at level 1 and keeps the best score.
 - The sound and vibration switches.
 

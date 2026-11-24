@@ -1028,8 +1028,10 @@ export type TileAtFn = (level: LevelData, col: number, row: number) => TileKind;
  * Builds a GameState and loads the starting level into the ready gate.
  * Defaults for missing `start` fields: levelIndex 0, score 0, lives
  * phys.startLives, highestUnlocked = levelIndex. highestUnlocked is raised to
- * levelIndex if it is lower. Appends `levelStarted`. Throws RangeError when
- * `levels` is empty or levelIndex is outside it.
+ * levelIndex if it is lower. lives is clamped to [1, phys.maxLives]: it may
+ * come from a stored save, which parseSave cannot check against Phys.
+ * Appends `levelStarted`. Throws RangeError when `levels` is empty or
+ * levelIndex is outside it.
  */
 export type CreateSessionFn = (
   levels: readonly LevelData[],
@@ -1126,13 +1128,16 @@ export type ParseSaveFn = (json: unknown, levelCount: number) => SaveData;
  * - levelStarted:   resume = { levelIndex, score, lives }
  * - playerDied:     resume.lives = livesAfter; when livesAfter is 0, resume = null and bestScore = max(bestScore, score)
  * - respawned:      resume.lives = lives
- * - levelCompleted: unlocked = max(unlocked, highestUnlocked); unless `last`, resume = { levelIndex + 1, score, lives }
+ * - levelCompleted: unlocked = max(unlocked, highestUnlocked); then, unless `last`, resume = { levelIndex + 1, score, lives };
+ *                   when `last` (the win is certain: only a closed page can stop the exiting phase),
+ *                   finished = true, resume = null and bestScore = max(bestScore, score)
  * - gameOver:       bestScore = max(bestScore, score); resume = null
- * - gameWon:        bestScore = max(bestScore, score); finished = true; resume = null
+ * - gameWon:        bestScore = max(bestScore, score) (now with the life bonus); finished = true; resume = null
  * Every other event is ignored.
  *
  * bestScore is therefore already raised by the time an end screen is built
- * (at the last death, 52 ticks before gameOver). "NEW BEST!" must not be
+ * (at the last death, 52 ticks before gameOver; at the last level's clear,
+ * exitTicks before gameWon). "NEW BEST!" must not be
  * decided from the save at that moment: the shell remembers the best score as
  * it was when the session was created and compares the final score with that
  * (docs/ARCHITECTURE.md, section 11.3).

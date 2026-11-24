@@ -17,10 +17,19 @@ The ESLint rule `core/imports` (in `eslint.config.js`) enforces the first row, t
 Determinism rules for `src/core`:
 - State and `Phys` hold integers and booleans only. Allowed arithmetic: `+ - *`, comparisons, shifts, masks, `Math.min/max/abs/sign/floor/trunc/imul`, and division only as `Math.trunc(a / b)` or `Math.floor(a / b)` on integers.
 - Fractional numbers and `Math.round` appear only in `compileTuning.ts` and `validate/handicap.ts`.
-- Forbidden everywhere in the core: every transcendental `Math.*`, `**`, `for...in`, `sort()` without a comparator, any frame delta, any module-level mutable state that outlives a call.
+- Forbidden everywhere in the core: every transcendental `Math.*`, `**`, `%`, `for...in`, `sort()` without a comparator, any frame delta, any module-level mutable state that outlives a call.
 - The core never reads `TUNING` directly: `compileTuning(tuning)` is called by the shell and the tests, and `Phys` is passed in. That is what makes the handicapped comfort proof possible.
 
-Who enforces them. Lint enforces only the five bans named above. The rest is enforced by **`src/core/purity.test.ts`**, written with the first core module in Phase 1: it reads the text of every file under `src/core` that is not a test and fails, naming file and line, on `**`; `for (... in ...)`; `Math.` followed by anything outside the allowed list above; `Math.round` outside `compileTuning.ts` and `validate/handicap.ts`; `.sort()` with no argument; and an import of `tuning` in a file that is neither a test nor `testkit.ts`. `determinism.test.ts` adds the run-time half (state stays integral, same input gives same state). The same bans should also be added to the `src/core` block of `eslint.config.js` (`no-restricted-properties` for the `Math` functions, `no-restricted-syntax` for `**` and `for...in`) so that an editor shows them while typing; the test is the gate either way.
+Who enforces them. Lint enforces only the five bans named above. The rest is enforced by **`src/core/purity.test.ts`**, written with the first core module in Phase 1: it reads the text of every file under `src/core` that is not a test and fails, naming file and line, on:
+- `**`; `for (... in ...)`;
+- `Math` used other than as `Math.<allowed function>`; `Math.round` outside `compileTuning.ts` and `validate/handicap.ts`;
+- a division (`/`, `/=`) that does not sit directly inside the parentheses of `Math.trunc(` or `Math.floor(`, and `%` (`%=`), both outside those two files;
+- `globalThis`, `self`, `window`, `global`, `eval` and `Function`, the ways round every other rule (`globalThis.Math.sqrt`, text run as code);
+- `.sort()` or `.toSorted()` with no argument or with `undefined`, and either method used any other way than `.sort(comparator)` (`['sort']`, `.sort.call`, a variable named `sort`);
+- module-level state: a top-level `let` or `var`, and a top-level array literal, object literal or `new` that is not read-only (`as const`, a `readonly` / `Readonly…<>` type, or `Object.freeze`);
+- an import of `tuning` in a file that is neither a test nor `testkit.ts` (found by `from`, `import(` and `require(` with a quoted or backquoted name), and a module name built from a template with `${ }`, which the test cannot follow.
+
+It also fails when any non-test file under `src/` imports `testkit.ts`. The scanner reads text, not types: a module-level object built by a function call, or a module name held in a variable, is beyond it. `determinism.test.ts` adds the run-time half (state stays integral, same input gives same state, a clone tracks its original), which is what catches state that leaks from one call into the next. The same bans should also be added to the `src/core` block of `eslint.config.js` (`no-restricted-properties` for the `Math` functions, `no-restricted-syntax` for `**`, `%`, `for...in`, `ImportExpression > TemplateLiteral` and a computed `sort` member, `no-restricted-globals` for `globalThis`) so that an editor shows them while typing; the test is the gate either way.
 
 ## 2. Module map
 
@@ -135,7 +144,7 @@ Unit tests sit beside their module as `*.test.ts` (list in section 12).
 
 The groups `camera`, `view`, `touch`, `effects` and `pacing` are shell-only and ignored. With the shipped numbers every px value is an exact multiple of 1/256 px, so nothing is lost to rounding. (The comfort handicap is not exact: its run speed is 364.8 sub-pixels per tick and rounds to 365.)
 
-`compileTuning` throws `TuningError` (one message listing every problem) when: a value is negative or not finite; a frame count, a lives value or a score is not a whole number; any speed (`runMaxSpeed`, `jumpVelocity`, `maxFallSpeed`, `jetMaxRiseSpeed`, `boltSpeed`, `cinderpegSpeed`, `mothSpeed`) is 0, or is 8 px per frame or more (half a tile); the hero box is not a whole number of px, is larger than a tile, or `16 - heroHitboxW` is odd; the hurt box, the enemy touch box, a hazard kill box or the door box has no size; `jumpCutVelocity >= jumpVelocity`; `jetCutSpeed > jetMaxRiseSpeed`; `apexHangScale` is outside (0, 1]; `boltSpeed + cinderpegSpeed >= boltHitboxW + 16` or the same with `mothSpeed`; `startLives` is below 1 or above `maxLives`.
+`compileTuning` throws `TuningError` (one message listing every problem) when: a value is negative or not finite; a frame count, a lives value or a score is not a whole number; any speed (`runMaxSpeed`, `jumpVelocity`, `maxFallSpeed`, `jetMaxRiseSpeed`, `boltSpeed`, `cinderpegSpeed`, `mothSpeed`) is 0, or is 8 px per frame or more (half a tile); the hero box is not a whole number of px, is larger than a tile, or `16 - heroHitboxW` is odd; the hurt box, the enemy touch box, a hazard kill box, the door box or the bolt box has no size (judged after rounding); the bolt box is wider or taller than the hero box (`boltHitboxW > heroHitboxW` or `boltHitboxH > heroHitboxH`: section 5.7 needs the bolt to start inside the hero); `jumpCutVelocity >= jumpVelocity`; `jetCutSpeed > jetMaxRiseSpeed`; `apexHangScale` is outside (0, 1]; `boltSpeed + cinderpegSpeed >= boltHitboxW + 16` or the same with `mothSpeed`; `startLives` is below 1 or above `maxLives`.
 
 ## 4. Step order
 
@@ -232,7 +241,7 @@ An enemy's body is one tile square at `(x, y)`; it starts on its cell with `dir 
 
 ### 5.7 Bolt (step 13)
 
-- **Spawn** when `fireBuffer > 0 && hasBlaster && !bolt.active`: `bolt.dir = facing`; `bolt.x = facing > 0 ? x + heroW - boltW : x`; `bolt.y = y + ((heroH - boltH) >> 1)`; `rangeLeft = boltRange`; `active = true`; `fireBuffer = 0`; emit `boltFired`. The bolt starts inside the hero's box, so it can never start inside a wall.
+- **Spawn** when `fireBuffer > 0 && hasBlaster && !bolt.active`: `bolt.dir = facing`; `bolt.x = facing > 0 ? x + heroW - boltW : x`; `bolt.y = y + ((heroH - boltH) >> 1)`; `rangeLeft = boltRange`; `active = true`; `fireBuffer = 0`; emit `boltFired`. The bolt starts inside the hero's box (`compileTuning` keeps the bolt box no larger than the hero box), so it can never start inside a wall; and it has a size on both axes, so it always covers at least one column and one row.
 - **Move** (also on the spawn tick): `bolt.x += dir * boltSpeed`; `rangeLeft -= boltSpeed`. Then, first match ends the bolt (`active = false`, emit `boltEnded`):
   1. `boxHitsSolid(bolt box)`: hit `wall`.
   2. The first live enemy in index order whose full one-tile body overlaps the bolt box: `alive = false`; `points = enemyPaid[i] ? 0 : value`; `enemyPaid[i] = true`; `score += points`; emit `enemyKilled`, then `boltEnded` with hit `enemy`.
@@ -277,7 +286,7 @@ After a respawn the level is its start state plus harmless collectibles, so one 
 
 **`startLevel`** builds a new `RunState` with `createRun`: nothing taken, no trophy, `enemyPaid` all false, `tick = 0`, hero and enemies at their cells, `phase = 'ready'` with `phaseLength = readyMinTicks` and `readyArmed = false`. Items never carry over. It emits `levelStarted`.
 
-**`restartLevel`** (pause menu): only when status is `playing` and the phase is `ready` or `playing`. If `thrusting`, emit `thrustStopped`. `lives -= 1`; at 0 `status = 'gameOver'` and `gameOver`; otherwise `respawnRun(..., readyMinTicks)` and `respawned` with reason `restart`. It is the way out of any dead end; together with the thruster packs reappearing when the tank runs dry (step 8) it is the whole soft-lock policy. The validator does not look for inescapable pits.
+**`restartLevel`** (pause menu): only when status is `playing` and the phase is `ready` or `playing`. If `thrusting`: clear it and emit `thrustStopped` (on the last life no respawn follows to clear it, and the thrust loop sound follows the flag). `lives -= 1`; at 0 `status = 'gameOver'` and `gameOver`; otherwise `respawnRun(..., readyMinTicks)` and `respawned` with reason `restart`. It is the way out of any dead end; together with the thruster packs reappearing when the tank runs dry (step 8) it is the whole soft-lock policy. The validator does not look for inescapable pits.
 
 **`holdReady`** (resume after a pause): `playing` becomes `ready` with `phaseTicks = 0`, `phaseLength = readyMinTicks` and `readyArmed = false`; position, speed and items are untouched. The shell releases every control when the pause overlay closes, so the gate is armed again on the next tick.
 
@@ -292,7 +301,7 @@ The `GameEvent` union in `types.ts` documents every payload. Order within one ti
 | `levelStarted` | `createSession`, `startLevel` | Rebuild tile layer and sprites, snap camera, intro, save `resume` |
 | `readyEnded` | step 3 | Hide the ready blink |
 | `jumped`, `landed`, `bonked` | steps 6, 11, 10 | `jump`, `land` (by `speed`), dust |
-| `thrustStarted`, `thrustStopped` | step 8, death, exit | One-shot ignition effects. The loop sound follows state (11.3) |
+| `thrustStarted`, `thrustStopped` | step 8; `thrustStopped` also by a death, the exit and `restartLevel` | One-shot ignition effects. The loop sound follows state (11.3) |
 | `fuelEmptied`, `pickupRestored` | step 8 | `fuelEmpty`, vibration, sparkle on the returning pack |
 | `pickup` | step 14 | `gem` ladder or `item`, sparkles, `+10` pop-up |
 | `trophyCollected`, `doorOpened` | step 15 | `cog`, toast, gold flash; `airlock` 320 ms later, iris animation |
@@ -301,7 +310,8 @@ The `GameEvent` union in `types.ts` documents every payload. Order within one ti
 | `playerDied` | step 17 | `death`, flash by cause, shake, vibration; save lives |
 | `respawned` | end of dying, `restartLevel` | Snap camera and interpolation, fade in, HUD life blink |
 | `levelCompleted` | step 16 | `clear`, banner with `bonus`, save `unlocked` |
-| `gameOver`, `gameWon` | end of dying, end of exiting | `gameOver` / `win`, end screen, save best score |
+| `gameOver` | end of dying, `restartLevel` on the last life | `gameOver`, end screen, save best score |
+| `gameWon` | end of exiting | `win`, end screen, save best score |
 
 ## 8. Level file format
 
@@ -467,7 +477,7 @@ So: an ordinary level is proven by the quick pass in well under 1 M step calls; 
 1. the three-deck fixture above proven, normal and comfort, in under 1 M step calls each (and not proven when its flood fill is allowed through hazards: the fixture exists to catch that mistake);
 2. the open-hall fixture (64 x 24, 4 packs, 4 enemies) proven, normal and comfort, inside `maxStepCalls`;
 3. `debug.txt` without its thruster packs decided (`trophy-unreachable`) and without its blaster decided (`no-route`), each inside `REQUIRES_OPTIONS`;
-4. the measured rate of the real `step()` on the build machine, from which `LEVELS_STEP_BUDGET` is set to 60 s worth of calls.
+4. the measured rate of the real `step()` on the build machine, from which `LEVELS_STEP_BUDGET` is set to 60 s worth of calls. Measure it under Vitest (where the proofs run) on a cap-size room loaded like a campaign level (64 x 24, 16 enemies, 30 or more crystals), never on `debug.txt` alone: `step()` looks at every pickup and every live enemy on every tick, so its cost grows with them. Measured after the two speed-ups below, median of 5 runs of 2 M calls each with random input: `debug.txt` (3 enemies, 11 pickups) 0.26 µs; 64 x 24 with 6 enemies and 23 pickups 0.34 µs; with 16 enemies and 5 pickups 0.47 µs; with 16 enemies and 35 pickups 0.55 µs. That is above the 0.4 µs behind the starting budget, so a campaign of full rooms needs either a smaller budget in calls or more than 60 s. The two speed-ups: `parseLevel` leaves the pickups array unfrozen (its objects stay frozen; V8 reads a frozen array about 2.5 times slower), and both enemy kinds share the layout of their first five fields (the moth's `axis` comes last); together they took the full room from 0.76 to 0.55 µs. A further one would change the contract: pickups indexed by cell, so step 14 looks only at the cells in reach.
 
 If 2 fails, or if the ten planned levels cannot fit the step budget, the caps are lowered as ruling R10 allows, in this order: `LEVEL_MAX_WIDTH` / `LEVEL_MAX_HEIGHT` in `types.ts` for levels that hold a thruster pack (48 x 16 is the first step), then `LEVEL_MAX_THRUSTERS`. The new caps are recorded in `docs/LEVELS.md` and the level plan there is changed to fit. Until the gate has run, the caps of ruling R9 stand and `docs/LEVELS.md` (rule 12) keeps thruster airspace small by design.
 
@@ -479,7 +489,7 @@ Storage is the shell's (`src/shell/storage.ts`, never throws, memory fallback). 
 |---|---|
 | Boot | `save = parseSave(loadJson(progressKey), CAMPAIGN.length)` |
 | After every tick's events | `next = applyEvents(save, events)`; when `next !== save`, write it |
-| Title, `save.resume` set | `CONTINUE - LEVEL n`: `createSession(CAMPAIGN, phys, { ...save.resume, highestUnlocked: save.unlocked })` |
+| Title, `save.resume` set | `CONTINUE - LEVEL n`: `createSession(CAMPAIGN, phys, { ...save.resume, highestUnlocked: save.unlocked })` (`createSession` clamps the stored lives to 1 to `maxLives`: `parseSave` cannot check them against `Phys`) |
 | Title, no resume, `save.unlocked > 0` | Continue: `createSession(CAMPAIGN, phys, { levelIndex: save.unlocked, highestUnlocked: save.unlocked })` (3 lives, score 0) |
 | `NEW GAME` | `createSession(CAMPAIGN, phys, { highestUnlocked: save.unlocked })`; unlocked levels and best score are kept |
 | Quit to title from pause | Nothing is written; `resume` already holds the level's starting score and the current lives. Quitting costs no life: it throws away the level visit (see below) |
@@ -487,8 +497,8 @@ Storage is the shell's (`src/shell/storage.ts`, never throws, memory fallback). 
 
 What `applyEvents` does per event is listed on `ApplySaveEventsFn` in `types.ts`. Consequences:
 - Quitting (or closing the page) and continuing restarts the level as a fresh visit: the score it began with, the lives as they are now (deaths are not undone), nothing collected, no cog. This is deliberately different from `Restart level`, which keeps the score, the crystals and the cog and costs a life. A player can therefore dodge a death that has not happened yet by quitting in mid-air, and pays for it with everything gathered in that level. Charging a life for leaving would also punish a phone call or a closed tab, so version 1 accepts this (`docs/SPEC.md` says so in plain words).
-- A cleared level moves `resume` to the next level at once, so closing the page during the clear banner loses nothing. A game over or a win clears `resume`.
-- `bestScore` updates on game over and on the win, and already at the last death in case the page closes during the animation. That is why an end screen cannot find out from the save whether the score is a new best: see 11.3.
+- A cleared level moves `resume` to the next level at once, so closing the page during the clear banner loses nothing. Clearing the **last** level saves the win at once (`finished = true`, `resume = null`, `bestScore` raised to the score so far): nothing but a closed page can stop the exiting phase, and a closed page must not send the player back to the start of the last level. Only the life bonus waits for `gameWon`. A game over or a win clears `resume`.
+- `bestScore` updates on game over and on the win, and earlier where the page could close first: at the last death (during the dying animation) and at the last level's clear (during the exiting phase). That is why an end screen cannot find out from the save whether the score is a new best: see 11.3.
 
 ## 11. Shell interface
 
@@ -540,7 +550,7 @@ Dying stages for the hero frame come from `run.phaseTicks` and `TUNING.timing`: 
 
 ### 11.3 Event consumption
 
-`EventRouter.drain(events, game)` handles each event once, in order: one sound per event type (table in section 7), particles and flashes through `Effects`, HUD pushes, `applyEvents` for the save, and scene changes on `gameOver` and `gameWon` (guarded by a flag so a scene is started once). **New best.** When a session is created the router remembers `previousBest = save.bestScore`. `EndScene` is started with `{ score, previousBest }` and shows `NEW BEST!` when `score > previousBest`, otherwise `BEST` with `max(previousBest, score)`. It must not compare with `save.bestScore`: `applyEvents` has already raised it (at the last death, 52 ticks before `gameOver`; at `gameWon` before the win screen is built).
+`EventRouter.drain(events, game)` handles each event once, in order: one sound per event type (table in section 7), particles and flashes through `Effects`, HUD pushes, `applyEvents` for the save, and scene changes on `gameOver` and `gameWon` (guarded by a flag so a scene is started once). **New best.** When a session is created the router remembers `previousBest = save.bestScore`. `EndScene` is started with `{ score, previousBest }` and shows `NEW BEST!` when `score > previousBest`, otherwise `BEST` with `max(previousBest, score)`. It must not compare with `save.bestScore`: `applyEvents` has already raised it (at the last death, 52 ticks before `gameOver`; at the last level's `levelCompleted`, 60 ticks before `gameWon`, and again at `gameWon` before the win screen is built).
 
 Things that last are read from state every frame instead of from events: the thrust loop plays while `run.phase === 'playing' && player.thrusting`; the low-fuel beep while thrusting at 20 % fuel or less; FIRE and THRUST buttons are shown while `hasBlaster` / `hasThruster`, FIRE dimmed while `bolt.active`, THRUST dimmed while `fuel === 0`.
 
@@ -610,6 +620,7 @@ Ruling R18: a hand-written manifest and service worker, no library. Nothing in t
 
 - **Rule tests run on the reference tuning.** `src/core/testkit.ts` exports `REFERENCE_TUNING`: a frozen copy of the eleven core groups (`hero` to `score`) as they were when the golden numbers of sections 4 and 13 were measured, with the shell-only groups taken from `TUNING` (`compileTuning` ignores them). `REFERENCE_PHYS = compileTuning(REFERENCE_TUNING)`. Every test of a rule (`movement`, `jump`, `thruster`, `enemies`, `bolt`, `contact`, `flow`, `determinism`, the validator's fixtures, the tables in `limits`) uses it. Golden numbers such as "apex 13472 on tick 21" or "52 + 22 ticks" therefore belong to the fixture, and an owner's change to `src/tuning.ts` cannot break them. Where a rule is about a tuning field the test is also written against the field (`phys.coyoteTicks`, not 6).
 - **Four tests read the live `TUNING`**, and each fails with a message the owner can act on: `src/tuning.test.ts` and the last case of `compileTuning.test.ts` (a number is unsafe; it is named), the first part of `src/core/limits.test.ts` (a whole-tile limit the levels are built on has moved; it is named), and `tests/levels.test.ts` (a level can no longer be proven; it is named).
+- **Twin fields.** At the reference numbers several `Phys` fields are equal (`airAccel` and `airDecel`, `thrustAccel` and `groundDecel`, the fire, spike and enemy-touch insets, `startLives` and `maxLives`, ...), so a test on `REFERENCE_PHYS` alone cannot show which of two twins the code reads. `testkit.ts` therefore also exports `DISTINCT_PHYS`, in which every field is at least 2 away from every other (`compileTuning.test.ts` checks that), and each rule that reads a `Phys` field has a case on it as well: the one-tick results of run, air, jump, gravity and thrust, the four-side grazes of every kill box, touch box and the door, the bolt's box, speed, range and pay, the enemies' speeds, and the lives and waits of the game loop.
 - `REFERENCE_TUNING` is test data, not a second home for feel numbers: no game code may import `testkit.ts` (`purity.test.ts` checks that). It is refreshed on purpose, together with the snapshots and the tables of section 13 and of `docs/LEVELS.md`, once the owner has accepted a tuning change. Until then `limits.test.ts` prints, without failing, the fields in which `TUNING` differs from it.
 
 | File | Proves |
@@ -636,7 +647,7 @@ The browser tests are listed in section 2.
 
 ## 13. Derived limits
 
-Measured at the reference tuning (section 12) with throwaway integer models of sections 3 to 6. Two such models were written independently and agreed tick for tick over a million random ticks, and every number below was produced by one and checked on the other where a reviewer disputed it. `src/core/limits.test.ts` reproduces the tables through the real core; where the real core disagrees with a number here, one of the two is wrong and both get fixed. "Handicap" is the comfort proof's tuning: no coyote time, no jump buffer, run and jump x 0.95, fuel x 0.9.
+Measured at the reference tuning (section 12) with throwaway integer models of sections 3 to 6. Two such models were written independently and agreed tick for tick over a million random ticks, and every number below was produced by one and checked on the other where a reviewer disputed it. `src/core/limits.test.ts` reproduces the tables through the real core; where the real core disagrees with a number here, one of the two is wrong and both get fixed. It reproduces every row of the Movement and Thruster tables, the jump-window, small-pad and thruster press-window tables and the hazard beds, cell for cell (the other rows of Hazards and of Blaster, enemies, timing are asserted by `contact`, `bolt`, `enemies` and `flow` tests); doing so fixed two entries (the thruster press window for 7 tiles under open sky, and the terminal-fall row, which said which of two figures it meant). "Handicap" is the comfort proof's tuning: no coyote time, no jump buffer, run and jump x 0.95, fuel x 0.9.
 
 ### Movement
 
@@ -707,14 +718,14 @@ A thumb cannot hold JUMP and THRUST together: the touch pad gives each finger on
 | Level flight, JUMP and THRUST held together (keyboard), open sky; the hero rises 11.7 tiles on the way | 14.77 tiles | 12.54 tiles |
 | The same under a roof 8 / 6 / 4 tiles above the ledge | 13.17 / 12.42 / 11.67 tiles | 11.21 / 10.49 / 9.87 tiles |
 | Level flight, JUMP held, THRUST feathered (keyboard), open sky | 18.70 tiles | 15.93 tiles |
-| Stopping a terminal-speed fall | 11 f, 19.25 px | |
+| Stopping a terminal-speed fall | The fall stops on the 11th tick of THRUST; the hero sinks 19.375 px (lowest after 10 f) | |
 | Hover on a full tank, thrust whenever not rising | 148 f = 2.47 s, 54 % duty | 133 f = 2.22 s |
 
-Flight figures are the best over the frame on which the manoeuvre starts. No exhaustive search over thrust patterns was run for level flight; 18.70 is the best simple policy found. What a level may ask for is set by how forgiving the start is. Press windows, in frames, for crossing a level gap with THRUST simply held and no jump (shipped / handicap):
+Flight figures are the best over the frame on which the manoeuvre starts. No exhaustive search over thrust patterns was run for level flight; 18.70 is the best simple policy found. What a level may ask for is set by how forgiving the start is. Press windows, in frames, for crossing a level gap with THRUST simply held and no jump (shipped / handicap), from a run-up of 7 tiles at full speed, worst of 16 sub-pixel alignments; "open sky" is 16 clear tiles. The thruster also saves a hero who has already walked off the edge, so these windows reach far back into the run-up: measured from a 4-tile run-up, the 7-tile open-sky window was cut off at the run's first tick (75 instead of 82).
 
 | Gap | Open sky | Roof 4 tiles above the ledge | Roof 2 tiles above |
 |---|---|---|---|
-| 7 tiles | 75 / 63 | 59 / 44 | 51 / 36 |
+| 7 tiles | 82 / 63 | 59 / 44 | 51 / 36 |
 | 8 tiles | 71 / 52 | 48 / 33 | 40 / 25 |
 | 9 tiles | 60 / 41 | 37 / 22 | 29 / 14 |
 | 10 tiles | 50 / 10 | 27 / - | 19 / - |
@@ -761,5 +772,5 @@ Design rule: ask for at most **6 tiles of climb or 8 tiles of level flight per t
 | Fullscreen and menu sizes | The first title tap asks for fullscreen outside frames; menu rows and switches are sized to at least 44 CSS px from `zoom / dpr` |
 | Rotate message | Shown when the device is upright (`screen.orientation`), not merely when the window is taller than wide, so a tall preview frame cannot lock the game |
 | Offline app | Manifest and worker are hand-written templates completed by a build step, because of the hashed bundle name and the one-place rule for the title |
-| Save | Two keys (progress, settings); `resume` written at level start and its lives updated on every death |
+| Save | Two keys (progress, settings); `resume` written at level start and its lives updated on every death; the win saved at the last level's clear, the life bonus at `gameWon` |
 | Frame pacing | Phaser's smoothed delta, at most 5 ticks per frame, backlog dropped (input spike), not a 250 ms rule |
