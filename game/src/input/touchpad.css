@@ -1,0 +1,111 @@
+/*
+ * The touch pad drawn by src/input/TouchPad.ts (docs/ART-AND-SOUND.md section 10,
+ * docs/PHASER4-NOTES.md sections 2 and 14).
+ *
+ * No tuned number is written here: TouchPad.ts sets every rectangle inline and hands the looks of
+ * the `touch` group of src/tuning.ts (opacities, pressed scale, fade time) to this sheet as the
+ * --pad-* custom properties. What is written here is the drawing of section 10 of the art guide:
+ * fill `night` (#151a36), a 2 px rim in `light steel` (#8090b4), corner radius 12, circles.
+ */
+
+.touchpad {
+  /* Covers its parent (#app, which covers the window). */
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1; /* above the canvas, below the rotate message */
+  overflow: hidden;
+  box-sizing: border-box;
+  /* Not used for layout: script reads the safe-area insets back from this padding. */
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px)
+    env(safe-area-inset-left, 0px);
+  /* Touches between the zones fall through to the canvas. */
+  pointer-events: none;
+  /* Hidden with visibility, not display: the pad keeps its size (so it can be measured) and a
+     finger that is still down when a menu opens keeps belonging to the pad, not to the menu. */
+  visibility: hidden;
+}
+
+.touchpad.is-visible {
+  visibility: visible;
+}
+
+/* Hardening: no scrolling, zooming, selecting, long-press menu or tap flash on the pad. Without
+   touch-action none a held button is cancelled as soon as the browser decides the finger is panning. */
+.touchpad,
+.touchpad * {
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* The invisible areas that take the touches. */
+.touchpad__zone {
+  position: absolute;
+  pointer-events: auto;
+}
+
+/* The drawn buttons take no touches themselves. */
+.touchpad__btn {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  border: calc(2px * var(--pad-scale)) solid #8090b4;
+  border-radius: calc(12px * var(--pad-scale));
+  background: #151a36;
+  opacity: var(--pad-idle);
+}
+
+.touchpad__btn--round {
+  border-radius: 50%;
+}
+
+/* The glyph: a small canvas drawn at a whole number of CSS px per art px. */
+.touchpad__btn > * {
+  flex: none;
+  pointer-events: none;
+  image-rendering: pixelated;
+}
+
+/* FIRE and THRUST exist only while their item is held. They appear with one pulse and vanish at once. */
+.touchpad__btn--item {
+  opacity: 0;
+}
+
+.touchpad__btn--item.is-shown {
+  opacity: var(--pad-idle);
+  animation: touchpad-appear var(--pad-appear) ease-out;
+}
+
+/* Unusable right now: the bolt is still flying, the tank is empty. */
+.touchpad__btn--item.is-shown.is-dim {
+  opacity: var(--pad-dimmed);
+}
+
+.touchpad__btn.is-on {
+  opacity: var(--pad-pressed);
+  transform: scale(var(--pad-pressed-scale));
+}
+
+@keyframes touchpad-appear {
+  from {
+    opacity: 0;
+  }
+
+  50% {
+    opacity: var(--pad-pressed);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .touchpad__btn--item.is-shown {
+    animation: none;
+  }
+}
