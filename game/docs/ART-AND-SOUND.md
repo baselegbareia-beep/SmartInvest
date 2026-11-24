@@ -312,7 +312,7 @@ The buttons are DOM elements over the canvas, laid out in CSS pixels by `src/inp
 
 ## 11. App icon
 
-The `icon` grid (32 x 32): Sprue's rim and lime eye inside a gold cog on `night`. A build script (`scripts/make-icons.mjs`, Phase 5) writes the PNG files with Node's own `zlib`, enlarging by whole numbers only so the pixels stay square:
+The `icon` grid (32 x 32): Sprue's rim and lime eye inside a gold cog on `night`. The build draws the PNG files from it each time (the `offline-app` plugin in `vite.config.ts`, with `src/pwa/build.ts`; written by `src/art/tools/png.ts` with Node's own `zlib`), enlarging by whole numbers only so the pixels stay square. No PNG file is kept in the project: redraw the grid and the next build has the new icons. (Planned as a separate script, `scripts/make-icons.mjs`; built into the build step instead, so the grid is the only source.)
 
 | File | Size | Art |
 |---|---|---|
@@ -322,6 +322,8 @@ The `icon` grid (32 x 32): Sprue's rim and lime eye inside a gold cog on `night`
 | `apple-touch-icon.png` | 180 | 5x (160 px) centred on `night` |
 
 These four files are the only images in the built game. The browser tab icon reuses `icon-192.png`.
+
+Checked by `src/pwa/build.test.ts`: each file decodes to its size, every pixel is an opaque palette colour, and every pixel is exactly the grid's pixel it falls in (or `night` around the art). On the maskable icon nothing but `night` lies outside the centred circle of 40% of the width, the zone a round mask keeps. Looked at on 24 November 2026, all four at full size: the cog and the eye are crisp, and the maskable and apple-touch icons have their border of `night`. The full Chromium also accepts them as install icons with the game served from a sub-folder (`e2e/subpath.spec.ts`, no installability errors). The same check fails with `no-acceptable-icon` when the manifest's icon addresses start with `/`.
 
 ## 12. Sound
 

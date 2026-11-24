@@ -12,6 +12,7 @@ import { chooseView } from './shell/chooseView';
 import type { View } from './shell/chooseView';
 import { gameConfig } from './shell/config';
 import { installRotateGuard, installTouchMode } from './shell/lifecycle';
+import { registerServiceWorker } from './shell/pwa';
 import { PlayScene } from './shell/scenes/PlayScene';
 import { TEXT } from './shell/scenes/strings';
 import { rotateDevicePerArt } from './shell/screenText';
@@ -31,6 +32,7 @@ const currentView = (): View => chooseView(window.innerWidth, window.innerHeight
 const first = currentView();
 setAppliedView(first, dpr());
 const game = new Phaser.Game(gameConfig(first));
+registerServiceWorker(); // the offline app (src/shell/pwa.ts): production only, never in a frame, never throws
 
 // The rotate message, in the game's own pixel font (no browser text on screen), as large as the window allows:
 // redrawn when the window's width or pixel ratio changes it (a phone turned upright is the narrowest case).

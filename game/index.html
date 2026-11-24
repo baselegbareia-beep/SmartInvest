@@ -8,8 +8,11 @@
     />
     <!-- Palette colour 0, "void": the page, the bars beside the picture and the browser's own chrome. -->
     <meta name="theme-color" content="#0b0d1a" />
-    <!-- No icon file yet: an empty data URL stops the browser asking for /favicon.ico. -->
-    <link rel="icon" href="data:," />
+    <!-- The installable app (docs/ARCHITECTURE.md 11.7). These files are made by the build from src/pwa and the
+         "icon" grid of src/art; the URLs are relative so that the game works from any folder. -->
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
     <title>%GAME_TITLE%</title>
     <style>
       html,

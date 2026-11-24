@@ -76,9 +76,9 @@ An enemy pays only the first time it is destroyed in a level, so dying on purpos
 - After a game over, "Continue" starts at the highest level reached with 3 lives and a score of 0. "New game" starts at level 1 and keeps the best score.
 - The sound and vibration switches.
 
-Nothing is sent anywhere. There are no accounts, and the game uses no network once it has loaded. It can be added to the home screen and played offline.
+Nothing is sent anywhere. There are no accounts, and the game uses no network once it has loaded. It can be added to the home screen and played offline: the first visit needs the network, and from the second on the game starts without it. Offline, open it from its home-screen icon or by its address ending in `/game/` (typed without the final slash, it does not open offline). A new version arrives by itself: the game shows it the second time it is started after it was published.
 
-Three things to know on iPhones: the game on the home screen keeps its own save, separate from the same game opened in Safari; Safari itself may forget a site's saved progress if the site is not opened for a week; and the sound follows the ring/silent switch. Phones that cannot vibrate from a web page (all iPhones) simply ignore the vibration switch.
+Three things to know on iPhones: the game on the home screen keeps its own save, separate from the same game opened in Safari, and its own offline copy, so start it once from the home screen with the network on before playing it offline; Safari itself may forget a site's saved progress if the site is not opened for a week; and the sound follows the ring/silent switch. Phones that cannot vibrate from a web page (all iPhones) simply ignore the vibration switch.
 
 ## Deliberately not in version 1
 A level editor, online scores, accounts, ads, music (there are sound effects only), more than two kinds of enemy, bosses, checkpoints inside a level, moving platforms, a level-select screen, difficulty settings, game controllers, upright play, and languages other than English. Ideas for later are listed at the end of `docs/PLAN.md`.
