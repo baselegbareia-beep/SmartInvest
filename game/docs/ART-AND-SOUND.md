@@ -391,3 +391,20 @@ Tests that keep this document true (they arrive with the art and the sound):
 - Every fixed text the game shows is at most 42 characters and uses only the font's characters. `src/meta.test.ts` checks the title and `tests/levels.test.ts` checks level names and hints.
 - Every sound recipe renders to something that is not silent and does not clip (a browser test, because Node has no WebAudio).
 - No file in `src/art` or `src/audio` is imported by `src/core`.
+
+## 15. How to look at the art
+
+The art is text, so nobody sees it by reading the grids. Two tools in `src/art/tools` turn it into PNG files; both run with plain `node` from `game/` and need no build:
+
+- `src/art/tools/preview.ts` draws sprites: a labelled sheet, an animation strip (frames, mirrored, and at 1x, 2x and 3x), a stage of sprites on wall tiles beside the hazards, the font, the packed textures, the palette, or the whole contact sheet.
+- `src/art/tools/scene.ts` draws a level file as the game shows it: backdrop, decoration, tiles, pickups, the cog, the airlock, enemies and Sprue, from the same tile choices as the game (`src/art/tilePick.ts`). `--window C,R --view 30x14` shows one phone screen with the backdrop's parallax.
+
+Three pictures in `docs/art` show the art as it stands. Open them before and after changing a sprite:
+
+| Picture | What it shows | Made by |
+|---|---|---|
+| `docs/art/contact-sheet.png` | Every sprite and frame, labelled with its size, frame count and ticks, then the 47 glyphs and the text colours; all at 3x on `night` | `node src/art/tools/preview.ts contact --width 1400 --in-project docs/art/contact-sheet.png` |
+| `docs/art/room-test.png` | `levels/test.txt`, the whole level at 2x | `node src/art/tools/scene.ts levels/test.txt --zoom 2 --in-project docs/art/room-test.png` |
+| `docs/art/room-debug.png` | `levels/debug.txt`, the whole level at 2x | `node src/art/tools/scene.ts levels/debug.txt --zoom 2 --in-project docs/art/room-debug.png` |
+
+Judge a sprite at the size a player sees it: one art pixel is 2 to 4 screen pixels on a phone, so look at the 2x and 3x rows of a strip or a stage, and at a phone window of a level, as well as at a large zoom for the pixel work. Other pictures belong in a scratch folder: the tools refuse to write inside `game/` without `--in-project`.
