@@ -1,0 +1,55 @@
+@name Quench Hall
+@teaches Coolant freezes robots. Stop on the pads.
+@hardest 40,9 the three-tile gap onto the two-tile cog pad (22 / 13)
+; Level 3. A coolant channel 32 tiles long (cols 15-46), crossed on six pillar tops. About 50 tiles.
+; Teach, test, twist: a dry pad 2 tiles wide between two dry gaps, where landing short or long
+; costs nothing; then the pads over the coolant, where a miss costs a life; the last pad carries
+; the cog (the older idea).
+; The coolant lies 1 tile below the banks, so the channel is the dry gaps filled with coolant.
+; Every jump, with its window in frames (docs/LEVELS.md, section 2; measured on this file with the
+; protocol of src/core/limits.test.ts, live / comfort; the dry gaps on a copy where they kill).
+; "Stop" is the small-pad policy of section 2: let go 0 / 4 / 8 frames after touching down and
+; stay on the pad. "From the back" is a jump started at rest at the pad's back edge, as a careful
+; player does.
+;   5-6    start bank to the dry pad (cols 7-8, 2 wide, level): gap 2, level: 28 / 24 to land on
+;          the pad; stop 27/23/19 (comfort 24/24/21). A miss lands in a dry gap 1 tile deep, and a
+;          hop gets out on either side
+;   9-11   the dry pad to the bank (cols 12-14): gap 3, level: 22 / 13, from the back 22 / 13. The
+;          hardest jump's shape, met first where a miss costs nothing; every landing on the bank
+;          stops there, even letting go 16 frames after touchdown
+;   15-16  bank to pad 1 (cols 17-19, 3 wide): gap 2, up 1: 29 / 20; stop 29/29/29
+;   20-22  pad 1 to pad 2 (cols 23-24, 2 wide): gap 3, down 1: 26 / 17; stop 26/24/19; from the
+;          back of pad 1 27 / 18
+;   25-26  pad 2 to pad 3 (cols 27-28, 2 wide): gap 2, up 1: 29 / 20; stop 29/23/19; from the
+;          back 29 / 20
+;   29-31  pad 3 to pad 4 (cols 32-34, 3 wide): gap 3, down 1: 26 / 17; stop 26/26/26; from the
+;          back 26 / 17
+;   35-36  pad 4 to pad 5 (cols 37-38, 2 wide): gap 2, up 1: 29 / 20; stop 29/23/19; from the
+;          back 29 / 21
+;   39-41  the hardest jump: pad 5 to the cog pad (cols 42-43, 2 wide), gap 3, level: 22 / 13;
+;          stop 22/22/20; from the back 22 / 13. The level's tightest window
+;   44-46  the cog pad to the far bank: gap 3, down 1: 26 / 17; from the back 26 / 17
+; All ordinary. A 3-tile gap never rises. The cog stands on the cog pad's east tile, so it is
+; taken on the way off the pad, wherever Sprue landed. The airlock is at col 52.
+; Crystals: 12 on the route (the dry pad, the arcs over the 3-tile dry gap and the seven coolant
+; gaps, two pads, one on the far bank); 6 off it: the floor of the 3-tile dry gap, above the
+; start, high over pads 2, 3 and 5 (a full jump straight up from a small pad), near the airlock.
+; Differences from the plan: the plan's free beat is a dry trench 3 wide at cols 6-8 that lands
+; on a wide bank, where Sprue stops whatever he does, so stopping on a small pad was first met
+; over coolant. The dry pad and its two gaps take 3 more columns: the channel moves from cols
+; 12-43 to 15-46, and the far bank is 8 tiles long, not 11. The hint says "Stop on the pads", not
+; the plan's "Land small", which reads as jargon on a first look.
+########################################################
+#......................................................#
+#......................................................#
+#......................................................#
+#......................................................#
+#......................................................#
+#....................G......G.G.......G.G....G.........#
+#..G......G....G........G.G.........G................G.#
+#......................................................#
+#.................G........................T...........#
+#.P....G.........###.......##....G...##...##.....G..D..#
+#####..##.G.###..###...##..##...###..##...##...#########
+###############WW###WWW##WW##WWW###WW##WWW##WWW#########
+########################################################

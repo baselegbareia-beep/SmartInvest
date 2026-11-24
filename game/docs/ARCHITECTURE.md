@@ -380,7 +380,9 @@ Not a parser rule: `docs/LEVELS.md` asks every file in `levels/` to have its top
 
 `validateLevel(level, phys, options?)` returns a `LevelProof`: a verdict and, when `proven`, a concrete `InputScript`. Every state the search holds was produced by the real `step()`. The test then replays the script through `step()` from a fresh `createSession([level], phys)` (`replayScript`) and asserts `trophyCollected` at `trophyTick`, `levelCompleted` at `winTick` and no `playerDied`. A validator bug can therefore only reject a good level, never accept an impossible one.
 
-A script starts at the first tick after `startLevel`. The search root is the fresh session stepped `readyMinTicks` times with nothing held (the gate's minimum; those idle ticks also arm the gate, section 6), and every script begins with the run `[0, readyMinTicks]`. The first manoeuvre's first held control opens the gate and acts on the same tick. A state whose phase becomes `dying` is dropped; `exiting` is the win. The core has no clock: budgets are counted in `step()` calls, so verdicts are reproducible.
+A script starts at the first tick after `startLevel`. The search root is the fresh session stepped `max(1, readyMinTicks)` times with nothing held (the gate's minimum, and never fewer than one tick: those idle ticks arm the gate, section 6, which opens only on a control pressed after a tick with nothing held; `compileTuning` accepts `readyMinFrames` 0, and a root without an idle tick would never leave the ready phase), and every script begins with the run `[0, max(1, readyMinTicks)]`. The first manoeuvre's first held control opens the gate and acts on the same tick. A state whose phase becomes `dying` is dropped; `exiting` is the win. The core has no clock: budgets are counted in `step()` calls, so verdicts are reproducible.
+
+The proof also names the stage that decided it: `LevelProof.stage` is `safe-start`, `quick`, `map` or `guided` (added to the contract with the validator, so that the levels test and the designer's tool can print it). Before a proven proof is returned, `validateLevel` replays its script once through `replayScript` and takes `trophyTick` and `winTick` from that replay; those ticks count in `stats.stepCalls`. A script that does not win there throws an `Error` naming the level: only a validator bug (a field `copyGame` forgets, a root that differs from `createSession`) can cause it. `ProofStats`: `groundNodes` and `flightNodes` are the states the enemy-free map stored, `searchNodes` the states the searches with enemies stored, `stepCalls` every `step()` call of the call (the jump measured for the flood estimate of 9.4 and the closing replay included; `validate/accounting.test.ts` counts the calls of the real `step()` and checks the two agree).
 
 ### 9.2 Manoeuvres, not frames
 
@@ -390,35 +392,51 @@ A script starts at the first tick after `startLevel`. The search root is the fre
 | **Ballistic** (airborne, no usable fuel) | never stored, never merged | None: it is the inside of a manoeuvre |
 | **Flight** (airborne, `hasThruster && fuel > 0`) | cell of `flightCellPx`, `vx` sign | Thrust or coast, each with left / none / right, for K ticks |
 
-- A **jump** is one atomic manoeuvre, simulated tick by tick until it lands, dies or wins: hold {full, `tapTicks` tap} x direction {left, none, right} x at most one change of direction at an arc tick from `airSwitchTicks`. That is 42 arcs at most with the defaults. Walking off a ledge resolves the same way.
+- A **jump** is one atomic manoeuvre, simulated tick by tick until it lands, dies or wins: hold {full, `tapTicks` tap} x direction {left, none, right} x at most one change of direction at an arc tick from `airSwitchTicks`. That is 42 arcs at most with the defaults (on open ground 21 full arcs and 15 taps: a tap's hop lands before the third switch tick). Walking off a ledge resolves the same way, as a fall with no jump.
+- What the jump set leaves out: jump is pressed only from the ground, never during coyote time after walking off a ledge; and it is held either `tapTicks` ticks or the whole arc, never for a length in between. A jump that exists only with a coyote press, or only with a middle-length hold (common under a low ceiling, where the full hold bumps the head and the tap is too short), is not found, and its level is rejected. Measured by a reviewer: under open sky every cell of the jump tables of `docs/LEVELS.md` that has a press before the walk-off is proven, normal and comfort; the three cells won only by coyote presses (2 up over 4 tiles, 1 down over 5, 3 down over 6, all in the forbidden class) are not. Under a slab 2 tiles above a landing 1 tile up across a 2-tile gap, an 11-frame jump whose winning holds are 5 to 7 ticks is rejected, and so is a 2-tile pit in a corridor 2 tiles high (7 frames, a 3-tick hold). The window tables assume open sky; a required jump under a low ceiling needs headroom, or an early try with the designer's tool (9.6) before the rest of the level is built around it.
 - An input that leaves the state's key unchanged is held for up to `maxHoldDecisions` x K ticks, so slow moves inside one bucket are not discarded as duplicates of their own parent.
-- With fuel, each full jump also hands off a flight node at its apex (jump, then thrust, is the fuel-optimal climb). A flight that runs dry ends as a ballistic fall.
+- With fuel, each of the three straight full jumps (left, none, right) also hands off a flight node at its apex (jump, then thrust, is the fuel-optimal climb). The 18 turned full jumps do not: a climb that starts after a turn in the air is left out, to keep the cost of a fuelled ground state down. A flight that runs dry ends as a ballistic fall.
 - **Fire** is offered only from a ground state, when the blaster is held and a live enemy is ahead within range; it runs until the bolt is gone, so no stored state has a bolt in flight. The search never fires during a jump or in flight. A level whose only way past an enemy is a shot from the air therefore comes back `blocked-by-enemies` or `no-route`; `docs/LEVELS.md` (rule 9) forbids such levels, also because a thumb cannot hold THRUST and FIRE together.
 - **Merging.** One representative stands for its key. The state with more effective fuel wins: on the ground `fuel`; in flight `fuel - max(0, (vy + thrustMaxRise) / thrustAccel) + (cellBottom - y) / thrustMaxRise` (integer division).
 - Ballistic states are never merged: two arcs crossing in one bucket may differ in which one survives (the prototype returned false "unreachable" verdicts when they were merged).
+
+How the real validator (`validate/successors.ts`) fills in what the table leaves open:
+- The fire manoeuvre aims at the first live enemy, in index order, that is ahead of the hero in the direction it faces, nearer than `boltRange` plus 2 tiles (it may walk into the bolt) and within 2 tiles of height. One shot per ground state; the wait after it ends with the bolt, at most `boltRange / boltSpeed` (rounded up) plus 2 ticks.
+- A ballistic arc is followed for at most 400 ticks (`MAX_AIR_TICKS`, a guard: gravity ends every arc long before).
+- The merge compares the integer potentials of the formula above; a later state replaces the representative only with a strictly larger one. A replaced representative still queued is skipped when it comes up. On a level without packs every potential is 0, so the first state met keeps the key: which exact position and speed inside a bucket the search holds depends on the order it met them in. That is why an exhausted search proves nothing by itself (9.4).
+- No `GameState` is allocated per manoeuvre: the generator works in a few scratch states, and only the results a stage keeps are copied (`copyGame`) into states from a pool, which take them back once expanded. Memory follows the frontier, not every state seen: the largest map measured (the open hall, 600 000 states) ran in about 320 MB.
+- In the map, edges point at keys, not states: an edge into a key whose representative is replaced later leads on through the new one.
 
 ### 9.3 State key
 
 Hero part: kind, x bucket, row or flight cell, `vx` bucket, `hasTrophy`, which `J` pickups are taken. The search with enemies adds `hasBlaster`, `facing` when armed, the alive mask, and for each live enemy within `enemyKeyRadiusTiles` its position in `enemyBucketPx` buckets and its direction. Far enemies are not in the key, so the search can wait beside an enemy but cannot stall elsewhere. Crystals are never in the key; reachable crystals are the union of `taken` over explored states.
 
+Keys are exact integers below 2^53: the hero part is below 2^31 at the caps, and each enemy configuration gets a number in the order it is first met, so two different keys never collide. The ground row is the row of the top of the hero's box; "within `enemyKeyRadiusTiles`" means less than that many tiles apart on both axes, measured between the top-left corners.
+
 ### 9.4 Pipeline
 
+Every search merges states on a key and keeps one representative per key (9.2), so an exhausted search means "no win among the states it kept", not "no win". The quick pass, the map and the guided search merge on different keys, in different orders, and each can miss a win another one finds (a reviewer's fuzzing found such levels for each of them; they are fixtures in `validate/index.test.ts`). So a failure is returned only after every stage that applies has run, and a win of any stage is `proven`.
+
 0. **Safe start.** From the root: one tick of fire alone (opens the gate; harmless without a blaster), then `safeStartTicks` idle ticks. A death is `unsafe-start`.
-1. **Quick pass** (skipped when `alwaysMap`). Weighted A* with enemies on, ordered by `f = ticks so far + heuristicWeight * h`.
-   - `h` is in **ticks**: the flood-fill distance in tiles from the hero's cell to the trophy cell plus the trophy-to-door distance (to the door cell once the trophy is held), multiplied by `TILE / phys.runMax` (10.7 ticks per tile with the shipped run speed) and rounded down.
-   - The flood fill (4 neighbours, inside the grid) passes through **`Tile.Empty` cells only**: `Solid`, `Fire`, `Coolant` and `Spikes` all block it. A cell it cannot reach gets a large constant (100 000 ticks); it is penalised, never pruned.
-   - Its budget in `step()` calls depends on whether the level holds a thruster pack. **No pack:** `quickStepCalls`; the map of such a level is small, so it is a cheap fallback. **With packs:** all of `maxStepCalls`; the map of such a level costs more than the quick pass ever does (9.6), so there is no fallback and stages 2 and 3 are not run.
+1. **Quick pass** (skipped when `alwaysMap`). Weighted A* with enemies on, ordered by `f = ticks so far + heuristicWeight * h`, `h` the flood estimate below.
+   - Its budget in `step()` calls depends on whether the level holds a thruster pack. **No pack:** `quickStepCalls`; the map of such a level is small, so it is a cheap second opinion. **With packs:** all of `maxStepCalls`; the map of such a level costs more than the quick pass ever does (9.6), so stages 2 and 3 are not run.
    - A win ends the pipeline: `proven`.
-   - The frontier runs empty: the search has tried everything it can do and there is no win. Verdict **`no-route`**; the pipeline stops. (`alwaysMap` tells whether enemies are the reason.)
-   - The budget is spent: with packs, `budget-exceeded`; without, go on to the map.
+   - With packs: an empty frontier is **`no-route`**, a spent budget `budget-exceeded`; the pipeline stops (`alwaysMap` names a reason).
+   - Without packs, an empty frontier and a spent budget both go on to the map.
 2. **Map.** Enemies removed (`alive = false` at the root), exhaustive, most effective fuel first, every edge recorded; a backward shortest-path pass from the win gives the cost-to-go of every stored state. No state with the trophy: `trophy-unreachable`. Trophy but no win: `door-unreachable`. Both set `stuckAt` to the closest approach. The total budget spent before the map is complete: `budget-exceeded`.
-3. **Guided search.** Enemies on, `h` = the map's cost-to-go (unknown keys penalised, never pruned). A win: `proven`. Exhausted: `blocked-by-enemies`. Out of budget: `budget-exceeded`.
+3. **Guided search.** Enemies on, `h` = the map's cost-to-go (unknown keys penalised, never pruned). A win: `proven`. Exhausted: `blocked-by-enemies` on a level with enemies; on a level without any, `no-route` (merging lost the win, not an enemy). Out of budget: `budget-exceeded`.
 
-`stuckAt` is always the closest approach of the last stage that ran.
+`alwaysMap` means map first, for any level: stages 0, 2, 3, and when they end in `trophy-unreachable`, `door-unreachable`, `blocked-by-enemies` or `no-route`, stage 1 on what is left of `maxStepCalls` (its usual budget, capped by what is left). A win there is `proven` (stage `quick`); otherwise the map-first verdict stands. Whenever the map finishes inside `maxStepCalls` it names the reason of a failure and fills `unreachableCrystals`. Without packs it costs about 1 to 2 M step calls; with packs 12 M to 85 M (9.6), so it is for a person asking a question, not for every test run.
 
-`alwaysMap` means map first, for any level: stages 0, 2, 3. Whenever the map finishes inside `maxStepCalls` it names the reason of a failure and fills `unreachableCrystals`. Without packs it costs about 1 to 2 M step calls; with packs 12 M to 85 M (9.6), so it is for a person asking a question, not for every test run.
+`stuckAt` is the closest approach of the stage that named the verdict: the cell holding the centre of the hero's box, for the stored state closest to the goal. Closeness in the quick pass and in the map is the flood estimate; where the flood cannot reach, 100 000 plus the straight distance in tiles (across plus up) to the trophy and on to the door, or to the door once the trophy is held, so a goal no flood reaches still gets a useful cell. In the guided search it is the map's cost to go. For `unsafe-start` it is the cell in which the hero died. The guided search's estimate for a key the map never stored, or stored without a way to win, is the map's cost from the root plus 600 ticks (`UNKNOWN_KEY_PENALTY_TICKS`).
+
+**The flood estimate** (`validate/heuristic.ts`). `h` is in **ticks**: a distance in tiles from the hero's cell to the trophy plus the trophy-to-door distance (to the door cell once the trophy is held), multiplied by `TILE / phys.runMax` (10.7 ticks per tile with the shipped run speed) and rounded down. The distances come from breadth-first floods from each goal cell (4 neighbours, inside the grid) that pass through **`Tile.Empty` cells only**: `Solid`, `Fire`, `Coolant` and `Spikes` all block them. A cell no flood reaches gets a large constant (100 000 ticks); it is penalised, never pruned. Two floods, because what the hero can climb depends on its fuel:
+- the **free flood** moves any way: a hero with usable fuel (`hasThruster && fuel > 0`) is estimated on it;
+- the **climb flood** lets the hero rise at most `climbTiles` tiles since it last stood on a wall: moving up uses a tile of climb, sideways keeps it (so a jump may rise in one column and go on rising in the next), down leaves none, and a cell with a wall below gives it all back. `climbTiles` is measured once per call with the real `step()` (`Sim.climbTiles`): the rise of a jump held from standing in an open room, plus `ledgeCatch`, rounded up to whole tiles (4 on the shipped numbers and on the comfort numbers). A hero without fuel is estimated on the climb flood to the goal, or by way of a thruster pack (the climb flood to the pack plus the free flood from the pack), whichever is shorter; packs are always there for a hero without fuel, because taken packs come back when the tank runs dry. The trophy-to-door leg is taken the same way, so taking a pack never makes the estimate rise.
 
 Why hazards block the flood fill: with hazard tiles passable, the shortest "path" to a goal on the far side of a deck runs through the coolant set into the floor, and the search queues up under it. Measured on a 64 x 24 level of three decks with coolant gaps in the deck floors (2 packs, 6 enemies): hazards passable, no win in 300 000 nodes and 72 M step calls; hazards blocking, proven in 1 996 nodes and 0.05 M step calls (comfort: 1 418 nodes). Why ticks: `ticks so far` is in ticks, so a distance in tiles would weigh a tenth of what it should and the search would be close to uniform-cost.
+
+Why a climb flood: with the free flood alone, a hole in a deck floor above an empty lower deck is the shortest "path" for a hero on the lower deck, which it cannot climb without fuel; the quick pass piled up under the hole among the walking Cinderpegs. On a stand-in for level 9 (56 x 24, 2 packs, 7 enemies, the 4-tile gap of deck 2 open to deck 1 below, live tuning) the normal proof ended `budget-exceeded` after all 40 M step calls without ever reaching the pack (proven with a 300 M budget in 40.3 M), the comfort proof cost 31.5 M. With the climb flood the hero without fuel heads for the pack: proven in 8.4 M and 5.2 M. That is still a lot: the hole is a real second route (the validator's own route carries a full tank west along deck 1 and flies up through it), and the air of deck 1 under it is thruster air (`docs/LEVELS.md`, rule 12). With coolant in the gap: 0.06 M and 0.04 M.
 
 Start-to-trophy and trophy-to-door are one search because `hasTrophy` is in the key: the second leg starts from every way of holding the trophy. Hazards and enemies need no model: `step()` kills and the branch is dropped. Fuel is exact per state. The rule that packs reappear on an empty tank is simply part of `step()`.
 
@@ -436,9 +454,9 @@ Start-to-trophy and trophy-to-door are one search because `hasTrophy` is in the 
 | `quickStepCalls` | 2 000 000 | 2 000 000 | 2 000 000 |
 | `maxStepCalls` | 40 000 000 | 40 000 000 | 6 000 000 |
 | `safeStartTicks` | 120 | 120 | 120 |
-| `alwaysMap` | false | false | false (the test sets it, 9.6) |
+| `alwaysMap` | false | false | false |
 
-These are starting values, measured on a reference implementation (9.6), and may be tuned by the validator's implementer; they are not feel numbers. One thing worth trying there: the set of taken packs is part of every key, which multiplies the flight cells of the map by up to 16.
+These are starting values, measured on a reference implementation (9.6), and may be tuned by the validator's implementer; they are not feel numbers. The real validator keeps them unchanged: the Phase 4 gate passes with them. One thing worth trying there: the set of taken packs is part of every key, which multiplies the flight cells of the map by up to 16 (it matters only to a map-first run of a level with packs).
 
 ### 9.6 Required tests (`tests/levels.test.ts`)
 
@@ -446,19 +464,21 @@ These are starting values, measured on a reference implementation (9.6), and may
 |---|---|---|
 | (a) Normal proof | every file in `levels/`, including `test` and `debug` | `parseLevel` succeeds; verdict `proven` with `compileTuning(TUNING)` and `DEFAULT_OPTIONS`; `replayScript` wins with the same `trophyTick` and `winTick` |
 | (b) Comfort proof | level-01 to level-10 | `proven` with `compileTuning(handicap(TUNING))` and `COMFORT_OPTIONS`, and its replay wins. `handicap`: coyote 0, buffer 0, run speed and jump velocity x 0.95, fuel x 0.9 rounded down |
-| (c) Requires | each `@requires X` line | `validateLevel(withoutItem(level, X), phys, options)` is anything but `proven`. `options` is `REQUIRES_OPTIONS`, with `alwaysMap: true` when the level without the item holds no thruster pack (always so for a removed thruster): the map is then small, decides at once and names the reason |
+| (c) Requires | each `@requires X` line | `validateLevel(withoutItem(level, X), phys, REQUIRES_OPTIONS)` is anything but `proven`. When the level without the item holds no thruster pack (always so for a removed thruster) the pipeline runs the quick pass and then the map and the guided search (9.4), so the line holds only when no search wins, and the verdict names the reason. With packs left, the quick pass alone decides |
+| (d) Campaign | level-01 to level-10 as one game | All ten files are there, in order. The ten normal proofs of (a), played one after another in one `createSession(levels, phys)` from level 1 (nothing held through each `exiting` phase), win the game (`status 'won'`) with no `playerDied`, and every level's `trophyCollected` and `levelCompleted` fall on its own proof's ticks. About ten thousand `step()` calls and no search, so not counted against the budget. It is the proof that a level started by the airlock of the one before behaves as the same level started by `createSession`, and that the levels chain to the end |
 
-What the comfort proof shows, and what it does not: a route exists that needs no coyote time and no jump buffer, with run speed and jump 5 % weaker and a tenth less fuel. It certifies **no timing margin**. The search shifts its take-off point in 4 px steps, so it finds jumps whose press window is 2 frames (measured: the level 4-tile gap, comfort window 2, is proven in 0.02 M step calls). Timing margins are enforced by people, with the window classes of `docs/LEVELS.md`.
+What the comfort proof shows, and what it does not: a route exists that needs no coyote time and no jump buffer, with run speed and jump 5 % weaker and a tenth less fuel. It certifies **no timing margin**. The search shifts its take-off point in 4 px steps, so under open sky it can find a jump whose press window is as small as 2 frames, as long as a press on the ground wins (measured: the level 4-tile gap, comfort window 2, is proven in 0.02 M step calls). That is a measurement, not a guarantee: a jump that needs a coyote press or a middle-length hold is never tried (9.2), and the take-off a jump needs may be merged away in one stage and found in another (9.4). Timing margins are enforced by people, with the window classes of `docs/LEVELS.md`.
 
 `budget-exceeded` in suite (c) counts as a pass ("as far as the search can decide", ruling R10), but it decides nothing: the file prints one line per `@requires` run with its verdict, and a final line listing the runs that ended `budget-exceeded`, so a reviewer sees which promises were not checked.
 
 The same file also:
 - asserts that level-01 to level-10 carry `@name`, `@teaches` and `@hardest`, with texts the pixel font can show;
 - asserts the picture frame of every file: the top row and both side columns are `#` (section 8);
-- prints one line per level with verdict, the stage that decided, and step calls; a level without packs that fails the normal proof with `no-route` is run once more with `alwaysMap` so the message names the reason;
+- prints the campaign's contents (size, crystals, items, enemies, `@requires` and `@hardest` per level, and the totals) and, in suite (d), each level's ticks, score and lives as the campaign is played;
+- prints one line per level with verdict, the stage that decided, and step calls; a failure names its reason by itself, because a level without packs always reaches the map when the quick pass fails (9.4), and a level with packs has no affordable map;
 - with the environment variable `LEVELS_CRYSTALS=1` (`LEVELS_CRYSTALS=1 npx vitest run tests/levels.test.ts`), runs every level once more with `alwaysMap` and a `maxStepCalls` of 400 M and prints `unreachableCrystals`. This is the reviewer's command for the checklist in `docs/LEVELS.md`; it is not part of `npm run check`, because the map of a thruster level is expensive.
 
-**Budget.** Ruling R10: the whole file runs in about 60 s or less on the 4-core build machine. Because CI machines are slower and the core has no clock, the file asserts **step calls, not seconds**: the sum of `stats.stepCalls` over all proofs must stay below `LEVELS_STEP_BUDGET` (exported by `validate/options.ts`; 150 000 000 to start with, which is 60 s at the reference rate of 0.4 microseconds per call). Wall time is printed, never asserted. Every proof test passes an explicit timeout of 120 s (`it(name, fn, 120_000)`): Vitest's default of 5 s would fail any proof that takes a slow path.
+**Budget.** Ruling R10: the whole file runs in about 60 s or less on the 4-core build machine. Because CI machines are slower and the core has no clock, the file asserts **step calls, not seconds**: the sum of `stats.stepCalls` over all proofs must stay below `LEVELS_STEP_BUDGET` (exported by `validate/options.ts`; 90 000 000, set by item 4 of the gate below: a proof of a room loaded like a full campaign level spends 0.54 to 0.69 microseconds of wall time per call, so 90 M is 49 s to 62 s; real rooms run 1.5 to 2.5 times faster. The first estimate, 150 000 000, assumed 0.4 microseconds for `step()` alone). Wall time is printed, never asserted. Every proof test passes an explicit timeout of 120 s (`it(name, fn, 120_000)`): Vitest's default of 5 s would fail any proof that takes a slow path.
 
 Measured costs, in step calls, on a reference implementation of this section (a throwaway model of sections 3 to 6 and of 9.1 to 9.5; two independent models of the rules agreed tick for tick over a million random ticks). They are the evidence behind the option values, not a promise about the real validator:
 
@@ -473,6 +493,34 @@ Measured costs, in step calls, on a reference implementation of this section (a 
 
 So: an ordinary level is proven by the quick pass in well under 1 M step calls; the map of a level with thruster packs costs 12 M to 85 M, which is why it is not a fallback; and one open hall at the size cap can use a quarter of the whole file's budget by itself. The earlier figure of 1.7 to 4.6 M for the full path came from 60 x 14 levels under different physics and does not hold.
 
+The real validator (`src/core/validate`, on `REFERENCE_PHYS`; the fixtures are in `validate/fixtures.ts`), after the review fixes (climb flood, every stage tried before a failure), on 2026-11-24. The map-first column is that of the first build: the map and the guided search do not use the flood estimate, and these rooms are all proven there.
+
+| Level | Quick pass, normal / comfort | Map first, normal / comfort | Suite (c), `REQUIRES_OPTIONS` |
+|---|---|---|---|
+| `levels/test.txt` | 0.05 M / 0.04 M | 2.01 M / 1.37 M | |
+| `tunnels` (two Cinderpegs in tunnels 1 tile high, 56 x 6, no pack) | 0.02 M / 0.01 M | 0.55 M / 0.44 M | Without blaster: the quick pass runs dry, then `blocked-by-enemies` from the guided search, 1.54 M in all |
+| `levels/debug.txt` | 0.49 M / 0.01 M | 12.47 M / 8.79 M | Without thruster: the quick pass spends its 2 M, then `trophy-unreachable` from the map, 2.40 M in all. Without blaster (packs left, so the quick pass alone): `no-route` after 2.78 M |
+| `threeDecks` | 0.04 M / 0.03 M | 27.82 M / 20.31 M | Without thruster: `trophy-unreachable`, 2.82 M in all |
+| `openHall(0)` (no enemy) | 2.43 M / 2.96 M | | |
+| `openHall(4)` | 1.77 M / 20.56 M | 84.53 M / 59.63 M | Without thruster: `trophy-unreachable`, 2.78 M in all |
+
+Before the fixes the quick passes of the open hall cost 3.44 M / 3.57 M (no enemy) and 13.13 M / 26.01 M (4 enemies), and a removed thruster was decided map first in 0.40 M to 0.82 M: the extra 2 M on such a line is the quick pass that now checks the map's verdict (9.4). Wall time under Vitest: the open hall's two quick passes take 0.4 s and 5.5 s; in plain Node its normal map takes 15 s.
+
+Stand-ins for levels 6 to 10 of the plan, written by a reviewer from `docs/LEVELS.md` (section 5), on the live tuning; normal / comfort, then the `@requires` lines:
+
+| Stand-in | Normal / comfort | Without blaster | Without thruster |
+|---|---|---|---|
+| Level 6 (moth shafts, no pack) | 0.01 M / 0.01 M | | |
+| Level 7 (thruster loft, 3 packs) | 0.02 M / 0.04 M | | `trophy-unreachable`, 0.10 M |
+| Level 8 (crucible run, 4 packs) | 0.03 M / 0.03 M | | `trophy-unreachable`, 0.17 M |
+| Level 9 (three decks, 2 packs, 7 enemies), the 4-tile gap of deck 2 open to deck 1 | 8.36 M / 5.18 M | `budget-exceeded` at 6 M | `trophy-unreachable`, 2.65 M |
+| The same with coolant in that gap | 0.06 M / 0.04 M | `budget-exceeded` at 6 M | `trophy-unreachable`, 2.62 M |
+| Level 10 (heart furnace, 3 packs) | 0.10 M / 0.23 M | `no-route`, 1.12 M | `trophy-unreachable`, 2.40 M |
+
+Level 9's open gap is the hole of 9.4 (before the climb flood: `budget-exceeded` at 40 M, comfort 31.5 M). Its `@requires blaster` cannot be decided inside `REQUIRES_OPTIONS`: the Cinderpeg that needs the blaster stands at the top of lift B, after both packs, so the quick pass must search all the thruster air of decks 1 and 2 before it can say `no-route`; with a budget of 160 M it does, after 137.4 M step calls and 51 s (the first build: 140.9 M; map first, `blocked-by-enemies` after 128.5 M). Level 10's corridor comes before any pack, and its line is decided in 1.12 M. Hence rule 9 of `docs/LEVELS.md`: on a level with packs, the passage that makes the blaster necessary comes before the first pack.
+
+**The designer's tool.** `node src/tools/prove.ts levels/<name>.txt` runs the same proofs on one file in about a second (parse error; normal and comfort verdicts with stage, step calls, nodes, `trophyTick` and `winTick`, or `stuckAt`; each `@requires` run; unreachable crystals with `--crystals`). `--script FILE.json` writes the winning script in the shape of `e2e/scripts/*.json`, and `--route FILE.png` replays it and draws the hero's path, tick by tick, over a `scene.ts` render of the level. The options are listed at the top of the file.
+
 **Phase 4 gate, before the first campaign level is built.** The real validator must show, in `src/core/validate/*.test.ts`:
 1. the three-deck fixture above proven, normal and comfort, in under 1 M step calls each (and not proven when its flood fill is allowed through hazards: the fixture exists to catch that mistake);
 2. the open-hall fixture (64 x 24, 4 packs, 4 enemies) proven, normal and comfort, inside `maxStepCalls`;
@@ -480,6 +528,36 @@ So: an ordinary level is proven by the quick pass in well under 1 M step calls; 
 4. the measured rate of the real `step()` on the build machine, from which `LEVELS_STEP_BUDGET` is set to 60 s worth of calls. Measure it under Vitest (where the proofs run) on a cap-size room loaded like a campaign level (64 x 24, 16 enemies, 30 or more crystals), never on `debug.txt` alone: `step()` looks at every pickup and every live enemy on every tick, so its cost grows with them. Measured after the two speed-ups below, median of 5 runs of 2 M calls each with random input: `debug.txt` (3 enemies, 11 pickups) 0.26 µs; 64 x 24 with 6 enemies and 23 pickups 0.34 µs; with 16 enemies and 5 pickups 0.47 µs; with 16 enemies and 35 pickups 0.55 µs. That is above the 0.4 µs behind the starting budget, so a campaign of full rooms needs either a smaller budget in calls or more than 60 s. The two speed-ups: `parseLevel` leaves the pickups array unfrozen (its objects stay frozen; V8 reads a frozen array about 2.5 times slower), and both enemy kinds share the layout of their first five fields (the moth's `axis` comes last); together they took the full room from 0.76 to 0.55 µs. A further one would change the contract: pickups indexed by cell, so step 14 looks only at the cells in reach.
 
 If 2 fails, or if the ten planned levels cannot fit the step budget, the caps are lowered as ruling R10 allows, in this order: `LEVEL_MAX_WIDTH` / `LEVEL_MAX_HEIGHT` in `types.ts` for levels that hold a thruster pack (48 x 16 is the first step), then `LEVEL_MAX_THRUSTERS`. The new caps are recorded in `docs/LEVELS.md` and the level plan there is changed to fit. Until the gate has run, the caps of ruling R9 stand and `docs/LEVELS.md` (rule 12) keeps thruster airspace small by design.
+
+**Gate result** (`src/core/validate/gate.test.ts`, first run on 2026-11-24 on the shared 4-core build machine, run again after the review fixes the same day; about 19 s). All four items pass, so the caps of ruling R9 stand and `docs/LEVELS.md` is unchanged:
+1. three decks proven in 0.04 M step calls (normal, 1 920 search nodes) and 0.03 M (comfort, 1 351); with hazards passable in the flood fill the quick pass has no win after 2 M step calls (16 589 nodes). First run: 0.05 M (2 010) and 0.03 M (1 418);
+2. open hall proven in 1.77 M (normal) and 20.56 M (comfort) of the 40 M of `maxStepCalls`. First run: 13.13 M and 26.01 M;
+3. `debug.txt` without its packs: `trophy-unreachable` in 2.40 M (the quick pass, then the map; first run, map first alone: 0.40 M); without its blaster: `no-route` in 2.78 M; both inside the 6 M of `REQUIRES_OPTIONS`;
+4. a proof of `capRoom` (64 x 24, 16 enemies, 37 pickups: 32 crystals, the blaster, 4 packs), timed directly for 6 M step calls under Vitest: 0.54 µs per call (the reviewer's runs) to 0.60 µs (mine, with other agents on the machine). `step()` alone there costs 0.49 to 0.55 µs (median of 5 runs of 2 M calls with random input). The first run estimated the proof instead, as bare `step()` on the cap room times the validator's overhead over bare `step()` on the gate's own rooms; that ratio was 1.33 to 1.36 then, 1.13 for a reviewer and 0.94 in my last run (the gate's rooms are lighter than the open hall it was compared with), so it is no basis for a budget: the gate now prints both and the budget follows the larger. At 0.54 to 0.69 µs a call, 60 s is 87 M to 111 M calls: `LEVELS_STEP_BUDGET` stays 90 000 000 (49 s to 62 s). On the rooms of a real campaign a proof costs 0.21 to 0.36 µs a call (the stand-ins above: level 9 0.32 to 0.35), so 90 M is about 20 s to 32 s there. With only `test.txt` and `debug.txt` (suites (a) and (c)) `tests/levels.test.ts` spent 5.72 M of it in 1.6 s of validator time (the file: 1.9 s; before the fixes 3.72 M). With the ten campaign levels it spends 16.35 M in about 4.7 s of validator time, the file about 5 s (below).
+
+The plan of `docs/LEVELS.md` (section 5) fits that budget only with care. By the stand-ins above: an ordinary level spends well under 1 M on its two proofs; a roofed thruster level a few tenths of a million; each removed-thruster line 0.1 M to 2.7 M (up to 2 M of it is the quick pass, before the map decides); each `@requires blaster` line of a level with packs up to the 6 M of `REQUIRES_OPTIONS`, and that line decides nothing when the blaster is needed after a pack. With level 9's gap open the plan comes to about 36 M, `test.txt` and `debug.txt` included; with coolant in it, about 22 M; on the first build level 9 alone took 78 M and its normal proof failed. The checklist's ceiling (the level's two proofs under 10 M) is an alarm for one level, not its share: ten levels at that ceiling would not fit. What makes a level expensive: thruster air (air a fuelled hero can reach, multiplied by the packs taken), enemies walking near that air (each enemy within 4 tiles of the hero puts its position in the key), and a hole in a deck floor over such air (9.4). As built and revised after the campaign review, the ten levels came to 16.35 M with both development levels, a fifth of the budget (the next paragraphs).
+
+**The real campaign** (`levels/level-01.txt` to `level-10.txt` as built and then revised after the campaign review of `docs/LEVELS.md`, section 8: levels 2, 5, 6, 7, 8 and 10 changed; measured on 2026-11-24 with `tests/levels.test.ts` on the live tuning, on the shared 4-core build machine). Step calls in millions; every normal and comfort proof was decided by the quick pass. The map-first column is the `LEVELS_CRYSTALS=1` run (`alwaysMap`, 400 M budget, not counted), which proved every level at the guided stage and left no crystal unreachable.
+
+| Level | Packs, enemies | Normal / comfort | Suite (c), `REQUIRES_OPTIONS` | Map first (crystals) | Validator time, normal / comfort |
+|---|---|---|---|---|---|
+| `level-01` Cold Start, 40 x 14 | 0, 0 | 0.27 / 0.20 | | 1.38 | 65 / 40 ms |
+| `level-02` Slag Gaps, 60 x 14 | 0, 0 | 0.02 / 0.01 | | 1.46 | 11 / 3 ms |
+| `level-03` Quench Hall, 56 x 14 | 0, 0 | 0.02 / 0.01 | | 1.09 | 7 / 3 ms |
+| `level-04` The Stack, 30 x 24 | 0, 0 | 0.12 / 0.07 | | 2.43 | 29 / 17 ms |
+| `level-05` Blaster Bay, 56 x 14 | 0, 4 | 0.03 / 0.03 | Without blaster: neither the quick pass nor the guided search wins, the map finds the enemy-free route, so `blocked-by-enemies` (guided); 2.55 in all | 1.22 | 18 / 9 ms |
+| `level-06` Moth Shafts, 60 x 16 | 0, 7 | 0.02 / 0.02 | | 1.45 | 26 / 7 ms |
+| `level-07` Thruster Loft, 44 x 24 | 3, 0 | 0.02 / 0.07 | Without thruster: `trophy-unreachable` (map), 0.35 | 12.30 | 20 / 21 ms |
+| `level-08` Crucible Run, 64 x 16 | 4, 0 | 0.10 / 0.08 | Without thruster: `trophy-unreachable` (map), 0.17 | 8.56 | 42 / 24 ms |
+| `level-09` Sorting Line, 56 x 24 | 2, 7 | 0.05 / 0.03 | Without blaster: `no-route` (quick), 0.45. Without thruster: `trophy-unreachable` (map), 2.50 | 14.29 | 22 / 13 ms |
+| `level-10` Heart Furnace, 64 x 24 | 4, 6 | 0.06 / 0.05 | Without blaster: `no-route` (quick), 0.80. Without thruster: `trophy-unreachable` (map), 2.55 | 27.68 | 37 / 21 ms |
+
+Sums: the twenty campaign proofs 1.26 M, the seven campaign `@requires` runs 9.37 M (none `budget-exceeded`), `test.txt` and `debug.txt` 5.72 M; the file 16.35 M of `LEVELS_STEP_BUDGET`, 4.7 s of validator time, about 5 s for the whole file under Vitest. The crystal run of all twelve files: 21 s. Before the review's changes the file spent 16.26 M; the longer routes of levels 5, 6, 8 and 10 added 0.1 M, because the new length is ground and roofed shafts, not open thruster air. What kept it cheap, against the stand-ins above:
+- the levels with packs are roofed and walled (`docs/LEVELS.md`, rule 12), and level 9's deck-2 gap holds coolant: its proofs cost 0.05 M / 0.03 M, not the 8.36 M / 5.18 M of the open stand-in;
+- the Cinderpeg that makes the blaster necessary walks a passage before the first pack (1 tile high in both levels 9 and 10), so both `@requires blaster` lines of the pack levels are decided by the quick pass in under 1 M (`no-route`), not left `budget-exceeded` at 6 M;
+- a removed thruster still costs up to 2 M of quick pass before the map decides (levels 9 and 10: 2.50 M and 2.55 M), the campaign's largest lines; on levels 7 and 8 the quick pass ends sooner (0.35 M and 0.17 M in all).
+
+A map-first run of a real level with packs costs 8.6 M to 27.7 M (level 10's four packs the most), at the low end of the 12 M to 85 M that 9.4 quotes from the fixtures, because the air is roofed. The budget left, about 74 M, is room for the owner's level fixes after the Phase 4 playtest, not a target.
 
 ## 10. Session and save
 
@@ -506,26 +584,38 @@ Boot, scaling and rendering follow the verified recipes in `docs/PHASER4-NOTES.m
 
 ### 11.1 Fixed-step loop (`PlayScene.update`)
 
+As built (`src/shell/scenes/PlayScene.ts`, slightly condensed):
+
 ```ts
 override update(_time: number, deltaMs: number): void {
-  if (this.mode !== 'running') return;                 // intro, paused, rotated, ended: the core is not stepped
-  this.keyboard.poll(this.controls);
-  const n = this.replay ? this.replay.ticksThisFrame() : this.stepper.advance(deltaMs);
+  if (this.mode !== 'running' && this.mode !== 'intro') return;    // paused, ended: nothing is stepped
+  this.gate.sample(this.game.loop.rawDelta);
+  const n = this.replay ? this.replay.spec.ticksPerFrame : (this.pace ?? this.stepper.advance(deltaMs));   // whole 60 Hz frames (pace: test hook only, 11.6)
   for (let i = 0; i < n; i++) {
-    this.events.length = 0;
-    const input = this.replay ? this.replay.next() : this.controls.consume();   // exactly one sample per tick
-    step(this.game_, input, this.events);
-    this.cam = stepCamera(this.cam, cameraTarget(this.game_), this.viewSize, this.levelSize, TUNING.camera);
-    this.view.capture(this.game_, this.cam, this.events); // prevDraw = curDraw; curDraw = whole-pixel positions of sprites AND camera; snaps on teleports
-    this.router.drain(this.events, this.game_);        // sound, effects, HUD, save, scene changes
+    if (this.mode === 'intro') { this.introFrame(); continue; }     // the level's intro card: the core waits
+    if (this.mode !== 'running') break;                             // the session ended inside this frame
+    if (this.hitStopLeft > 0) { this.hitStopLeft -= 1; continue; }  // a kill holds the picture
+    this.tickEvents.length = 0;
+    const input = this.replay ? this.replay.next() : controls.consume();   // exactly one sample per tick
+    step(sim, input, this.tickEvents);
+    this.router.drain(this.tickEvents, sim);   // sfx.tick() first, then sound, effects, HUD, save, scene changes
+    this.cam = stepCamera(this.cam, cameraTarget(sim), this.viewSize, this.levelPx, TUNING.camera);
+    this.view.capture(sim, this.cam);          // prevDraw = curDraw; curDraw = whole-pixel positions of sprites AND camera
   }
-  this.view.render(this.interpolation.alpha(this.stepper)); // alpha is 1 when interpolation is off: draws curDraw
+  this.effects.update(n, sim);   // effect timers, the shake, the screen fade
+  this.pushFrame(sim);           // sfx.update(sim) while running, pad.setItems(...), hud.show(model)
+  this.draw(sim);                // view.render(sim, gate.alpha(stepper), shake): alpha is 1 when interpolation is off
 }
 ```
 
+- The keyboard is not polled here: `installKeyboard` (src/input/keyboard.ts) writes the held keys to `Controls` on the scene's own `update` event, just before this method. Esc, P and M are not given to `installKeyboard`: the scene listens for them through `onFreshKey` (src/shell/freshKey.ts), as the menus and the title do, which acts once per keyboard event. Phaser 4.2.1 hands a key's `down` over a second time when another key event arrives before the frame ends; through plain `onKeyDown` that toggled the sound twice, and the Esc that had just closed the pause menu opened it again from the Play scene's own handler.
+- The router drains a tick **before** the camera and the capture: a `levelStarted` rebuilds the world view inside `drain` (the next level's sprites, tiles and position arrays), so the capture that follows works on the new level; a snap asked for by `levelStarted` or `respawned` is applied right after that capture (`prev = cur`).
+- **Modes** of the Play scene: `intro` (the level's intro card, `TUNING.effects.introFrames`; a fresh press after `introSkipAfterFrames` skips it), `running`, `paused` (the pause menu; the rotate guard also stops Phaser), `ended` (the End screen or the title is starting; a finished replay also stops stepping). During the intro the controls are consumed once per 60 Hz frame although no tick is simulated: that is how a fresh press is seen, and it swallows the press that skips the card, so it is not also the first press of the level. A replay has no intro card.
 - `FixedStepper(1000 / TICK_HZ, TUNING.pacing.maxStepsPerFrame)`: `advance(deltaMs)` returns 0 to 5 whole ticks; a longer backlog is dropped. It is fed Phaser's smoothed `delta`. `reset()` on every pause, resume, scene start and level start.
 - `Controls.consume()` returns held states and latches presses: a tap that starts and ends between two ticks is still reported for one tick. It sends at most one of left and right (the most recently pressed).
-- Pausing means not calling `step`. On closing the pause overlay the shell calls `holdReady(game)`, `stepper.reset()` and `controls.releaseAll()`.
+- Pausing means not calling `step`. On closing the pause overlay the shell calls `holdReady(game)`, `stepper.reset()` and `controls.releaseAll()`. `pauseGame` also calls `sfx.silence()`, hides the touch pad and stands the particles still; the HUD's own clocks (toast, life blink, score count, shutter) stand still too, through the `held` predicate the Play scene hands the HUD at launch (`HudData`), and none of the frames under the menu is banked to catch up afterwards. Restart level runs the core's `restartLevel` through the same router, then resumes into the ready gate; opened on the intro card, it ends the card first (the core's restart brings no `levelStarted`, so nothing else would take it down), while RESUME goes back to the card.
+- **A key held through a reset is not a press.** The pause, the resume and a blur reset Phaser's keys (`resetKeys`); a key still held then reads up, and its next auto-repeat (`keydown` with `repeat: true`) made Phaser's Key go down again and emit `down`, which opened the ready gate after RESUME without a fresh press (ruling R4). `src/input/keyboard.ts` ignores every `down` that is an auto-repeat and reads such a key as up until its `keyup`; the same holds for a key already held when a scene starts. `e2e/pause.spec.ts` holds keys with repeats through Esc, RESUME, RESTART LEVEL and a blur.
+- **Scene listeners.** Every cleanup a scene or a menu registers for its end goes through `onSceneEnd` (src/shell/sceneEnd.ts): once on `shutdown` or `destroy`, whichever comes first, removing the other. `destroy` comes only from `game.destroy()`, so a plain `once('destroy')` stayed behind on every visit. `e2e/pause.spec.ts` checks that every scene's listener count is the same after four rounds as after one.
 - The HUD scene updates before the Play scene in Phaser's order, so `EventRouter` pushes HUD changes instead of the HUD polling.
 - **Hit stop on a kill** is the shell's: after a tick whose events hold `enemyKilled`, `update` steps nothing for `TUNING.effects.killHitStopFrames` rendered-at-60 frames (it still draws). Never during a replay, so replays stay tick-exact. The freeze at a death is different: it is part of the core's dying phase.
 - **Interpolation** (last shell feature to build): mode `'auto'` switches it on only when the measured display interval is below `TUNING.pacing.interpolateBelowMs` (90 and 120 Hz screens); at 60 Hz it is off and `render` draws the current state. The method is the verified one in `docs/PHASER4-NOTES.md`, section 12, and nothing else: after every tick the view stores the **whole-pixel draw position** of each sprite and of the camera (the values it would draw with interpolation off); `render` blends the previous and the current whole-pixel positions with `lerpPx(prev, cur, alpha)`, sprites and camera alike. Blending sub-pixels and flooring afterwards is wrong: it made the hero wobble across three screen pixels at 144 Hz. A draw position snaps to the current one (`prev = cur`) on `levelStarted` and `respawned`; when it moved more than 16 px in one tick (inside `lerpPx`); and for **anything that was not drawn on the previous tick**: a bolt that became `active` this tick (its x and y are meaningless while inactive), an enemy that came back to life, a pickup that reappeared.
@@ -550,7 +640,7 @@ Dying stages for the hero frame come from `run.phaseTicks` and `TUNING.timing`: 
 
 ### 11.3 Event consumption
 
-`EventRouter.drain(events, game)` handles each event once, in order: one sound per event type (table in section 7), particles and flashes through `Effects`, HUD pushes, `applyEvents` for the save, and scene changes on `gameOver` and `gameWon` (guarded by a flag so a scene is started once). **New best.** When a session is created the router remembers `previousBest = save.bestScore`. `EndScene` is started with `{ score, previousBest }` and shows `NEW BEST!` when `score > previousBest`, otherwise `BEST` with `max(previousBest, score)`. It must not compare with `save.bestScore`: `applyEvents` has already raised it (at the last death, 52 ticks before `gameOver`; at the last level's `levelCompleted`, 60 ticks before `gameWon`, and again at `gameWon` before the win screen is built).
+`EventRouter.drain(events, game)` (src/shell/EventRouter.ts) runs once per simulated tick. It calls `sfx.tick()` once, before that tick's sounds, and `effects.tick(game)` once; then it handles each event once, in order: one sound per event type (table in section 7), vibration (`playerDied`, `trophyCollected`, `fuelEmptied`), particles and flashes through `Effects`, HUD pushes, and what the Play scene itself must do (rebuild on `levelStarted`, snap on `respawned`, the hit stop on `enemyKilled`, the airlock's animation on `doorOpened`); then `applyEvents` for the save, written only when it changed; last, the scene change on `gameOver` or `gameWon`, at most once per router and after the save was written. Every target is an interface, so the routing is unit-tested in Node (`EventRouter.test.ts`). **New best.** When a session is created the router remembers `previousBest = save.bestScore`. `EndScene` is started with `{ score, previousBest }` and shows `NEW BEST!` when `score > previousBest`, otherwise `BEST` with `max(previousBest, score)`. It must not compare with `save.bestScore`: `applyEvents` has already raised it (at the last death, 52 ticks before `gameOver`; at the last level's `levelCompleted`, 60 ticks before `gameWon`, and again at `gameWon` before the win screen is built). A session that is never saved (a development room, the test hook) has `previousBest = null` and its end screen shows no best line.
 
 Things that last are read from state every frame instead of from events: the thrust loop plays while `run.phase === 'playing' && player.thrusting`; the low-fuel beep while thrusting at 20 % fuel or less; FIRE and THRUST buttons are shown while `hasBlaster` / `hasThruster`, FIRE dimmed while `bolt.active`, THRUST dimmed while `fuel === 0`.
 
@@ -580,6 +670,7 @@ Installed only when the URL has `?e2e=1` or in a dev build (src/shell/e2eHook.ts
 
 ```ts
 interface E2EHook {
+  /** null before the first level is played. Positions in sub-pixels; mode is the Play scene's (11.1). */
   state(): { status: SessionStatus; levelId: string; levelIndex: number; phase: RunPhase; tick: number;
              score: number; lives: number; player: { x: number; y: number; vx: number; vy: number; onGround: boolean };
              hasTrophy: boolean; mode: 'intro' | 'running' | 'paused' | 'ended' } | null;
@@ -645,6 +736,35 @@ Ruling R18: a hand-written manifest and service worker, no library. Nothing in t
 
 **Known limits on iPhones** (expected from the platform's documentation, not verified on a device; `docs/SPEC.md` tells the owner in plain words): a game added to the home screen has its own storage, separate from the same address opened in Safari, so progress does not carry over between the two; Safari may erase a site's stored data after seven days without a visit (home-screen apps are exempt); Web Audio is silenced by the ring/silent switch; there is no vibration, so the BUZZ switch does nothing there.
 
+### 11.8 Shell modules as built
+
+Section 2 lists the shell as it was planned. These modules were added while building it (all under `src/shell/` unless a path is given); pure ones have a `*.test.ts` beside them:
+
+| File | Kind | Responsibility |
+|---|---|---|
+| `freshKey.ts` | Pure (fake keyboard in its test) | `onFreshKey`: a key acts once per keyboard event (Phaser replays a frame's queue; auto-repeat never counts) |
+| `sceneEnd.ts` | Pure (Node emitter in its test) | `onSceneEnd`: a scene's cleanup once on `shutdown` or `destroy`, the other listener removed (11.1) |
+| `fxModel.ts` | Pure | Effects as numbers: the shake, the fade, flashes, pop-ups and the airlock pointer, from events and ticks |
+| `hitStop.ts` | Pure | The hold after a kill (`killHitStopFrames`); disabled in a replay |
+| `hudModel.ts` | Pure | The top bar as numbers: what it shows, where (`topBarLayout`, the PAUSE reserve, the corner clearance), its clocks (`FrameClock`, held under the pause; score count, life blink, pip blink) |
+| `viewModel.ts` | Pure | Draw positions in whole pixels: the hero's sprite and overlays, enemies, pickups, the mini fuel bar |
+| `screens.ts` | Pure | Layouts of the intro card (2x name and hint where the pixels are small), the level-clear banner, the end screens' lines, the title's scenery, the shutter blades, the canvas's accessible name |
+| `screenText.ts` | Pure | Every fixed line the screens draw at its scale, for one test of glyphs and widths; the rotate message's size (`rotateDevicePerArt`) |
+| `scenes/menu.ts` | Phaser glue | The canvas menu of Title, Pause and End, drawn at `menuLayout`'s rectangles and text scale; touch, mouse and keyboard |
+| `scenes/sessions.ts` | Pure | What the title offers (CONTINUE, NEW GAME, the test rooms when there is no campaign) and what TRY AGAIN starts |
+| `scenes/strings.ts` | Pure | Every word the screens show (`TEXT`), shared with main.ts's rotate message |
+| `lifecycle.ts` | DOM | Touch mode (`keyEndsTouchMode`: Cmd, Ctrl and Alt do not end it; the touch that turns it on is handed to the pad) and the rotate guard |
+
+Browser specs beside those of section 2:
+
+| Spec | What it proves |
+|---|---|
+| `e2e/screens.spec.ts` | Every screen and menu as a player drives it: title, intro card, top bar (nothing white or gold along the bottom: LEVELS.md rule 11), pause by every route, menu text shadows over the panel, the rotate message's width, end screens |
+| `e2e/save.spec.ts` | The save rules of section 10 in the browser: CONTINUE, NEW GAME, the best score, TRY AGAIN's level |
+| `e2e/look.spec.ts` | Screenshots of the debug room's replay, frozen with the hero in the air: not blank, pixel-exact (every art pixel a uniform block of device pixels), the hero on the whole pixel the core gives |
+| `e2e/audio.spec.ts` | Every sound rendered offline in a real browser (`renderEffect`) and checked by numbers: not silent, not clipping, as long, as loud and sounding as section 12 of ART-AND-SOUND says; in the game, audio starting on the first tap and the M key |
+| `e2e/pause.spec.ts` | Keys held through the pause (with auto-repeat) never open the ready gate; RESTART LEVEL from the intro card; the HUD's toast and banner outlast a pause; scene listener counts stay flat over visits |
+
 ## 12. Tests
 
 **Which numbers a test runs on.** Decided once, here:
@@ -676,7 +796,6 @@ Ruling R18: a hand-written manifest and service worker, no library. Nothing in t
 
 The browser tests are listed in section 2.
 
-  /** null before the first level is played. Positions in sub-pixels; mode is the Play scene's (11.1). */
 ## 13. Derived limits
 
 Measured at the reference tuning (section 12) with throwaway integer models of sections 3 to 6. Two such models were written independently and agreed tick for tick over a million random ticks, and every number below was produced by one and checked on the other where a reviewer disputed it. `src/core/limits.test.ts` reproduces the tables through the real core; where the real core disagrees with a number here, one of the two is wrong and both get fixed. It reproduces every row of the Movement and Thruster tables, the jump-window, small-pad and thruster press-window tables and the hazard beds, cell for cell (the other rows of Hazards and of Blaster, enemies, timing are asserted by `contact`, `bolt`, `enemies` and `flow` tests); doing so fixed two entries (the thruster press window for 7 tiles under open sky, and the terminal-fall row, which said which of two figures it meant). "Handicap" is the comfort proof's tuning: no coyote time, no jump buffer, run and jump x 0.95, fuel x 0.9.
@@ -712,35 +831,6 @@ The hero runs at full speed toward the edge with the direction held; jump is pre
 | 4 down | any / any | any / any | 38 / 29 | 27 / 18 | 17 / 6 | 6 / - |
 
 The table assumes an unlimited landing area. Landing on a small pad with a deadly gap behind it is harder, because the hero must also stop. Policy: run at full speed, hold jump, let go of everything some frames after touching down.
-### 11.8 Shell modules as built
-
-Section 2 lists the shell as it was planned. These modules were added while building it (all under `src/shell/` unless a path is given); pure ones have a `*.test.ts` beside them:
-
-| File | Kind | Responsibility |
-|---|---|---|
-| `freshKey.ts` | Pure (fake keyboard in its test) | `onFreshKey`: a key acts once per keyboard event (Phaser replays a frame's queue; auto-repeat never counts) |
-| `sceneEnd.ts` | Pure (Node emitter in its test) | `onSceneEnd`: a scene's cleanup once on `shutdown` or `destroy`, the other listener removed (11.1) |
-| `fxModel.ts` | Pure | Effects as numbers: the shake, the fade, flashes, pop-ups and the airlock pointer, from events and ticks |
-| `hitStop.ts` | Pure | The hold after a kill (`killHitStopFrames`); disabled in a replay |
-| `hudModel.ts` | Pure | The top bar as numbers: what it shows, where (`topBarLayout`, the PAUSE reserve, the corner clearance), its clocks (`FrameClock`, held under the pause; score count, life blink, pip blink) |
-| `viewModel.ts` | Pure | Draw positions in whole pixels: the hero's sprite and overlays, enemies, pickups, the mini fuel bar |
-| `screens.ts` | Pure | Layouts of the intro card (2x name and hint where the pixels are small), the level-clear banner, the end screens' lines, the title's scenery, the shutter blades, the canvas's accessible name |
-| `screenText.ts` | Pure | Every fixed line the screens draw at its scale, for one test of glyphs and widths; the rotate message's size (`rotateDevicePerArt`) |
-| `scenes/menu.ts` | Phaser glue | The canvas menu of Title, Pause and End, drawn at `menuLayout`'s rectangles and text scale; touch, mouse and keyboard |
-| `scenes/sessions.ts` | Pure | What the title offers (CONTINUE, NEW GAME, the test rooms when there is no campaign) and what TRY AGAIN starts |
-| `scenes/strings.ts` | Pure | Every word the screens show (`TEXT`), shared with main.ts's rotate message |
-| `lifecycle.ts` | DOM | Touch mode (`keyEndsTouchMode`: Cmd, Ctrl and Alt do not end it; the touch that turns it on is handed to the pad) and the rotate guard |
-
-Browser specs beside those of section 2:
-
-| Spec | What it proves |
-|---|---|
-| `e2e/screens.spec.ts` | Every screen and menu as a player drives it: title, intro card, top bar (nothing white or gold along the bottom: LEVELS.md rule 11), pause by every route, menu text shadows over the panel, the rotate message's width, end screens |
-| `e2e/save.spec.ts` | The save rules of section 10 in the browser: CONTINUE, NEW GAME, the best score, TRY AGAIN's level |
-| `e2e/look.spec.ts` | Screenshots of the debug room's replay, frozen with the hero in the air: not blank, pixel-exact (every art pixel a uniform block of device pixels), the hero on the whole pixel the core gives |
-| `e2e/audio.spec.ts` | Every sound rendered offline in a real browser (`renderEffect`) and checked by numbers: not silent, not clipping, as long, as loud and sounding as section 12 of ART-AND-SOUND says; in the game, audio starting on the first tap and the M key |
-| `e2e/pause.spec.ts` | Keys held through the pause (with auto-repeat) never open the ready gate; RESTART LEVEL from the intro card; the HUD's toast and banner outlast a pause; scene listener counts stay flat over visits |
-
 
 | Gap, then a level pad, then a deadly gap | Let go at once | After 4 f | After 8 f |
 |---|---|---|---|

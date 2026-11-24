@@ -12,7 +12,7 @@ Machines cannot judge how a game feels in the hand. Six of the seven phases ther
 | 1. Movement | Sprue runs and jumps in the movement room | built (exit check below passes; owner's playtest still to do) | Yes: does the jump feel right |
 | 2. Core loop | Crystals, the cog, the airlock, hazards, lives, score, all screens | built (exit check below passes; owner's playtest still to do) | Yes: is dying and coming back fair and clear |
 | 3. Items and enemies | The bolt blaster, the thruster pack, Cinderpegs and Arc Moths | built (exit check below passes; owner's playtest still to do) | Yes: does flying and firing work under the thumbs |
-| 4. Validator and levels | The ten levels, each proven winnable | not started | Yes: play all ten levels |
+| 4. Validator and levels | The ten levels, each proven winnable | in progress (validator and all ten levels built, reviewed as a campaign and proven, levels test inside its budget; the browser replay of level 1's proof is still to write, see below) | Yes: play all ten levels |
 | 5. Polish and installable app | Final pictures and sound; installs and plays offline | not started | Yes: install it, play offline |
 | 6. Review and release | A link to the finished game | not started | Yes: final sign-off from the link |
 
@@ -61,6 +61,27 @@ Statuses used: not started, in progress, built (the automated exit check passes)
 - **Gate before the first level is built:** the validator must prove two full-size trial levels (three roofed decks; one open hall with four thruster packs) inside its budget, and its speed on this machine is measured (`docs/ARCHITECTURE.md`, section 9.6). A trial model of the validator managed both, but the open hall alone used a quarter of the budget. If the real one cannot, levels with thruster packs get a smaller size limit and the level plan is adjusted before any level is drawn.
 - **Exit check:** every proof passes and the levels test stays inside its step budget, which is about a minute on this machine; an e2e test replays level 1's proof in the browser and gets the same result as the test did; an e2e test starts level 1 from the title the way a player does and saves the picture `e2e/screenshots/level-01.png`.
 - **What the proofs do not show:** how much time a jump leaves the player. That is judged from the tables in `docs/LEVELS.md` by the reviewer of each level, and finally by the playtest below.
+- **Status: in progress** (24 November 2026). Built:
+  - the validator (`src/core/validate`, `docs/ARCHITECTURE.md` section 9) and the designer's tool `src/tools/prove.ts`;
+  - the gate, which passes (`src/core/validate/gate.test.ts`): three decks proven in 0.04 M / 0.03 M step calls, the open hall in 1.77 M / 20.56 M, both `@requires` lines of `debug.txt` decided, and `LEVELS_STEP_BUDGET` set to 90 M from the measured rate. So the size and pack caps stand;
+  - `levels/level-01.txt` to `level-10.txt`, built one at a time against the checklist in `docs/LEVELS.md`, then reviewed as one campaign. The review's findings were settled the same day: levels 5, 6 and 8 got longer (the cog is fetched from a branch or past the airlock), level 10 was rebuilt (its hardest jump moved onto the way out, two shafts and a loop in the Heart, about 170 tiles, the longest route), level 2's pits were reordered under a slag heap, level 7's and level 8's first packs moved to the hazard's edge, and two hints were polished. Section 8 there records them as built: contents, costs, clear times, the ramp, and every change to the plan with its reason.
+
+  The exit check, part by part:
+  - **Every proof passes, inside the budget.** `npx vitest run tests/levels.test.ts`: 73 tests passed, 12 skipped (the opt-in crystal suite). It spent 16.35 M of the 90 M step calls, 4.7 s of validator time, and about 5 s for the file. No `@requires` run ended `budget-exceeded`.
+  - **The ten levels chain.** The ten normal proofs, played one after another in one session, win the game with no death in 10,266 ticks (suite (d) of that file).
+  - **Crystals.** `LEVELS_CRYSTALS=1` finds no unreachable crystal in any level (the twelve crystal runs pass in 21 s; level 10's map-first run is the largest, 27.7 M step calls).
+  - **The rest of the core.** `npx vitest run src/core tests`: 26 files, 853 tests passed, 12 skipped (22.5 s).
+  - **Level 1 started from the title.** `e2e/level1.spec.ts` starts it as a player does and saves `e2e/screenshots/level-01.png` (Phase 2).
+  - **The whole project, with the ten levels in place.** `npm run check`: 59 files, 1590 tests passed, 12 skipped; `npm run e2e`: 60 passed, none skipped.
+
+  Not yet:
+  - **The browser replay of level 1's proof.** It needs `e2e/scripts/level-01.json`, written with `node src/tools/prove.ts levels/level-01.txt --script e2e/scripts/level-01.json --in-project` (cog tick 622, airlock tick 679), and a spec that replays it the way `e2e/rooms.spec.ts` replays `test.json`.
+  - **The browser watch of each route**, one line of the `docs/LEVELS.md` checklist. It is still open for all ten levels.
+
+  For the playtest:
+  - The routes are still a little shorter than the plan's. A clean run by a person comes to about 5.4 to 6.5 minutes plus the waits for enemies, against the 7.3 planned; levels 2 and 3 come to 20 to 26 s, at the floor of `docs/SPEC.md`.
+  - Level 9's tight gap is that tight only with an empty tank; level 10's 4-tile gap comes before any pack (`docs/LEVELS.md`, section 8).
+  - With level 6's sixth Arc Moth the levels pay at most 6,500 points, 8,000 with three lives left; `docs/SPEC.md` still says 7,900.
 - **Owner's phone playtest:** play all ten levels in order. For each, note: too hard, too easy, unclear, or unfair, and where. One round of level fixes follows.
 
 ## Phase 5. Polish and installable app

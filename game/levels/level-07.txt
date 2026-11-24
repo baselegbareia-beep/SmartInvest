@@ -1,0 +1,79 @@
+@name Thruster Loft
+@teaches Hold thrust to fly. Watch the fuel.
+@hardest 21,16 the seven-tile flight over the coolant pond from the pack at its edge (85 / 89), the one deadly moment
+@requires thruster
+; Level 7. The thruster pack and its fuel: three stations, rising, each starting at a pack; then
+; the loft, where the cog is, and a drop to the airlock. About 95 tiles of route.
+; Teach, test, twist: the first flight is free (a miss lands back in the start room, and a pack
+; comes back when the tank runs dry); the second costs a life (the coolant pond); the third asks
+; for most of a tank and comes with the older ideas (steps, a 3-tile gap).
+; What is where, by column and row (0-based), with every window (docs/LEVELS.md, section 2;
+; measured on this file with the protocol of src/core/limits.test.ts, live / comfort):
+;   2,21   start, in a closed room (roof at row 14); nothing in it can kill
+;   6,21   pack 1. Station 1: the cliff at col 14, 5 tiles high (climb 5 of the 6 a tank may ask).
+;          THRUST and RIGHT held from the pack climb onto the corridor at row 16 whenever pressed
+;          (comfort: from the third frame); the roof 2 tiles above the cliff top catches the climb.
+;          A miss lands back in the start room: free
+;   21,16  pack 2, hanging over the pond's first column at the bank's height: it is taken from the
+;          bank's edge, so a flight from it starts with a full tank. Station 2: the pond, cols 21-27,
+;          7 wide, its coolant 3 tiles down (row 20, in sight from the bank on the smallest view),
+;          under a roof 2 tiles above the bank. THRUST and RIGHT held from a run along the cliff top
+;          win for 85 / 89 frames: every press from its west end (col 14) to about 12 frames after
+;          walking off, so simply holding both from pack 1 on crosses too. From a standstill at
+;          the edge, 24 / 24. Letting go of THRUST over the pond, or pressing too late, costs a
+;          life: the level's one deadly moment, and its @hardest
+;   28-32  the far bank; step A (cols 33-35) 3 up and step B (cols 36-38) 2 up, both from the face
+;          with no gap: ordinary (35 / 35 and 40 / 40 measured, standing at the face included)
+;   40,11  pack 3 at the foot of the shaft (cols 39-40), 6 tiles deep and walled. Station 3, the
+;          fuel lesson, where running dry costs nothing: THRUST held reaches the loft with 24 of 80
+;          frames of fuel left (comfort 16 of 72), about 2 tiles of sideways flight; LEFT may be
+;          held with THRUST from the first frame, the wall guides the climb (wins on press frames
+;          1 to 82, comfort 1 to 71). The crystals at 40,9 and 40,6 lead up it: seen from the
+;          foot on the smallest view, the shaft's top cell is the view's top row, and the loft
+;          comes into sight as Sprue rises
+;   24-26  the trench in the loft floor, 3 wide and 2 deep: a level 3-tile gap (22 / 13, ordinary,
+;          the level's tightest window); a miss lands on its floor and a 2-tile step climbs out
+;   10,5   the cog, in a doorway 1 tile high at the loft's west end: the airlock pocket cannot be
+;          entered without taking it, so the pocket is never a dead end (rule 7)
+;   8,5    walk off the doorway and drop 5 tiles to the airlock ledge (row 10); the airlock is at
+;          col 3. The crystals at 8,7 and 7,9 show that the drop is meant (rule 5)
+; Crystals: 12 on the route (the climb, the flight along the roof, the steps, the shaft, the trench
+; arc, the drop), 6 off it (the start room's top corner, the pond channel, a jump west off step A,
+; the loft roof, the trench floor, the loft's east end past the shaft).
+; Differences from the plan: the pond is 7 tiles wide, not 8. The plan's 40 / 25 was measured over
+; an open pit, where a hero who pressed late and sank still flies out; over coolant those presses
+; die. 8 wide gives 23 / 11 with the coolant 3 down and 31 / 19 with it 5 down (out of sight from
+; the bank); 7 wide and 3 down gives 34 / 22, from pack 2 at col 18. Pack 2 now hangs over the
+; pond's edge (col 21): from col 18 a player who kept RIGHT and THRUST held from pack 1, as station
+; 1 teaches, ran the tank dry over the pond (every press earlier than 1.3 tiles before the edge
+; died), and the comfort tank died even when pressed at the pack. From the edge the obvious input
+; wins on both, and the fuel lesson is left to the shaft, where running dry is free. The hardest moment is
+; the pond, not the shaft: the shaft cannot be missed with LEFT and THRUST held from its foot, while
+; a late press, or letting go over the pond, costs a life. The shaft is at cols 39-40, not 36, so
+; that the loft runs the full width.
+; Its top asks for a 1-tile step sideways, not 2.5: a hero who runs dry there falls back down the
+; walled shaft onto pack 3, which comes back, so the fuel left at the top can never cost a life.
+############################################
+#############....G............####.........#
+#############.................####.........#
+#############............G.................#
+#############..............................#
+#.........T...............................G#
+#........###############...############.G###
+#.......G###############.G.############..###
+#........##############################..###
+#......G.######################.......#.G###
+#..D.....######################G...G.....###
+###############################.........J###
+###############################.G...########
+###############################.....########
+###############################..###########
+#G....................G..G..G....###########
+#....................J...........###########
+#..........G..#######.......################
+#.............#######...G...################
+#.......G.....#######.......################
+#.............#######WWWWWWW################
+#.P...J.......##############################
+############################################
+############################################

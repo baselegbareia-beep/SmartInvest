@@ -1,0 +1,99 @@
+@name Crucible Run
+@teaches Fly far. Refuel in the air.
+@hardest 38,9 the fifteen-tile crossing: eight tiles to the floating pack under the second lintel, seven more (45 / 32)
+@requires thruster
+; Level 8. Refuelling in the air. A run east through a tunnel over a floor of furnace fire: the
+; roof is 4 tiles above the pillar tops for the whole length (rule 12) and the fire 3 tiles below
+; them (row 13), in sight on the smallest view. The airlock stands on the pillar where the long
+; crossing lands; the cog is beyond the last two plain jumps, so they are crossed there and back.
+; About 78 tiles of route.
+; Teach, test, twist: a pack hovering over a pillar (a miss lands on the pillar, free); a pack
+; hovering over the fire halfway across the long crossing (a miss costs a life); the crossing
+; ends on the airlock's pillar, 3 tiles wide with fire beyond (landing small, level 3), and plain
+; jumps over the last of the fire (level 2) reach the cog and come back.
+; What is where, by column and row (0-based), with every window (docs/LEVELS.md, section 2;
+; measured on this file with the protocol of src/core/limits.test.ts, live / comfort; "let go"
+; is the small-pad policy: everything released some frames after touchdown):
+;   2,9    start; the fire starts 6 tiles away
+;   8,9    pack 1, hanging over the fire's first column at the bank's height: it is taken from the
+;          bank's edge. Flight 1: cols 8-14, 7 tiles, to pillar 1 (cols 15-19). THRUST and RIGHT
+;          held from the start win for 85 / 89 frames, every press from the start to just after
+;          walking off, the same when let go up to 24 frames after touchdown; from a standstill at
+;          the edge 24 / 24. So THRUST held from the pack crosses, as at level 7's pond
+;   16,7   pack 2, hovering 2 tiles above pillar 1: reached by a jump from the pillar (standing
+;          under it does not take it; a flight takes it only on the way down). Free
+;   18-22  the first lintel (rows 6-7, its underside 2 tiles above the pillar tops) hangs over
+;          pillar 1's last 2 tiles and flight 2's first 3. A flight still under the roof stops
+;          against it and, when the tank runs dry, drops onto pillar 1 with 2 tiles of pillar
+;          ahead: RIGHT may stay held up to 24 frames after touchdown, also after jumping into
+;          pack 2 and holding THRUST and RIGHT, before Sprue walks off into the fire
+;   20-27  flight 2, 8 tiles, under the lintel and up to the roof, to pillar 2 (cols 28-30).
+;          With a full tank, RIGHT held from a standstill and THRUST pressed once Sprue is under
+;          the lintel: 33 / 21 from the pillar's west end or middle, 23 / 21 from its east end
+;          (29 / 21 when let go 12 frames after touchdown). Pressed earlier, the tank runs dry
+;          over the fire, unless Sprue rose against the lintel's face, which drops him back
+;          onto pillar 1. About as tight as the crossing, and the same lesson as flight 1
+;   28,9   pack 3. The crossing, cols 31-45, 15 tiles: 8 tiles to pack 4, hovering level with
+;          the pillar tops at 38,9, then 7 tiles to pillar 3 (cols 46-48). The second lintel
+;          (cols 39-40, rows 6-7) hangs right after pack 4: a hero still flying under the roof
+;          is held against it, over the pack, until the tank runs dry, and drops into it; a
+;          hero who runs dry earlier drifts into it with RIGHT held. THRUST and RIGHT held:
+;          45 / 32 from the west end of pillar 2, 34 / 32 from its middle, 24 / 24 from its
+;          east end (a short jump first, one alignment: 39 / 32, 28 / 23, 18 / 12); letting
+;          go of THRUST before pack 4 and holding it again once refilled gives the same.
+;          Pressed too late (Sprue sinks too far after walking off), or let go over the fire,
+;          it costs a life; on the comfort numbers an early press runs dry short of the pack.
+;          No crossing skips pack 4: none of 25,704 patterns of THRUST pulsed at a human
+;          rhythm (with or without a jump first, from either end or the middle of pillar 2)
+;          crosses without it, and without pack 4 the validator finds no route.
+;          The level's hardest moment. Landing on pillar 3: 45 / 32 when let go up to 12
+;          frames after touchdown
+;   48,9   the airlock, at the east end of pillar 3, locked on the way out
+;   49-51  plain jump 1: a 3-tile gap rising 1, from the 3-wide airlock pillar to a 3-wide pad
+;          (cols 52-54): 18 / 9, from a run-up or a standstill anywhere on the pillar (17 / 9
+;          standing at the very edge), and when let go 0, 4, 8 or 12 frames after touchdown.
+;          Ordinary, the level's tightest window
+;   55-57  plain jump 2: a 3-tile gap, level, from the pad to the bank (cols 58-60): 22 / 13.
+;          Over the plain jumps the roof is 2 rows higher (open sky: under a roof 4 tiles above,
+;          a full jump bonks 2.6 px short of its apex)
+;   62,6   the cog, on a block 2 tiles high at the bank's east end (2 up from the face, any
+;          press). Then back west: plain jump 2 from the bank, 22 / 13 from a run or from rest at
+;          the block's foot, and when let go 0, 4 or 8 frames after touchdown on the pad; plain
+;          jump 1, now dropping 1, 26 / 17 from a run along the pad (17 / 11 from rest at its very
+;          edge), onto the airlock at the pillar's east end
+; Crystals: 12 on the route (along the roof of each flight, under each lintel, above pack 4
+; where the drop into it starts, the plain jump arcs), 6 off it (the start bank's top corner,
+; low in the first two fire gaps, over pillars 2 and 3, high over the bank).
+; Differences from the plan: the long crossing is 15 tiles (8 + 7), not 16. Its second leg
+; starts low, under the second lintel, and climbs back under the roof; 8 tiles from there
+; gives 45 / 2 with THRUST held (the comfort tank runs dry over the fire), 7 tiles gives
+; 45 / 32. The second lintel is not in the plan: without it, THRUST held from the middle or
+; the east end of pillar 2 carried Sprue over pack 4 at the roof (16 and 5 frames, the tight
+; and forbidden classes), and a jump followed by THRUST pulsed 3 to 8 times a second crossed
+; without pack 4 at all. Pillar 1 is 5 tiles wide, 2 more than the other pillars, so that a
+; flight stopped by the first lintel lands 2 tiles from the fire, not half a tile (held RIGHT
+; walked him off 6 frames after touchdown). The plain jumps are in the other
+; order (rising first, then level), so that the level's tightest window is not the last
+; obstacle on the way out; on the way back it is jumped dropping 1 (26 / 17). Pack 2 hovers
+; over pillar 1 so that the new idea is first met where a miss costs nothing (rule 1).
+; The airlock is on pillar 3 and the cog in the far corner, not the other way round: with the
+; cog on the way to the airlock the level was one line east, about 61 tiles, among the shortest
+; in the game; fetching the cog makes it about 78 tiles (rule 10) and makes finding it a
+; question. Pack 1 hangs over the fire's edge, not 4 tiles before it: from col 4 THRUST and
+; RIGHT held from the pack ran the tank dry over the fire. A clean run is about 30 s.
+################################################################
+################################################################
+################################################################
+################################################################
+###############################################.............G..#
+###############################################G........G......#
+#G.......G..G...G.#####....G.G...G.....##...G.....G...........T#
+#...............J.#####.G.............G##....................###
+#....................G..................G....................###
+#.P.....J...................J.........J.........D...###...######
+########.......#####........###...............###...###...######
+########...G...#####....G...###...............###...###...######
+########.......#####........###...............###...###...######
+########FFFFFFF#####FFFFFFFF###FFFFFFFFFFFFFFF###FFF###FFF######
+################################################################
+################################################################

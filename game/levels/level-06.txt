@@ -1,0 +1,68 @@
+@name Moth Shafts
+@teaches Arc Moths bob. Wait, then go.
+@hardest 36,12 the 3-tile vent swept by a moth (22 / 13), safe for about 98 of every 300 frames
+; Level 6 of 10. A moving hazard in the air: wait, then go. Nothing is required:
+; every moth can be waited out and the Cinderpeg jumped (the level without its
+; blaster is proven as well). 0-based columns and rows; the floor is row 12.
+; Five vents cross the floor: pits open to the bottom, ducts overhead whose
+; bottom face, 5 tiles above the floor, is the grate. Each vent's moth bobs
+; from the grate to the bottom edge (a lane of 8 cells, about 300 frames there
+; and back) and is out of every jump's way while it is deep in the pit: about
+; 87 frames in a row for the 2-tile vents, 98 for the 3-tile one (measured on
+; the live numbers with every press of the jump's open-air window).
+; The airlock stands on the way, after the hardest vent; the cog is beyond two
+; more vents at the east end, so the last two vents are crossed there and back.
+; About 77 tiles.
+;   columns 8-10  free: a moth in a slot 1 tile wide in a pillar. Sprue walks
+;           under it and watches it bob; it cannot reach him.
+;   vents 1 and 2 (columns 14-15 and 22-23): 2-tile gaps (33 / 24), crossed by
+;           timing alone. Each moth is in the far (east) column, so the west
+;           lip is a safe place to wait and the east lip is not: standing with
+;           more than half of Sprue over its edge is fatal when the moth comes
+;           by. Walk on after landing; coming back west, wait back from it.
+;   column 29  the blaster. A bolt kills a moth that crosses Sprue's row.
+;   vent 3 (columns 37-39), the hardest: a 3-tile gap (22 / 13) with the moth
+;           in the middle column. It lands on the Cinderpeg's floor (columns
+;           40-47): shoot it across the vent first, or time both.
+;   column 41  the airlock, on the Cinderpeg's floor, locked: passed on the way
+;           out, so the player knows the cog lies further on.
+;   vents 4 and 5 (columns 48-49 and 53-54): 2-tile gaps whose moths sweep the
+;           far (east) column, with a floor 3 tiles wide between them. Going
+;           east: onto that floor 33 / 24, letting go at once or after 4 or 8
+;           frames (measured with the protocol of src/core/limits.test.ts),
+;           then on from rest 30 / 24. With the moths, a jump pressed at the lip
+;           wins after 440 of 600 waits at vent 5 (comfort 424).
+;   columns 55-58  the cog, on a block 2 tiles high at the east end (2 up from
+;           the face, any press). The way back crosses vents 5 and 4 from their
+;           east lips, the unsafe ones: wait back from the edge, then go. Vent 5
+;           west onto the 3-tile floor 25 / 20 (the same letting go after 0, 4
+;           or 8 frames), vent 4 west from rest 33 / 24; with the moths a jump
+;           wins after 376 of 600 waits at vent 5 and 340 at vent 4 (comfort
+;           404 and 372). Then the Cinderpeg's floor again, and the airlock.
+; Differences from the plan (docs/LEVELS.md, section 5):
+; - A fifth Arc Moth, in the slot at column 9, so that the first meeting costs
+;   nothing (rule 1), and a sixth, in vent 5. Enemies: 6 Arc Moths (M) and 1
+;   Cinderpeg, not 4 and 1.
+; - The cog is not over vent 4 but on a block at the east end, past a fifth
+;   vent, and the airlock is at column 41, not 56: the cog is fetched, and the
+;   east lips, the unsafe ones, are met on the way back (the twist). With the
+;   cog over vent 4 on the way to the airlock the level was one line east,
+;   about 54 tiles, and a short hop crossed the vent under the cog.
+; - Vent 4 is 2 tiles wide, not 3, so that the last jump before the airlock is
+;   easier than the hardest one (rule 4).
+############################################################
+############################################################
+############################################################
+############################################################
+#.......###...##......##.............###........##...##....#
+#.......###...##......##.............###........##...##....#
+#.......###...##......##.............###........##...##....#
+#.......###...##......##.............###........##...##....#
+#.......#.#................................................#
+#....G..#M#...G...G...G....G.....G....G.....G...G....G.....#
+#.......#.#............M..................................T#
+#.......###......................................M....M..###
+#.P......G..G......G......G..B...........D.G.CG..........###
+##############.M######..#############...########..###..#####
+##############..######..#############.M.########..###..#####
+##############..######..#############...########..###..#####

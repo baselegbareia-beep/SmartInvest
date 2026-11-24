@@ -1,0 +1,64 @@
+@name The Stack
+@teaches The way is up. Falling is free.
+@hardest 9,11 the 3-tile gap rising 1 tile, west off the fire catwalk (18 / 9)
+; Level 4 of 10. A chimney climbed in three flights; nothing but fire can kill.
+; The route, by standing row (0-based columns and rows):
+;   row 22  start beside the locked airlock; run west along the floor, where
+;           three crystals (columns 18, 12 and 6) lead to the stairwell.
+;   west stairwell: a 2-tile step onto the block at columns 1-2, then up 3 over
+;           column 3 (29 / 21). A miss lands back on the floor.
+;   row 17  east: a 3-tile pit at columns 9-11 (22 / 13; a miss lands on the
+;           floor, and the crystal in the pit is free to fall for), then a fire
+;           bed at column 15 (25 / 22).
+;   east stairwell: a 2-tile step onto the block at columns 24-26, then west up
+;           2 over 2 tiles (25 / 16) and up 2 over 1 tile (35 / 27).
+;   row 11  west: two fires sunk in the catwalk (columns 14 and 12) with one
+;           tile of floor between. One jump clears both like a 3-tile gap
+;           (measured 20 / 13) and lands on three tiles of floor; two hops work
+;           too when the second follows at once. The middle tile is a pad 1
+;           tile wide between two fires: no place to stop (rule 3, forbidden
+;           class). Then the hardest jump: 3 tiles rising 1 (18 / 9). A miss
+;           lands on the row-17 catwalk, one flight down.
+;   west stairwell: a 2-tile step onto the block at columns 1-2, then up 3 over
+;           column 3 (29 / 21).
+;   row 5   east: a fire bed at column 14 (25 / 22), a 2-tile step onto the
+;           pedestal, the cog, and a drop of 19 tiles down the flue at column
+;           28, through a column of three crystals, onto the airlock.
+; Differences from the plan (docs/LEVELS.md, section 5):
+; - The plan's tiers were 3 tiles apart with a flue crossed at every tier. With a
+;   floor 3 tiles above, a jump has 2 tiles of headroom and bumps its head, so
+;   the climbing tiers are 6 tiles apart (4 clear tiles over every jump) and the
+;   tiers in between are the stairwell blocks; every rise is still 2 or 3 tiles.
+; - The flue is a shaft 1 tile wide by the east wall, walled off from the climb.
+;   A flue open down the middle would turn every missed jump into a fall to the
+;   floor; here a miss lands one flight down. The drop is 19 tiles, not 18.
+; - Three tiles of floor, not two, between the second fire and the hardest
+;   take-off: the jump over both fires lands on them. Two tiles of floor between
+;   the fires, so that a player could stop there, were tried and dropped: the
+;   pair then spans 4 tiles (a level 4-tile gap in one jump), a late hop over
+;   the first fire lands in the second, and a stop on that 2-tile pad is still
+;   only 14 / 15 frames.
+##############################
+#............................#
+#.............G.....G........#
+#..........................T.#
+#..G.....................###.#
+#.............F..........###.#
+#...########################.#
+#..........................#.#
+#......G.....G.............#G#
+###........................#.#
+###...............G........#.#
+######.....................#.#
+#........###F#F###....G..G.#G#
+#..........................#.#
+#....G....G....G...###.....#.#
+#..........................#.#
+#..G................G...####G#
+#..............F........####.#
+#...#####.G.################.#
+#..........................#.#
+#..........................#.#
+###..........................#
+###...G.....G.....G.....P...D#
+##############################

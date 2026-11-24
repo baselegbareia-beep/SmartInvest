@@ -837,13 +837,18 @@ export interface SettingsData {
 // ---------------------------------------------------------------------------
 
 /**
+ * Every search merges states on a key and keeps one representative per key, so a failure verdict means "no
+ * win among the states the searches kept", never more (docs/ARCHITECTURE.md, section 9.4). A failure is
+ * returned only after every search that applies has run and none won.
  * - 'proven':             a script exists and is returned
  * - 'unsafe-start':       the hero dies without touching a control (after the gate is opened by a harmless fire press)
- * - 'trophy-unreachable': with enemies removed, no manoeuvre sequence reaches the trophy
- * - 'door-unreachable':   the trophy can be reached but the door cannot be reached afterwards
- * - 'blocked-by-enemies': the level is winnable without enemies, but the search with enemies ran out of states
- * - 'no-route':           the quick pass (enemies on) ran out of states without a win; the enemy-free map was
- *                         not built, so the reason is not narrowed down. Run again with alwaysMap for the reason
+ * - 'trophy-unreachable': with enemies removed, the map holds no state with the trophy (and the quick pass found no win)
+ * - 'door-unreachable':   the map holds the trophy but no win (and the quick pass found no win)
+ * - 'blocked-by-enemies': the map wins without enemies, but the searches with enemies ran out of states; only
+ *                         for a level with enemies
+ * - 'no-route':           a search ran out of states and no other stage could name a reason: on a level with
+ *                         thruster packs the quick pass, its only search (the map costs too much; alwaysMap
+ *                         names the reason); on a level without enemies the guided search
  * - 'budget-exceeded':    a step-call budget was spent before any of the verdicts above: nothing is decided
  */
 export type Verdict =
@@ -881,9 +886,10 @@ export interface ValidateOptions {
   /** Weight w of the search order f = ticks + w * estimate, where the estimate is in ticks too. */
   readonly heuristicWeight: number;
   /**
-   * Budget of the quick pass, in step() calls, for a level without thruster packs; when it is spent the
-   * pipeline goes on to the map. A level with packs gives the quick pass all of maxStepCalls instead and has
-   * no map stage, because its map costs more than the quick pass (docs/ARCHITECTURE.md, section 9.4).
+   * Budget of the quick pass, in step() calls, for a level without thruster packs; when it is spent, or the
+   * quick pass runs out of states, the pipeline goes on to the map. A level with packs gives the quick pass
+   * all of maxStepCalls instead and has no map stage, because its map costs more than the quick pass
+   * (docs/ARCHITECTURE.md, section 9.4).
    */
   readonly quickStepCalls: number;
   /** Hard budget: total step() calls for one validateLevel call, all stages together. */
@@ -891,19 +897,28 @@ export interface ValidateOptions {
   /** Idle ticks of the safe-start check. */
   readonly safeStartTicks: number;
   /**
-   * Map first: skip the quick pass, build the exhaustive enemy-free map, then search with enemies guided by
-   * it. When the map finishes inside maxStepCalls it fills unreachableCrystals and names the reason of a
-   * failure. Cheap for a level without a thruster pack, expensive for one with packs (docs/ARCHITECTURE.md,
-   * section 9.6).
+   * Map first: build the exhaustive enemy-free map, then search with enemies guided by it; when those fail,
+   * run the quick pass on what is left of the budget (a win there is 'proven'). When the map finishes inside
+   * maxStepCalls it fills unreachableCrystals and names the reason of a failure. Cheap for a level without a
+   * thruster pack, expensive for one with packs (docs/ARCHITECTURE.md, section 9.6).
    */
   readonly alwaysMap: boolean;
 }
 
+/**
+ * The stage of the pipeline that gave the verdict (docs/ARCHITECTURE.md, section 9.4): stage 0 the safe
+ * start, stage 1 the quick pass, stage 2 the enemy-free map, stage 3 the guided search.
+ */
+export type ProofStage = 'safe-start' | 'quick' | 'map' | 'guided';
+
 /** Deterministic effort counters (the core has no clock; tests time the call themselves). */
 export interface ProofStats {
+  /** Ground and flight states stored by the enemy-free map (0 when it was not built). */
   readonly groundNodes: number;
   readonly flightNodes: number;
+  /** States stored by the searches with enemies (the quick pass and the guided search together). */
   readonly searchNodes: number;
+  /** Every step() call of this validateLevel call: all stages and the closing replay of the script. */
   readonly stepCalls: number;
 }
 
@@ -911,18 +926,23 @@ export interface ProofStats {
 export interface LevelProof {
   readonly levelId: string;
   readonly verdict: Verdict;
+  /** The stage that decided the verdict. */
+  readonly stage: ProofStage;
   /** The winning input script, starting at the first tick after startLevel; null unless proven. */
   readonly script: InputScript | null;
   /** RunState.tick at which trophyCollected is emitted when the script is replayed; -1 unless proven. */
   readonly trophyTick: number;
   /** RunState.tick at which levelCompleted is emitted when the script is replayed; -1 unless proven. */
   readonly winTick: number;
-  /** When not proven: the cell of the closest approach to the goal, to show a level author where to look. */
+  /**
+   * When not proven: the cell of the closest approach to the goal of the stage that named the verdict, to show
+   * a level author where to look.
+   */
   readonly stuckAt: Cell | null;
   /**
    * Crystals that no state of the exhaustive enemy-free map collected. Null when that map was not built or
    * not finished (it is built first with alwaysMap, and otherwise only for a level without thruster packs
-   * whose quick pass ran out of budget). A warning, never a failure.
+   * whose quick pass did not win). A warning, never a failure.
    */
   readonly unreachableCrystals: readonly Cell[] | null;
   readonly stats: ProofStats;

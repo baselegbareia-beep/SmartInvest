@@ -1,0 +1,57 @@
+@name Slag Gaps
+@teaches Mind the gaps. Spikes bite.
+@hardest 43,11 the three-tile pit in the slag floor, level landing (22 / 13)
+; Level 2. One run east over a broken floor; pits and spikes cost a life. It ends on a slag heap
+; with the cog above its top. About 64 tiles.
+; Teach, test, twist: a dry trench first (a miss costs nothing), then open pits and spike beds
+; (a miss costs a life), then the hardest pit, one more pit, and the cog over the heap, where it can
+; be passed under.
+; What is where, by column (0-based), with the class of every required jump (docs/LEVELS.md,
+; section 2; compound ones measured with the protocol of src/core/limits.test.ts, live / comfort):
+;   2      start; nothing within 3 tiles can kill
+;   4-5    dry trench, 2 wide and 2 deep: level 2-tile gap (33 / 24); a miss lands on its floor
+;          and the way out is a 2-tile step up
+;   9-10   open pit, level 2-tile gap (33 / 24, ordinary)
+;   14-16  open pit, 3 tiles dropping 1 to the slag floor (26 / 17, ordinary)
+;   20-21  spike bed sunk 1 tile into the slag floor: jumped like a 2-tile pit (32 / 24, ordinary)
+;   24-29, 32-37  spike beds between crates: hop 1 up onto a crate 3 wide, then jump the 2 spikes
+;          to a 1-wide crate or the safe floor past it. Measured as a pair: the hop has 26 / 23
+;          frames with the spike jump left 18 frames or more (22 / 19 with 22 or more)
+;   38-41  4 tiles of slag floor: the run-up
+;   42-44  the hardest jump: an open pit 3 tiles wide, level, onto a pad 3 tiles wide (cols 45-47)
+;          with the next pit behind it (22 / 13, ordinary, the level's tightest window; read 22 / 13
+;          letting go at once, after 4 and after 8 frames)
+;   48-49  an open pit 2 tiles wide rising 1 onto the deck (29 / 20; read 29 / 20 from a run and from
+;          a standstill at the pad's back): the last deadly obstacle, easier than the one before
+;   52-55  the slag heap: two 2-tile steps up from the face (any press with jump held 7 frames or
+;          more; read 60 / 60, every press tried), to its top at row 6
+;   55,4   the cog, 2 tiles above the heap's top: a hop takes it, walking does not. Passed under,
+;          the airlock stays shut, and a 3-tile step up from the airlock's floor (read 60 / 60)
+;          climbs back. Nothing on the heap can kill
+;   58,9   the airlock, 3 tiles below the heap's top (a drop within sight, rule 5)
+; Crystals: 11 trace the jumps and the heap; 5 are off the route (the trench floor, high over the
+; first pit, above the start, above the slag between the crate beds, high over the pad).
+; Differences from the plan (docs/LEVELS.md, section 5): the first 2-tile pit is a dry trench, so
+; the idea is met once where a miss costs nothing (rule 1). The first spike bed is sunk into the
+; floor instead of standing between crates. The take-off crates are 3 tiles wide, not 1: from a
+; 1-wide crate the hop had 5 frames if the spike jump was to keep 18, or 9 if it kept 14 (live); the
+; landing crates stay 1 wide, because overshooting one lands on safe floor. The pits come in the
+; other order, the level 3-tile pit first and the 2-tile pit rising onto the deck second, so the
+; hardest jump is not the last deadly obstacle (rule 4). The plan's shelf over the deck became a
+; slag heap with the cog above its top: the level climbs at its end instead of staying flat, so it
+; reads differently from level 3, and the cog can still be passed under. The hardest pit is at cols
+; 42-44, the cog at col 55 and the airlock at col 58.
+############################################################
+#..........................................................#
+#..........................................................#
+#..........................................................#
+#......................................................T...#
+#.....................................................G....#
+#.........G................................................#
+#.G.......G....G..............G...............G.....G.##...#
+#....G......................G.......G......G.....G....##...#
+#....................G..............................####..D#
+#.P......................G..........................########
+####..###..###..........###SS#..###SS#............##########
+####G.###..###...###SS####################...###..##########
+#########..###...#########################...###..##########

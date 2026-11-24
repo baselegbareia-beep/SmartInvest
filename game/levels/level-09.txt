@@ -1,0 +1,114 @@
+@name Sorting Line
+@teaches Clear the way, then fly.
+@hardest 26,15 the 4-tile coolant gap on deck 2, landing 1 tile lower (15 / 6), for an empty tank
+@requires blaster
+@requires thruster
+; Level 9 of 10. Both tools together: clear the way with the blaster, then fly. Three decks,
+; snaking: deck 1 east along the floor, lift A up the east end, deck 2 west, lift B up the west
+; end, deck 3 east to the cog and the airlock. About 160 tiles of route.
+; Teach, test, twist: free on deck 1 (a Cinderpeg in a tunnel that cannot reach the porch Sprue
+; shoots from, and the first pack just beyond it); costly before and up lift A (a Cinderpeg between
+; two spike beds, shot or jumped, then a climb past a sweeping Arc Moth) and on deck 2 (coolant gaps
+; under moths, the tight gap); combined at the top of lift B (fly up, land on the porch beside the
+; shaft, shoot the Cinderpeg in the tunnel ahead, walk through): that tunnel, 1 tile high, is the
+; only way on to deck 3, so neither a jump nor a flight skips the shot.
+; What is where, by column and row (0-based), with every window: the table's cell (docs/LEVELS.md,
+; section 2) where one fits, and the reading of a throwaway script on this file, live / comfort,
+; worst of 16 alignments of a run-up. That script reads the table's own rooms about 1 frame low
+; live and 2 low comfort (14 / 4 for 4 tiles dropping 1, 10 / 0 for the level 4-tile gap).
+;   2,21   start, under the last platform of deck 2; nothing moves or kills within 7 tiles
+;   5,21   the blaster
+;   8-16   the porch (col 8, 1 up), a 1-tile dip, and a tunnel 1 tile high (cols 11-16; its mouth,
+;          col 10, is 2 high) with a Cinderpeg walking it. It cannot reach the porch; from the porch,
+;          in its row, one bolt clears it. Nothing else gets past it, so the blaster is needed
+;          before the first pack (rule 9), and without it the @requires run says no-route.
+;   30, 38 two 1-tile spike beds on deck 1, 4 tiles of headroom (27 / 24; script 28 / 24, 26 / 24),
+;          a Cinderpeg walking between them: shoot it from col 29, in its row, or jump it
+;   51,21  pack A at the foot of lift A (cols 50-52): 6 tiles of climb to deck 2, 23 of 80 frames
+;          of fuel left as the feet clear the lip (comfort 15 of 72). An Arc Moth (H) sweeps across
+;          the shaft at row 16, in and out of a niche in the east wall. It is first seen from the
+;          floor of deck 1, 5 tiles below it, where no jump reaches it. Thrust when it heads into
+;          the niche: holding THRUST, and LEFT as well once the feet are above the lip, wins for
+;          106 frames of every 170 (comfort the same).
+;   43-45, 34-36  two coolant gaps in deck 2, 3 tiles wide and level, each under an Arc Moth (M)
+;          bobbing over its middle column (22 / 13 for a pit; script 20 / 11, ordinary: an open
+;          pit reads 21 / 11 here, the coolant lies flush with the floor and a press after walking
+;          off sinks into it). From a standing start on the lip the jump wins for 75 frames of
+;          every 170 of bobbing.
+;   24-27  the hardest jump: a 4-tile coolant gap landing 1 tile lower (15 / 6, tight; the level's
+;          only one; script 15 / 6), after a run-up of 6 tiles under 4 tiles of headroom. The
+;          landing is 4 tiles wide with a harmless dip (col 19) behind it. A little past the middle
+;          of the route. It is tight for a Sprue who arrives with an empty tank. The fuel left over
+;          from lift A (up to 23 frames, comfort 15) turns it into a choice: a jump and a short
+;          thrust at the apex cross even a 5-tile gap (a copy with col 23 in coolant is still
+;          proven). Whether that matters is left to the owner's playtest.
+;   11-18  a Cinderpeg on the last platform, between a crate (col 10) and the dip: it cannot reach
+;          the landing; shoot it from there, in its row, across the dip, or jump it. The crate hop
+;          is ordinary.
+;   4,16   pack B at the foot of lift B: 5 tiles of climb up the shaft (cols 3-4) to the porch at
+;          its top, 33 of 80 frames left as the feet clear it (comfort 25 of 72); a roof 3 tiles
+;          above the porch catches the climb. Holding THRUST from the pack, adding RIGHT and
+;          letting go over the porch lands on it for 71 frames or more of RIGHT press. Too
+;          early keeps Sprue under deck 2's ceiling, too late lets the tank run dry over the shaft:
+;          both only drop him back on deck 2, where pack B comes back once the tank is empty.
+;   5-11   the top of lift B, all in row 11: the porch (cols 5-6), a 1-tile dip (col 7), the
+;          tunnel's mouth (col 8, 2 high), the tunnel (cols 9-10, 1 high) and a hole 1 tile wide
+;          in deck 3's floor (col 11). A Cinderpeg walks cols 8-11, from the dip to the wall at
+;          col 12. It cannot reach the porch; from the porch, in its row, one bolt clears it. The
+;          room over the shaft is closed (a wall over cols 8-10, the roof at row 7), so the tunnel
+;          is the only way on. No hop passes the Cinderpeg: 3.5 million one- and two-hop tries
+;          from the porch and the dip, at every phase of its patrol, found none. A copy without
+;          the blaster that starts by pack B comes back no-route (comfort) and budget-exceeded
+;          (normal), both stuck at col 10 of this tunnel. Deck 1's tunnel again, after a flight.
+;   1-2    a ledge on the shaft's other wall, level with the porch: an optional crystal, and a
+;          second place to shoot from; the jump back to the porch over the shaft wins for 25
+;          frames (comfort 21), and a miss only drops Sprue down the shaft
+;   11     the way up: from the face at the tunnel's end, a jump held 7 frames or more lifts Sprue
+;          through the hole on to deck 3 (2 tiles up, any frame once under the hole)
+;   20, 27, 33-35  deck 3: a 1-tile crate, a 1-tile fire bed (25 / 22; script 25 / 22), a block 2
+;          tiles high
+;   44,9   the cog; 52,9 the airlock, on the same deck: after the cog, everything leads back to
+;          deck 3 (a fall through the hole lands in the tunnel, which leads up again; a fall down
+;          lift B lands at pack B, which comes back when the tank runs dry)
+; Crystals: 15 on the route (the porch hop, the tunnel, the spike arcs, the lane, both lifts, the
+; moth gaps, the hard arc, the crate, the hole up to deck 3, the deck 3 arcs); 7 off it: deck 1's
+; west corner, the moth's niche, high over the lift A landing, just over the coolant of the hard
+; gap, high over the last platform's Cinderpeg, the ledge by lift B, and one high on deck 3.
+; Differences from the plan (docs/LEVELS.md, section 5):
+; - Rule 9: one of deck 1's two Cinderpegs walks a tunnel 1 tile high instead of a floor between
+;   spike beds, so the shot that makes the blaster necessary comes before the first pack. A shot
+;   needed only after both packs cannot be decided inside the @requires budget
+;   (docs/ARCHITECTURE.md, section 9.6); this one decides it, and the second needed shot, at the
+;   top of lift B, then costs the test nothing.
+; - The plan's combined beat put the Cinderpeg on an open lip, shot from a ledge across the shaft.
+;   A fuelled Sprue flew over that lip (or past the Cinderpeg on it), so the shot was never needed.
+;   The Cinderpeg now walks a tunnel 1 tile high behind a porch on the near side of the shaft. A
+;   tunnel starting right at the shaft's edge would leave the ledge with no way back but a flight
+;   into a hole 1 tile high, so the porch and the dip come first and the ledge stays, optional.
+; - The hardest gap is at cols 24-27, not col 22; the cog (col 44) and airlock (col 52) are as
+;   planned. A clean run is nearer 60 s than 71 s (about 160 tiles, rule 10).
+; - The deck 2 gaps are coolant flush with the floor: about a frame less than an open pit.
+########################################################
+########################################################
+########################################################
+########################################################
+########################################################
+############.............................G.............#
+############...............G...........................#
+############........G..................................#
+#.......###......................###...................#
+#.......###G........#......F.....###........T.......D..#
+#........##.############################################
+#G.......C..#...................................G....###
+###..##.#####...G.........G........G........G........###
+###.G########......................M........M......G.###
+###.......G..........................................###
+###..................................................###
+###.J.....#....C.........G..######WWW######WWW####..HG.#
+###################.####WWWW......###......###.......###
+#G........#######..#....####.......................G.###
+#......G...######.............G.......G..............###
+#...........G.C..................G...................###
+#.P..B..#.#######.............S...C...S............J.###
+########################################################
+########################################################

@@ -1,0 +1,48 @@
+@name Cold Start
+@teaches The golden cog opens the airlock.
+@hardest 32,7 the two-tile step up from the stair onto the catwalk's end (35 / 33; jump held 7 frames or more)
+; Level 1. Nothing here can kill: no hazard, no pit (the bottom row is whole), no enemy.
+; The route is a hook, about 60 tiles: east along the floor under the catwalk, up the stair,
+; back west along the catwalk 4 tiles up, take the cog, step off beside the airlock.
+; What is where, by column (0-based) and the class of every required jump (docs/LEVELS.md, section 2):
+;   3      start, open sky above; a crystal 2 tiles up invites the first jump
+;   7      the airlock, locked; the cog is in view on the catwalk above it (col 9), and a column of
+;          crystals hangs over both, out of reach from the floor
+;   13, 21 two 1-tile crates under the catwalk (3 tiles of headroom): a hop onto or over one has
+;          49 / 50 frames (measured), ordinary
+;   31-32  step 1, 1 tile up, under the catwalk's end (2 tiles of headroom): from its foot every
+;          hop lands on it (ordinary)
+;   33-38  step 2, 1 tile up again (ordinary): from step 1 a tap and a full jump both land on it,
+;          the catwalk's end above step 1 does not stop either
+;   32     the hardest jump: turn back west on step 2 and step 2 tiles up onto the catwalk's end
+;          (no gap; ordinary). Measured on this stair: 35 / 33 frames at full speed; from rest it
+;          needs jump held 7 frames or more, and a shorter hold lands back on step 2 at no cost.
+;          The hardest to learn, the longest hold of the level; the tightest window is the gaps
+;   25-26, 17-18  the catwalk's two gaps, 2 tiles wide and level (33 / 24, ordinary; the level's
+;          tightest window); falling through lands on the floor, and the stair is the way back up
+;   8      the catwalk's west end: step off and drop 4 tiles to the airlock. The crystal column at
+;          col 7, rows 4 to 6, shows that the drop is meant (rule 5). It hangs above the drop, not
+;          in it, because a jump from the floor tops out in row 7: in the drop it was taken in the
+;          first seconds and gone when the drop came. A jump off the catwalk's end takes it
+; Crystals: 8 on the route (crate hops, the stair arc, the gap arcs, the drop column), 4 off it
+; (above the start, at the stair's east end, and two high over the catwalk).
+; Difference from the plan: the plan climbs the 2-tile step eastward at col 35 and then returns
+; west along the catwalk; a catwalk 4 tiles up cannot pass back over a stair that climbs east
+; beneath it (it would leave no headroom over the lower steps). So the stair turns: two 1-tile
+; steps east, then the 2-tile step west onto the catwalk, whose end covers step 1. That cover
+; keeps the 2-tile step the only way up: with step 1 open to the sky, a jump 3 tiles straight up
+; from it reached the catwalk and skipped step 2.
+########################################
+#......................................#
+#......................................#
+#......................................#
+#......G....G................G.........#
+#......G..........G.......G............#
+#......G...............................#
+#........T.......................G.....#
+#.......#########..######..######......#
+#..G.........G.......G................G#
+#................................#######
+#..P...D.....#.......#.........#########
+########################################
+########################################

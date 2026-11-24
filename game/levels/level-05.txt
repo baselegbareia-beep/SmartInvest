@@ -1,0 +1,62 @@
+@name Blaster Bay
+@teaches Grab the blaster. One bolt at a time.
+@hardest 28,10 the 3-tile pit onto the Cinderpeg's island (22 / 13)
+@requires blaster
+; Level 5 of 10. The bolt blaster and the Cinderpeg, in three beats, and the cog
+; up on the pen's roof, to be fetched. About 86 tiles.
+; Every shot the route needs is made standing on the ground in the
+; Cinderpeg's own row, from a porch it cannot reach (docs/LEVELS.md, rule 9).
+; 0-based columns and rows.
+;   column 6  the blaster, in a doorway 1 tile wide: it cannot be missed.
+;   beat 1, free: a corridor 1 tile high and 12 long (row 10, columns 11-22)
+;           under a solid block, with a Cinderpeg walking toward Sprue. It turns
+;           at the 1-tile dip at column 10, so it cannot reach the porch at
+;           columns 7-9, which is in its row: a missed shot costs nothing.
+;           Without the blaster the corridor cannot be passed at all, which is
+;           why the level requires it (the @requires run ends
+;           blocked-by-enemies). Into the corridor and out of the dip at its
+;           far end: a hop with jump held for 3 frames or more.
+;   beat 2, costly: a Cinderpeg on an island (columns 32-37) across a 3-tile
+;           pit open to the bottom, the level's one deadly gap. Shoot it from
+;           the bank, which is level with the island, then jump (22 / 13).
+;           Under open sky it can be jumped instead.
+;   beat 3, the two together with the cog: a pen 2 tiles high under a roof
+;           (columns 44-50) holds two Cinderpegs and guards the airlock. The
+;           porch (columns 39-42) is in their row, behind a 1-tile dip at
+;           column 43 where they turn, as in beat 1: Sprue fires from there,
+;           one bolt at a time. The roof runs on to the east wall, so the
+;           airlock's alcove (columns 51-54, 1 tile high) opens only into the
+;           pen: a 1-tile step up out of the pen, jump held for 3 frames or more.
+;   the cog: on a step 2 tiles high at the roof's east end (54,5). A crystal
+;           on the roof, in sight from the porch, leads up there, and from the
+;           roof the cog is in sight. From the porch onto the roof, 3 up over the dip
+;           (29 / 21; read 26 / 21 from a run along the porch, measured with the
+;           protocol of src/core/limits.test.ts; a jump that falls short lands in
+;           the dip, where no Cinderpeg reaches, and a hop climbs out); along the
+;           roof and 2 up onto the step (read 57 / 52); back the same way, then
+;           the pen. Nothing on the roof can kill.
+; Differences from the plan (docs/LEVELS.md, section 5):
+; - The corridor is 1 tile high, not 2. In a corridor 2 tiles high a hop with
+;   jump held for exactly 3 frames, pressed on one exact frame, got past the
+;   Cinderpeg without the blaster; rule 9 says to lower it then.
+; - The cog is not in the pen but on the pen's roof, a branch Sprue goes up to
+;   and comes back from. With the cog in the pen the level was one line east,
+;   about 52 tiles, the shortest in the game; fetching it from the roof makes
+;   it about 86 tiles (rule 10) and makes finding the cog a question. The pen
+;   still guards the airlock, so beat 3 keeps both Cinderpegs and the cog.
+; - The airlock is at column 53, not 52, and the hardest take-off is column 28
+;   (the pit is 29-31).
+########################################################
+#.....#....############................................#
+#.....#....############................................#
+#.....#....############................................#
+#.....#....############............................G...#
+#.....#....############...............................T#
+#.....#....############.............................####
+#.G...#.G..############.......G...G...G........G....####
+#.....#....############.....................############
+#.........G############G..............#..............D.#
+#.P...B......G..G..GC...............C.#......CG..GC#####
+##########.############.#####...###########.############
+#############################...########################
+#############################...########################
