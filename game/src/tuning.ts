@@ -163,6 +163,8 @@ export const TUNING: Tuning = {
     camRiseBandTop: 0.45, // While THRUST is held the top line of the air band slides down to this share of the view (under the top bar), so a flying hero sees 3 tiles above his head.
     camRiseLookSpeed: 1.5, // px/f. How fast that line slides down while thrusting, and back up afterwards. Lower = calmer.
     camVerticalMaxStep: 4, // px/f. The vertical ease never moves the view more than this in one frame (no lurch after a long climb).
+    camFrameDownPx: 32, // px. While he stands, the view may sit up to this much higher than usual (his feet lower on screen, never on the buttons) to show a pack, an enemy, the cog or a crystal that would lie under the top bar. 0 = never.
+    camFrameUpPx: 16, // px. ...or up to this much lower (his feet higher on screen) to bring what lies below him out from under the touch buttons. 0 = never.
   },
 
   // How much of the level is visible. In tiles.

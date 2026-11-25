@@ -201,6 +201,8 @@ const CAM: CameraTuning = Object.freeze({
   camRiseBandTop: 0.45,
   camRiseLookSpeed: 1.5,
   camVerticalMaxStep: 4,
+  camFrameDownPx: 32,
+  camFrameUpPx: 16,
 });
 
 describe('the whole loop: stepper, gate, camera and lerpPx together keep the hero still on screen', () => {

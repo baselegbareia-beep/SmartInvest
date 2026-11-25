@@ -15,6 +15,8 @@ import { TUNING } from '../tuning';
 import { cameraTarget, levelSize, padReach, snapCamera, stepCamera } from './camera';
 import type { CameraState, PadReach } from './camera';
 import { chooseView, cssPerArtPx } from './chooseView';
+import { NO_COUNTS, addCounts, measureRoute, shippedCamera, shippedPopups } from './routeMeasure';
+import type { RouteCounts, Sighting, WatchWindow } from './routeMeasure';
 
 /**
  * The ten campaign proofs (`e2e/scripts/level-NN.json`, the routes `e2e/levels.spec.ts` replays) seen through
@@ -203,5 +205,88 @@ describe('the ten proofs through the shipped camera and pad: nothing a take-off 
       const alone = layoutControls(w.w, w.h, safe, TUNING.touch, { fireBesideJump: true }).buttons.fire;
       expect((alone.y - view.cssTop) / k, `${w.name}: FIRE beside JUMP, top`).toBeGreaterThan(feetLine);
     }
+  });
+});
+
+/**
+ * The whole route watch as numbers (`routeMeasure.ts`): the ten proofs and the two rooms, played on the real core and seen
+ * through the shipped camera (with its standing framing), the pad as laid out on each window, and the score pop-ups as
+ * Effects places them, on the phone windows of the route watch and a desktop, each with the touch pad and with keys.
+ *
+ * The ceilings are the numbers of this build (24 November 2026, after the re-check's fixes); the numbers before them,
+ * on the camera and pop-ups of commit 0983171, are in the comments (thing-ticks, or ticks). Measured on the live
+ * tuning, as tests/levelScripts.test.ts reads the scripts: a change to the camera, view or touch numbers, the pad's
+ * layout or a level can move them. Lower is better everywhere; when a change lowers one, lower its ceiling here.
+ */
+describe('the route watch, counted: nothing worse than this build on any window, the hero never under the bar or a button, no pop-up on another, on him or on the bar', () => {
+  const ids = [...CAMPAIGN_IDS, 'test', 'debug'];
+  const routes = ids.map((id) => ({
+    id,
+    level: parseLevel(readFileSync(new URL(`../../levels/${id}.txt`, import.meta.url), 'utf8'), id),
+    script: JSON.parse(readFileSync(new URL(`../../e2e/scripts/${id}.json`, import.meta.url), 'utf8')) as InputScript,
+  }));
+  const phones = [
+    { name: '568 x 320 @2', w: 568, h: 320, dpr: 2 },
+    { name: '844 x 390 @3', w: 844, h: 390, dpr: 3 },
+    { name: '740 x 360 @4', w: 740, h: 360, dpr: 4 },
+    { name: '568 x 232 @2 (a tab)', w: 568, h: 232, dpr: 2 },
+    { name: '1280 x 720 @1', w: 1280, h: 720, dpr: 1 },
+  ];
+  type Ceiling = Pick<RouteCounts, 'stripThings' | 'stripThingsNoCrystal' | 'ahead6' | 'ahead4' | 'risingTight' | 'beyondBottom' | 'beyondSide' | 'hiddenNear'>;
+  // (a) things at least half under the top bar's strip (and without the crystals); (b) things 0-6 and 0-4 tiles ahead
+  // under a drawn button; (d) rising ticks with less than a tile clear above his head; (e) ticks showing what lies
+  // below the level or beyond a side wall; (g) the cog, a pack, the blaster or the open airlock near him, not clearly seen.
+  const CEILING: Record<string, Ceiling> = {
+    // before: 3208, 1817, 763, 146, 936, 5142, 3683, 321
+    '568 x 320 @2 touch': { stripThings: 1866, stripThingsNoCrystal: 715, ahead6: 571, ahead4: 143, risingTight: 886, beyondBottom: 5142, beyondSide: 3683, hiddenNear: 252 },
+    // before: 2986, 790, 0, 0, 615, 0, 0, 237
+    '568 x 320 @2 keys': { stripThings: 2813, stripThingsNoCrystal: 717, ahead6: 0, ahead4: 0, risingTight: 602, beyondBottom: 0, beyondSide: 0, hiddenNear: 237 },
+    // before: 3444, 1416, 34, 0, 599, 5324, 4873, 265
+    '844 x 390 @3 touch': { stripThings: 2414, stripThingsNoCrystal: 738, ahead6: 34, ahead4: 0, risingTight: 590, beyondBottom: 5324, beyondSide: 4873, hiddenNear: 204 },
+    // before: 1795, 838, 0, 0, 472, 0, 0, 160
+    '844 x 390 @3 keys': { stripThings: 1776, stripThingsNoCrystal: 838, ahead6: 0, ahead4: 0, risingTight: 467, beyondBottom: 0, beyondSide: 0, hiddenNear: 160 },
+    // before: 3540, 1935, 74, 3, 927, 5107, 4334, 281
+    '740 x 360 @4 touch': { stripThings: 1728, stripThingsNoCrystal: 690, ahead6: 74, ahead4: 3, risingTight: 887, beyondBottom: 5107, beyondSide: 4334, hiddenNear: 213 },
+    // before: 3347, 844, 0, 0, 615, 0, 0, 215
+    '740 x 360 @4 keys': { stripThings: 3112, stripThingsNoCrystal: 740, ahead6: 0, ahead4: 0, risingTight: 602, beyondBottom: 0, beyondSide: 0, hiddenNear: 215 },
+    // before: 3342, 844, 152, 18, 96, 7110, 6827, 111
+    '568 x 232 @2 (a tab) touch': { stripThings: 2438, stripThingsNoCrystal: 537, ahead6: 152, ahead4: 18, risingTight: 96, beyondBottom: 7110, beyondSide: 6827, hiddenNear: 46 },
+    // before: 2302, 266, 0, 0, 96, 0, 0, 2
+    '568 x 232 @2 (a tab) keys': { stripThings: 2302, stripThingsNoCrystal: 266, ahead6: 0, ahead4: 0, risingTight: 96, beyondBottom: 0, beyondSide: 0, hiddenNear: 2 },
+    // before: 3385, 1191, 2, 0, 378, 5545, 4224, 186
+    '1280 x 720 @1 touch': { stripThings: 3009, stripThingsNoCrystal: 1175, ahead6: 2, ahead4: 0, risingTight: 370, beyondBottom: 5454, beyondSide: 4224, hiddenNear: 167 },
+    // before: 2384, 1344, 0, 0, 327, 0, 0, 129
+    '1280 x 720 @1 keys': { stripThings: 2384, stripThingsNoCrystal: 1344, ahead6: 0, ahead4: 0, risingTight: 327, beyondBottom: 0, beyondSide: 0, hiddenNear: 129 },
+  };
+  const windows: WatchWindow[] = phones.flatMap((p) => [
+    { ...p, name: `${p.name} touch`, touch: true },
+    { ...p, name: `${p.name} keys`, touch: false },
+  ]);
+  const camera = shippedCamera(TUNING);
+
+  it.each(windows)('$name', (w) => {
+    let total: RouteCounts = { ...NO_COUNTS };
+    const seen: Sighting[] = [];
+    for (const r of routes) {
+      const list: Sighting[] = [];
+      total = addCounts(total, measureRoute(r.level, r.script, PHYS, TUNING, w, camera, shippedPopups(), list));
+      seen.push(...list.filter((s) => s.what === 'heroStrip' || s.what === 'heroButton' || s.what.startsWith('popup')).map((s) => ({ ...s, thing: `${r.id}: ${s.thing}` })));
+    }
+    expect(total.ticks, 'the routes were played').toBeGreaterThan(10_000);
+    // (c) and (f): never.
+    expect(seen.slice(0, 5), 'the hero under the strip or a button; pop-ups on each other, on him or on the bar').toEqual([]);
+    const ceiling = CEILING[w.name];
+    if (!ceiling) throw new Error(`no ceiling for ${w.name}`);
+    for (const [k, max] of Object.entries(ceiling) as [keyof Ceiling, number][]) expect(total[k], `${w.name}: ${k}`).toBeLessThanOrEqual(max);
+  });
+
+  it("level 9 on the 568 x 320 phone (touch): the deck-2 pack, Cinderpeg 3 and the Arc Moths are never in the top bar's row (the re-check: 96, 59 and 99 ticks)", () => {
+    const r = routes.find((x) => x.id === 'level-09');
+    if (!r) throw new Error('no level 9');
+    const list: Sighting[] = [];
+    measureRoute(r.level, r.script, PHYS, TUNING, { name: 'se', w: 568, h: 320, dpr: 2, touch: true }, camera, shippedPopups(), list);
+    const strip = list.filter((s) => s.what === 'stripThings');
+    expect(strip.filter((s) => s.thing === 'thruster 4,16' || s.thing === 'cinderpeg 3')).toEqual([]);
+    expect(strip.filter((s) => s.thing.startsWith('moth')).length, 'the moths: 99 thing-ticks before').toBeLessThanOrEqual(18);
   });
 });

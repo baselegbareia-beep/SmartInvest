@@ -30,7 +30,7 @@
  */
 import * as Phaser from 'phaser';
 
-import { FONT_LINE_HEIGHT, FONT_SIZE, textWidth } from '../art/font';
+import { FONT_SIZE, textWidth } from '../art/font';
 import { ENEMY_SPRITE, FONT_KEY, FX_SCRAP_FRAMES, TEXTURE_KEY, TILE_SIZE } from '../art/manifest';
 import { COLOR } from '../art/palette';
 import { SUB_SHIFT, TILE_PX } from '../core/types';
@@ -47,14 +47,15 @@ import {
   FlashTimer,
   POINTER_TICKS,
   POPUP_FRAMES,
+  POPUP_H,
+  POPUP_POOL,
+  PopupBoard,
   ShakeTimer,
   emberDue,
   fireCells,
   popupAnchor,
-  popupClampY,
-  popupRise,
 } from './fxModel';
-import { POPUP_TOP, POPUP_TOP_UNDER_TOAST, STRIP_H } from './hudModel';
+import { STRIP_H } from './hudModel';
 import { prefersReducedMotion } from './motion';
 import { airlockPointer, heroDrawX, heroDrawY, overlayAt } from './viewModel';
 import type { EdgeInsets, Point, PointerPlace } from './viewModel';
@@ -105,14 +106,15 @@ const MOTION = {
 
 /** fx_poof plays its 4 frames at this many frames each. */
 const POOF_FRAME_TICKS = 3;
-/** Pools: more than this many at once is never needed (the oldest is reused). */
-const POPUP_POOL = 6;
+/** Pools: more than this many at once is never needed (the oldest is reused). Pop-ups: POPUP_POOL. */
 const POOF_POOL = 3;
 /** While running on the ground a puff of dust every this many ticks; while thrusting an exhaust spark every this many. */
 const RUN_DUST_EVERY = 10;
 const THRUST_SPARK_EVERY = 2;
 /** Pop-ups start this far above the centre of what scored: just above a 16 px thing. */
 const POPUP_LIFT_PX = 16;
+/** The fuel bar's top over the hero's sprite while he thrusts (WorldView: a 2 px bar 3 px above it). */
+const FUELBAR_RISE = 5;
 /**
  * Where the airlock pointer's centre may go: clear of the top bar (y 3..11) and its toast (y 16..23),
  * and above the thumbs' buttons in the lower corners (on a phone about 50 art px tall).
@@ -139,13 +141,6 @@ class FxParticle extends Phaser.GameObjects.Particles.Particle {
     }
     return dead;
   }
-}
-
-interface Popup {
-  readonly text: Phaser.GameObjects.BitmapText;
-  x: number;
-  y: number;
-  age: number;
 }
 
 interface Poof {
@@ -175,7 +170,13 @@ export class Effects implements EffectsApi {
   private readonly flashRect: Phaser.GameObjects.Rectangle;
   private readonly fadeRect: Phaser.GameObjects.Rectangle;
   private readonly pointer: Phaser.GameObjects.Image;
-  private readonly popups: Popup[] = [];
+  /** One text per slot of `board`, the same index. */
+  private readonly popupTexts: Phaser.GameObjects.BitmapText[] = [];
+  /** Where the score pop-ups go (fxModel): risen, kept out of the top bar and the toast, off each other and off the hero. */
+  private readonly board: PopupBoard;
+  /** The hero's sprite (and fuel bar) as of the last tick, world px: pop-ups keep off it. */
+  private readonly heroBox = { x: 0, y: 0, w: TILE_SIZE, h: TILE_SIZE };
+  private heroShown = false;
   private readonly poofs: Poof[] = [];
   private readonly flashes: Flash[] = [];
   private readonly reducedMotion: boolean;
@@ -224,19 +225,32 @@ export class Effects implements EffectsApi {
 
   /**
    * Test hook only: particles alive, how strong the screen flash and the fade are as drawn now (0 = none), the
-   * score pop-ups on screen, how far the highest-risen of them is drawn above where it appeared, px (0 under
-   * reduced motion), the top of the highest one in view px, and which way the airlock pointer points (null: hidden).
+   * score pop-ups on screen, how far the highest-risen of them is drawn above where it was first drawn, px (0 under
+   * reduced motion), the top of the highest one in view px, each one's box in view px (its 1 px shadow included),
+   * and which way the airlock pointer points (null: hidden).
    */
-  shown(): { particles: number; flash: number; fade: number; popups: number; popupRise: number; popupTop: number | null; pointer: string | null } {
+  shown(): {
+    particles: number;
+    flash: number;
+    fade: number;
+    popups: number;
+    popupRise: number;
+    popupTop: number | null;
+    popupBoxes: { x: number; y: number; w: number; h: number }[];
+    pointer: string | null;
+  } {
     let popups = 0;
     let popupRise = 0;
     let popupTop: number | null = null;
-    for (const p of this.popups) {
-      if (!p.text.visible) continue;
+    const popupBoxes: { x: number; y: number; w: number; h: number }[] = [];
+    for (const p of this.board.slots) {
+      const text = this.popupTexts[this.board.slots.indexOf(p)];
+      if (!text?.visible) continue;
       popups += 1;
-      popupRise = Math.max(popupRise, p.y - p.text.y);
-      const top = p.text.y - this.camY;
+      popupRise = Math.max(popupRise, (Number.isNaN(p.firstY) ? text.y : p.firstY) - text.y);
+      const top = text.y - this.camY;
       popupTop = popupTop === null ? top : Math.min(popupTop, top);
+      popupBoxes.push({ x: text.x - this.camX, y: top, w: p.w, h: POPUP_H });
     }
     return {
       particles: this.emitter.getAliveParticleCount() + this.tinted.getAliveParticleCount(),
@@ -245,6 +259,7 @@ export class Effects implements EffectsApi {
       popups,
       popupRise,
       popupTop,
+      popupBoxes,
       pointer: this.pointer.visible ? this.pointerAt.dir : null,
     };
   }
@@ -252,6 +267,7 @@ export class Effects implements EffectsApi {
   constructor(scene: Phaser.Scene, spriteOf: SpriteLookup) {
     this.spriteOf = spriteOf;
     this.reducedMotion = prefersReducedMotion();
+    this.board = new PopupBoard(this.reducedMotion, POPUP_POOL);
     // Two emitters, burst-only, 48 particles between them: one for what is drawn in its own colours (dust, scrap),
     // one for the tinted sparks and sparkles over pure white frames. No tint in their configs: the colour is set
     // per burst (docs/PHASER4-NOTES.md section 10). maxAliveParticles, not maxParticles: Phaser counts the pool of
@@ -296,8 +312,7 @@ export class Effects implements EffectsApi {
       .setVisible(false);
 
     for (let i = 0; i < POPUP_POOL; i++) {
-      const text = scene.add.bitmapText(0, 0, FONT_KEY, '', FONT_SIZE).setTint(COLOR.gold).setDropShadow(1, 1, COLOR.void, 1).setDepth(DEPTH.popup).setVisible(false);
-      this.popups.push({ text, x: 0, y: 0, age: POPUP_FRAMES });
+      this.popupTexts.push(scene.add.bitmapText(0, 0, FONT_KEY, '', FONT_SIZE).setTint(COLOR.gold).setDropShadow(1, 1, COLOR.void, 1).setDepth(DEPTH.popup).setVisible(false));
     }
     this.poofFrames = framesOf('fx_poof');
     const poofLength = this.poofFrames.length * POOF_FRAME_TICKS;
@@ -326,11 +341,10 @@ export class Effects implements EffectsApi {
    */
   update(frames: number, game: GameState): void {
     if (frames > 0) {
-      for (const p of this.popups) {
-        if (p.age >= POPUP_FRAMES) continue;
-        p.age += frames;
-        if (p.age >= POPUP_FRAMES) p.text.setVisible(false); // placed in `place`, under the top bar
-      }
+      this.board.advance(frames);
+      this.board.slots.forEach((p, i) => {
+        if (p.age >= POPUP_FRAMES) this.popupTexts[i]?.setVisible(false); // the others are placed in `place`
+      });
       const poofLength = this.poofFrames.length * POOF_FRAME_TICKS;
       for (const poof of this.poofs) {
         if (poof.age >= poofLength) continue;
@@ -362,12 +376,9 @@ export class Effects implements EffectsApi {
     this.toastUp = toastUp;
     const level = this.level;
     const tick = game.run.tick;
-    // Score pop-ups: risen by their age, but never into the top bar, nor into the toast's band while it shows.
-    const minTop = toastUp ? POPUP_TOP_UNDER_TOAST : POPUP_TOP;
-    for (const p of this.popups) {
-      if (p.age >= POPUP_FRAMES) continue;
-      p.text.setPosition(p.x, popupClampY(p.y - this.rise(p.age), camY, minTop));
-    }
+    // Score pop-ups: risen by their age, but never into the top bar, nor into the toast's band while it shows, nor
+    // over each other or the hero (fxModel's PopupBoard).
+    this.placePopups();
     // The airlock pointer: from the cog on, whenever the airlock is off screen (or only dimmed under the top bar);
     // nudging at full strength for its first POINTER_TICKS, then still and dimmed.
     const at =
@@ -444,28 +455,18 @@ export class Effects implements EffectsApi {
    * would print `+10+10` on one line: a pop-up that would overlap one still rising goes a line above it.
    */
   popup(text: string, x: number, y: number): void {
-    let free: Popup | undefined;
-    for (const p of this.popups) if (free === undefined || p.age > free.age) free = p; // a finished one, or the oldest
-    if (!free) return;
-    free.text.setText(text);
-    free.x = Math.round(x - free.text.width / 2);
-    free.y = Math.round(y);
-    free.age = 0;
-    const w = free.text.width;
-    for (let tries = 0; tries < POPUP_POOL; tries++) {
-      let moved = false;
-      for (const p of this.popups) {
-        if (p === free || p.age >= POPUP_FRAMES) continue;
-        const py = p.y - this.rise(p.age);
-        if (Math.abs(p.x - free.x) <= w && Math.abs(py - free.y) < FONT_LINE_HEIGHT) {
-          free.y = py - FONT_LINE_HEIGHT;
-          moved = true;
-        }
-      }
-      if (!moved) break;
-    }
     // The cog's own +100 comes with the toast, which the HUD puts up on the same tick: below its band from the start.
-    free.text.setPosition(free.x, popupClampY(free.y, this.camY, this.toastUp || this.cogNow ? POPUP_TOP_UNDER_TOAST : POPUP_TOP)).setVisible(true);
+    const slot = this.board.spawn(textWidth(text), x, y, this.camY, this.toastUp || this.cogNow);
+    this.popupTexts[this.board.slots.indexOf(slot)]?.setText(text).setVisible(true);
+    this.placePopups();
+  }
+
+  /** Every pop-up shown, placed for the view as last drawn and the hero as of the last tick. */
+  private placePopups(): void {
+    this.board.place(this.camY, this.toastUp || this.cogNow, this.heroShown ? this.heroBox : null);
+    this.board.slots.forEach((p, i) => {
+      if (p.age < POPUP_FRAMES) this.popupTexts[i]?.setPosition(p.drawX, p.drawY);
+    });
   }
 
   /** The whole view flashes a colour at `alpha`, fading over `frames`. Off under reduced motion. */
@@ -486,10 +487,8 @@ export class Effects implements EffectsApi {
   clear(): void {
     this.emitter.killAll();
     this.tinted.killAll();
-    for (const p of this.popups) {
-      p.age = POPUP_FRAMES;
-      p.text.setVisible(false);
-    }
+    this.board.clear();
+    for (const text of this.popupTexts) text.setVisible(false);
     const poofLength = this.poofFrames.length * POOF_FRAME_TICKS;
     for (const poof of this.poofs) {
       poof.age = poofLength;
@@ -524,6 +523,12 @@ export class Effects implements EffectsApi {
     const playing = run.phase === 'playing';
     this.heroRising = playing && !p.onGround && p.vy < 0;
     this.heroSide = p.vx > 0 ? 1 : p.vx < 0 ? -1 : p.facing;
+    // The hero's sprite, and the fuel bar over it while he thrusts: pop-ups keep off both (FUELBAR_RISE, WorldView).
+    const burning = playing && p.thrusting;
+    this.heroShown = run.phase === 'playing' || run.phase === 'ready';
+    this.heroBox.x = heroDrawX(p, phys);
+    this.heroBox.y = heroDrawY(p, phys) - (burning ? FUELBAR_RISE : 0);
+    this.heroBox.h = TILE_SIZE + (burning ? FUELBAR_RISE : 0);
     const feet = toPx(p.y + phys.heroH);
     this.fall.observe(playing, p.onGround, feet);
     this.embers(run.tick);
@@ -682,11 +687,6 @@ export class Effects implements EffectsApi {
     const text = `+${score}`;
     const at = popupAnchor(x, y, POPUP_LIFT_PX, this.heroRising, this.heroSide, textWidth(text), this.popupAt);
     this.popup(text, at.x, at.y);
-  }
-
-  /** How far a pop-up has risen at `age` frames: not at all under reduced motion. */
-  private rise(age: number): number {
-    return this.reducedMotion ? 0 : popupRise(age);
   }
 
   /** The enemy's white flash is over: fx_poof, its scrap (legs and plates) and the pop-up. */

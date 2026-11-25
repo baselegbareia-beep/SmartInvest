@@ -246,6 +246,10 @@ export interface CameraTuning {
   readonly camRiseLookSpeed: number;
   /** The vertical ease never moves the view more than this per tick, px/f. */
   readonly camVerticalMaxStep: number;
+  /** While the hero stands, his feet may rest up to this far below the anchor on screen to bring things above out from under the top bar, px. */
+  readonly camFrameDownPx: number;
+  /** ...or up to this far above it to bring things below out from under the touch buttons, px. */
+  readonly camFrameUpPx: number;
 }
 
 /** Shell only. Integer scaling policy (ruling R11), in tiles. */

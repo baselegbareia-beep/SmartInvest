@@ -23,7 +23,7 @@ import { CAMPAIGN } from '../levels';
 import { TUNING } from '../tuning';
 
 import { padReach } from './camera';
-import type { PadReach } from './camera';
+import type { PadButtonsOnView, PadReach } from './camera';
 import type { View } from './chooseView';
 import { cssPerArtPx } from './chooseView';
 import type { SaveStore } from './EventRouter';
@@ -160,6 +160,37 @@ export function padReachNow(out: PadReach): PadReach {
   rightButtons[2] = buttons.thrust;
   rightButtons[3] = buttons.pause;
   return padReach(moveButtons, rightButtons, canvasRect, k, out);
+}
+
+/** Reused by padButtonsOnView every tick: the pad's buttons over the view, art px. */
+const buttonsOnView = {
+  left: { x: 0, y: 0, w: 0, h: 0 },
+  right: { x: 0, y: 0, w: 0, h: 0 },
+  jump: { x: 0, y: 0, w: 0, h: 0 },
+  fire: { x: 0, y: 0, w: 0, h: 0 },
+  thrust: { x: 0, y: 0, w: 0, h: 0 },
+  pause: { x: 0, y: 0, w: 0, h: 0 },
+};
+const PAD_IDS = ['left', 'right', 'jump', 'fire', 'thrust', 'pause'] as const;
+
+/**
+ * The touch pad's buttons over the view now, art px of the view (FIRE and THRUST in their places whether or not
+ * drawn: the camera reads the items held); null unless touch mode is on. The camera frames a standing hero so that
+ * what is near him is clear of them (camera.ts, `frameShift`). Allocates nothing; the Play scene asks every tick.
+ */
+export function padButtonsOnView(): PadButtonsOnView | null {
+  const buttons = pad.buttonsOnPage();
+  if (!appliedView || !buttons || !app.classList.contains('touch')) return null;
+  const k = cssPerArtPx(appliedView, appliedDpr);
+  for (const id of PAD_IDS) {
+    const r = buttons[id];
+    const out = buttonsOnView[id];
+    out.x = (r.x - appliedView.cssLeft) / k;
+    out.y = (r.y - appliedView.cssTop) / k;
+    out.w = r.w / k;
+    out.h = r.h / k;
+  }
+  return buttonsOnView;
 }
 
 // ---------------------------------------------------------------------------------------

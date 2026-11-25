@@ -7,8 +7,11 @@
  * frames, the cog's 20 % flash for 4 frames, the enemy's 2-frame white flash, the airlock pointer's
  * 180 ticks, an ember every 20 ticks.
  */
+import { FONT_CELL_H, FONT_LINE_HEIGHT } from '../art/font';
 import { Tile } from '../core/types';
 import type { LevelData } from '../core/types';
+
+import { POPUP_TOP, POPUP_TOP_UNDER_TOAST } from './hudModel';
 
 /** Score pop-ups rise this far over this many 60 Hz frames, then vanish. */
 export const POPUP_RISE_PX = 12;
@@ -52,6 +55,176 @@ export function popupAnchor(x: number, y: number, lift: number, rising: boolean,
 /** How far a pop-up has risen `age` frames after it appeared: whole px, 0 to POPUP_RISE_PX. */
 export function popupRise(age: number): number {
   return Math.round((POPUP_RISE_PX * Math.min(Math.max(age, 0), POPUP_FRAMES)) / POPUP_FRAMES);
+}
+
+/** A pop-up's height as drawn: a 7 px glyph row and its 1 px drop shadow (the font's cell). */
+export const POPUP_H = FONT_CELL_H;
+/** At most this many score pop-ups at once (the oldest is reused). */
+export const POPUP_POOL = 6;
+
+/** A rectangle in world art px. */
+export interface PxRect {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+}
+
+/** One score pop-up on the board: where it appeared (world px, its top-left corner), its width, its age, where it is drawn now. */
+export interface PopupSlot {
+  x: number;
+  y: number;
+  w: number;
+  /** Frames since it appeared; POPUP_FRAMES or more: gone (the slot is free). */
+  age: number;
+  /** Spawn order: older pop-ups are placed first and keep their place. */
+  seq: number;
+  /** Where to draw it this frame (world px), set by `place`. */
+  drawX: number;
+  drawY: number;
+  /** Where it was first drawn (world px, its top); NaN until placed. Under reduced motion it stays there. */
+  firstY: number;
+}
+
+const rectsMeet = (a: PxRect, b: PxRect): boolean => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
+/**
+ * Where the score pop-ups are drawn (docs/ART-AND-SOUND.md section 13), as numbers: Effects draws one text per
+ * slot at (`drawX`, `drawY`). Each pop-up rises POPUP_RISE_PX over POPUP_FRAMES from where it appeared, and is
+ * then placed, every frame, oldest first, by three rules:
+ * - never into the top bar: its top stays at POPUP_TOP or lower in the view, and at POPUP_TOP_UNDER_TOAST while the
+ *   cog's toast shows (the score and the toast's words are never covered);
+ * - never over another pop-up already placed;
+ * - never over the hero's sprite (and the fuel bar over it).
+ * Where its own place breaks a rule, it takes the nearest free place that keeps them: pushed down under the
+ * pop-ups above it, or beside, above or below the hero. Under reduced motion a pop-up is placed so once, when it
+ * appears, and then stays (moved down only if the view scrolls it into the bar). Before, a pop-up held under the toast's band was simply
+ * moved down to that row: the cog's `+100` and a crystal's `+10` were drawn in one row, across the hero (the route
+ * watch's re-check, levels 1 and 2 at the cog).
+ */
+export class PopupBoard {
+  readonly slots: PopupSlot[];
+  private seq = 0;
+  private readonly placed: PxRect[] = [];
+
+  constructor(
+    private readonly reducedMotion: boolean,
+    size = POPUP_POOL,
+  ) {
+    this.slots = Array.from({ length: size }, () => ({ x: 0, y: 0, w: 0, age: POPUP_FRAMES, seq: 0, drawX: 0, drawY: 0, firstY: Number.NaN }));
+  }
+
+  /** Every pop-up gone. */
+  clear(): void {
+    for (const s of this.slots) s.age = POPUP_FRAMES;
+  }
+
+  /** How far a pop-up has risen at `age`: not at all under reduced motion. */
+  rise(age: number): number {
+    return this.reducedMotion ? 0 : popupRise(age);
+  }
+
+  /**
+   * A new pop-up `w` px wide, centred on `x`, its top at `y` (world px), placed at once for the scroll `camY` (and
+   * the toast, `toastUp`). Two crystals side by side would print `+10+10` on one line: a pop-up that would overlap
+   * one still rising starts a line above it. Answers the slot used (a free one, else the oldest).
+   */
+  spawn(w: number, x: number, y: number, camY: number, toastUp: boolean): PopupSlot {
+    let free = this.slots[0] as PopupSlot;
+    for (const s of this.slots) if (s.age > free.age) free = s;
+    free.w = w;
+    free.x = Math.round(x - w / 2);
+    free.y = Math.round(y);
+    free.age = 0;
+    free.seq = ++this.seq;
+    free.firstY = Number.NaN;
+    for (let tries = 0; tries < this.slots.length; tries++) {
+      let moved = false;
+      for (const p of this.slots) {
+        if (p === free || p.age >= POPUP_FRAMES) continue;
+        const py = p.y - this.rise(p.age);
+        if (p.x < free.x + w && free.x < p.x + p.w && Math.abs(py - free.y) < FONT_LINE_HEIGHT) {
+          free.y = py - FONT_LINE_HEIGHT;
+          moved = true;
+        }
+      }
+      if (!moved) break;
+    }
+    free.drawX = free.x;
+    free.drawY = popupClampY(free.y - this.rise(0), camY, toastUp ? POPUP_TOP_UNDER_TOAST : POPUP_TOP);
+    return free;
+  }
+
+  /** `frames` 60 Hz frames went by: every pop-up ages; at POPUP_FRAMES it is gone. */
+  advance(frames: number): void {
+    if (frames <= 0) return;
+    for (const s of this.slots) if (s.age < POPUP_FRAMES) s.age += frames;
+  }
+
+  /** The pop-ups shown now, oldest first. */
+  shown(): PopupSlot[] {
+    return this.slots.filter((s) => s.age < POPUP_FRAMES).sort((a, b) => a.seq - b.seq);
+  }
+
+  /**
+   * Places every pop-up for this frame (`drawX`, `drawY`): risen by its age, then by the rules above, for the
+   * view's scroll `camY`, the toast (`toastUp`) and the hero's sprite `hero` (world px; null: not drawn).
+   */
+  place(camY: number, toastUp: boolean, hero: PxRect | null): void {
+    const minTop = camY + (toastUp ? POPUP_TOP_UNDER_TOAST : POPUP_TOP);
+    const placed = this.placed;
+    placed.length = 0;
+    for (const s of this.shown()) {
+      // Under reduced motion a pop-up stays where it was first drawn (ART-AND-SOUND section 13), moved only down,
+      // and only as far as the bar's rule asks.
+      const still = this.reducedMotion && !Number.isNaN(s.firstY);
+      const want = still ? { x: s.drawX, y: Math.max(s.firstY, minTop), w: s.w, h: POPUP_H } : { x: s.x, y: Math.max(s.y - this.rise(s.age), minTop), w: s.w, h: POPUP_H };
+      const at = still ? want : this.free(want, minTop, hero);
+      s.drawX = at.x;
+      s.drawY = at.y;
+      if (Number.isNaN(s.firstY)) s.firstY = at.y;
+      placed.push(at);
+    }
+  }
+
+  /** The free place nearest `want` (no higher than `minTop`, clear of the hero and of the pop-ups placed so far). */
+  private free(want: PxRect, minTop: number, hero: PxRect | null): PxRect {
+    const blocked = (r: PxRect): boolean => (hero !== null && rectsMeet(r, hero)) || this.placed.some((q) => rectsMeet(r, q));
+    if (!blocked(want)) return want;
+    const starts: PxRect[] = [want];
+    if (hero) {
+      starts.push(
+        { ...want, x: hero.x - want.w - 1 },
+        { ...want, x: hero.x + hero.w + 1 },
+        { ...want, y: Math.max(minTop, hero.y - want.h - 1) },
+        { ...want, y: hero.y + hero.h + 1 },
+      );
+    }
+    let best: PxRect | null = null;
+    let bestCost = Infinity;
+    for (const start of starts) {
+      const r = this.pushDown(start, hero);
+      if (blocked(r)) continue;
+      const cost = Math.abs(r.x - want.x) + Math.abs(r.y - want.y);
+      if (cost < bestCost) {
+        best = r;
+        bestCost = cost;
+      }
+    }
+    return best ?? this.pushDown(want, hero);
+  }
+
+  /** `r` moved straight down until it is clear of every pop-up placed so far and of the hero. */
+  private pushDown(r: PxRect, hero: PxRect | null): PxRect {
+    let y = r.y;
+    for (let guard = 0; guard <= this.placed.length + 1; guard++) {
+      const at = { ...r, y };
+      const hit = [...this.placed, ...(hero ? [hero] : [])].find((q) => rectsMeet(at, q));
+      if (!hit) break;
+      y = hit.y + hit.h;
+    }
+    return { ...r, y };
+  }
 }
 
 /**

@@ -7,7 +7,9 @@ import {
   FallTracker,
   FlashTimer,
   POPUP_FRAMES,
+  POPUP_H,
   POPUP_RISE_PX,
+  PopupBoard,
   ShakeTimer,
   emberDue,
   fireCells,
@@ -56,6 +58,93 @@ describe('score pop-ups stay out of the top bar and the toast (the route watch: 
     // Moving left: to the right.
     const right = { ...popupAnchor(200, 100, 16, true, -1, 17, out) };
     expect(right.x - 17 / 2).toBeGreaterThanOrEqual(200 + 8);
+  });
+});
+
+describe('the pop-up board: never on each other, on the hero, on the score or on the toast (the re-check: "1+100" across the hero at the cog)', () => {
+  type Box = { x: number; y: number; w: number; h: number };
+  const meet = (a: Box, b: Box): boolean => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+  const boxes = (board: PopupBoard): Box[] => board.shown().map((p) => ({ x: p.drawX, y: p.drawY, w: p.w, h: POPUP_H }));
+  /** Every frame from now until every pop-up is gone: placed, then checked against the rules. */
+  const watch = (board: PopupBoard, camY: number, toastUp: boolean, heroAt: (frame: number) => Box): string[] => {
+    const faults: string[] = [];
+    for (let f = 0; f < POPUP_FRAMES + 2; f++) {
+      board.advance(1);
+      const hero = heroAt(f);
+      board.place(camY, toastUp, hero);
+      const shown = boxes(board);
+      shown.forEach((a, i) => {
+        if (meet(a, hero)) faults.push(`frame ${f}: ${JSON.stringify(a)} on the hero ${JSON.stringify(hero)}`);
+        if (a.y - camY < (toastUp ? POPUP_TOP_UNDER_TOAST : POPUP_TOP)) faults.push(`frame ${f}: ${JSON.stringify(a)} in the bar`);
+        shown.slice(i + 1).forEach((b) => {
+          if (meet(a, b)) faults.push(`frame ${f}: ${JSON.stringify(a)} on ${JSON.stringify(b)}`);
+        });
+      });
+    }
+    return faults;
+  };
+
+  it("at the cog (levels 1 and 2 on the 568 x 320 phone): a crystal's +10 and the cog's +100 under the toast's band are drawn apart and off the hero", () => {
+    // The hero high in the view (his head at view y 22, the toast's band ends at 26), the cog at his chest, a crystal
+    // taken four frames before beside it.
+    const camY = 1000;
+    const hero = { x: 100, y: camY + 22, w: 16, h: 16 };
+    const board = new PopupBoard(false);
+    board.spawn(17, 112, camY + 14, camY, false);
+    for (let f = 0; f < 4; f++) {
+      board.advance(1);
+      board.place(camY, false, hero);
+    }
+    board.spawn(23, 108, camY + 14, camY, true);
+    expect(watch(board, camY, true, () => hero)).toEqual([]);
+  });
+
+  it('a hero jumping up through his own +10 never covers it: it steps aside, then goes back to rising from its place', () => {
+    const camY = 0;
+    const board = new PopupBoard(false);
+    board.spawn(17, 108, 80, camY, false);
+    // He stands under it, then rises 5, 4, 3 ... px a frame into it.
+    const heroAt = (f: number): Box => ({ x: 100, y: 96 - Math.max(0, f * 5 - (f * (f - 1)) / 4), w: 16, h: 16 });
+    expect(watch(board, camY, false, heroAt)).toEqual([]);
+  });
+
+  it('under reduced motion a pop-up stays where it was first drawn (placed off the hero when it appears), however he moves after', () => {
+    const camY = 0;
+    const board = new PopupBoard(true);
+    board.spawn(17, 108, 80, camY, false);
+    board.place(camY, false, { x: 100, y: 90, w: 16, h: 16 });
+    const first = board.shown().map((p) => ({ x: p.drawX, y: p.drawY }));
+    expect(first[0]?.y, 'off the hero from the start').toBeLessThanOrEqual(90 - POPUP_H);
+    for (let f = 0; f < POPUP_FRAMES - 1; f++) {
+      board.advance(1);
+      board.place(camY, false, { x: 100 + f, y: 96 - f, w: 16, h: 16 });
+      expect(board.shown().map((p) => ({ x: p.drawX, y: p.drawY })), `frame ${f}`).toEqual(first);
+    }
+  });
+
+  it('over random moments: never on each other, on the hero, above POPUP_TOP, nor above the toast band while it shows', () => {
+    let seed = 11;
+    const rnd = (): number => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed / 2147483648;
+    };
+    for (let trial = 0; trial < 400; trial++) {
+      const camY = Math.floor(rnd() * 500);
+      const toastUp = rnd() < 0.5;
+      const board = new PopupBoard(rnd() < 0.2);
+      const hero = { x: 40 + Math.floor(rnd() * 200), y: camY + 20 + Math.floor(rnd() * 120), w: 16, h: 16 };
+      const n = 1 + Math.floor(rnd() * 5);
+      for (let i = 0; i < n; i++) {
+        const w = rnd() < 0.5 ? 17 : 23;
+        board.spawn(w, hero.x + 8 + Math.floor(rnd() * 48) - 24, hero.y + Math.floor(rnd() * 40) - 30, camY, toastUp);
+        const gap = Math.floor(rnd() * 6);
+        for (let f = 0; f < gap; f++) {
+          board.advance(1);
+          board.place(camY, toastUp, hero);
+        }
+      }
+      expect(watch(board, camY, toastUp, () => hero), `trial ${trial}`).toEqual([]);
+    }
   });
 });
 

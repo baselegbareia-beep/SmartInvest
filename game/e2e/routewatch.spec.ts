@@ -4,8 +4,12 @@ import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
+import { compileTuning } from '../src/core/compileTuning.ts';
+import { parseLevel } from '../src/core/level.ts';
 import type { InputScript } from '../src/core/types.ts';
-import { POPUP_TOP, POPUP_TOP_UNDER_TOAST } from '../src/shell/hudModel.ts';
+import { POPUP_TOP, POPUP_TOP_UNDER_TOAST, STRIP_H } from '../src/shell/hudModel.ts';
+import { measureRoute, shippedCamera, shippedPopups } from '../src/shell/routeMeasure.ts';
+import { TUNING } from '../src/tuning.ts';
 
 /**
  * What the route watch of 24 November 2026 found, seen again in the built game on the smallest phone of the
@@ -17,6 +21,10 @@ import { POPUP_TOP, POPUP_TOP_UNDER_TOAST } from '../src/shell/hudModel.ts';
  * - A death by falling played out below the screen.
  * - Score pop-ups rose into the top bar and through the cog's toast.
  * - No airlock pointer while the airlock lay exactly at the view's bottom edge (level 7 after the cog).
+ *
+ * And what its re-check found (the same day), after the camera's standing framing and the pop-up board:
+ * - The bottom pass drew level 9 so low that the deck-2 pack sat dimmed in the top bar's row, read as a HUD icon.
+ * - Pop-ups held under the cog's toast were drawn in one row and across the hero ('1+100', levels 1 and 2).
  */
 
 test.use({ viewport: { width: 568, height: 320 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true });
@@ -33,12 +41,13 @@ interface LookNow {
   camY: number;
   popups: number;
   popupTop: number | null;
+  popupBoxes?: Box[];
   pointer: string | null;
   hero: { frame: string; visible: boolean; filled: boolean } | null;
 }
 
 interface Hook {
-  state(): { tick: number; phase: string; mode: string } | null;
+  state(): { tick: number; phase: string; mode: string; player: { x: number; y: number } } | null;
   replay(id: string, script: InputScript, ticksPerFrame?: number, options?: { stopAtTick?: number; until?: 'levelCompleted' | 'sessionEnd' }): Promise<unknown>;
   freezeAtTick(tick: number): Promise<number>;
   freeze(on: boolean): void;
@@ -247,3 +256,84 @@ test('the ready gate: the hero is never hidden by its blink, and a chevron over 
   expect(seen.filter((s) => s.prompt && s.tick < start + 90)).toEqual([]);
   expect(seen.some((s) => s.prompt), 'the chevron after waiting').toBe(true);
 });
+
+/** The view's scroll on `tick` of `id`'s proof as Node's camera gives it on this phone, touch: the same framing as the game's. */
+function nodeScrollY(id: string, tick: number): number {
+  const level = parseLevel(readFileSync(path.join(import.meta.dirname, '..', 'levels', `${id}.txt`), 'utf8'), id);
+  const script = readScript(id);
+  const stop = { runs: [] as [number, number][] };
+  let left = tick;
+  for (const [bits, n] of script.runs) {
+    if (left <= 0) break;
+    stop.runs.push([bits, Math.min(n, left)]);
+    left -= n;
+  }
+  let scrollY = Number.NaN;
+  const camera = shippedCamera(TUNING);
+  const watched = { ...camera, step: (...a: Parameters<typeof camera.step>) => {
+    const next = camera.step(...a);
+    scrollY = next.scrollY;
+    return next;
+  } };
+  measureRoute(level, stop, compileTuning(TUNING), TUNING, { name: 'se', w: 568, h: 320, dpr: 2, touch: true }, watched, shippedPopups());
+  return scrollY;
+}
+
+test("level 9: the deck-2 pack is drawn below the top bar's strip, where Node's camera frames it (it sat dimmed in the bar's row, read as a HUD icon)", async ({ page }) => {
+  test.setTimeout(120_000);
+  await open(page);
+  const script = readScript('level-09');
+  const pack = cellOf('level-09.txt', 'J');
+  await page.evaluate((r) => {
+    void (window as HookWindow).__E2E__?.replay('level-09', { runs: r }, 1, { until: 'sessionEnd' });
+  }, script.runs);
+  // At the ready gate's end, on the first hops along deck 1, and once he has walked under deck 2 (the re-check's t50).
+  for (const tick of [14, 50, 90]) {
+    expect(await page.evaluate((t) => (window as HookWindow).__E2E__?.freezeAtTick(t), tick)).toBe(tick);
+    const look = await page.evaluate(() => (window as HookWindow).__E2E__?.look() ?? null);
+    if (!look) throw new Error('no look');
+    expect(look.camY, `tick ${tick}: the scroll Node's camera gives`).toBe(nodeScrollY('level-09', tick));
+    const top = pack.row * 16 - look.camY;
+    expect(top, `tick ${tick}: the pack's top, view px`).toBeGreaterThanOrEqual(STRIP_H);
+    await page.evaluate(() => (window as HookWindow).__E2E__?.freeze(false));
+  }
+});
+
+for (const { id, from, to } of [
+  { id: 'level-02', from: 596, to: 614 },
+  { id: 'level-01', from: 640, to: 658 },
+]) {
+  test(`${id}: at the cog, the pop-ups under the toast's band are drawn apart and off the hero (they read '1+100', across him)`, async ({ page }) => {
+    test.setTimeout(120_000);
+    await open(page);
+    const script = readScript(id);
+    await page.evaluate(
+      ([i, r]) => {
+        void (window as HookWindow).__E2E__?.replay(i, { runs: r }, 1, { until: 'sessionEnd' });
+      },
+      [id, script.runs] as const,
+    );
+    let withTwo = 0;
+    for (let tick = from; tick <= to; tick++) {
+      expect(await page.evaluate((t) => (window as HookWindow).__E2E__?.freezeAtTick(t), tick)).toBe(tick);
+      const at = await page.evaluate(() => {
+        const hook = (window as HookWindow).__E2E__;
+        return { look: hook?.look() ?? null, state: hook?.state() ?? null, toast: hook?.hud()?.toast ?? null };
+      });
+      const boxes = at.look?.popupBoxes;
+      if (!at.look || !at.state || !boxes) throw new Error(`tick ${tick}: no pop-up boxes from the hook`);
+      // The hero's 16 px sprite in view px (the box is 10 x 14 at the sprite's foot, centred).
+      const hero = { x: (at.state.player.x >> 8) - 3 - at.look.camX, y: (at.state.player.y >> 8) - 2 - at.look.camY, w: 16, h: 16 };
+      const meet = (a: Box, b: Box): boolean => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+      if (boxes.length >= 2) withTwo += 1;
+      boxes.forEach((a, n) => {
+        expect(meet(a, hero), `tick ${tick}: ${JSON.stringify(a)} on the hero ${JSON.stringify(hero)}`).toBe(false);
+        if (at.toast) expect(a.y, `tick ${tick}: under the toast's band`).toBeGreaterThanOrEqual(POPUP_TOP_UNDER_TOAST);
+        for (const b of boxes.slice(n + 1)) expect(meet(a, b), `tick ${tick}: ${JSON.stringify(a)} on ${JSON.stringify(b)}`).toBe(false);
+      });
+      if (tick === from + 8) await page.screenshot({ path: test.info().outputPath(`${id}-cog.png`) });
+      await page.evaluate(() => (window as HookWindow).__E2E__?.freeze(false));
+    }
+    expect(withTwo, 'two pop-ups at once (the +10 and the +100)').toBeGreaterThan(0);
+  });
+}

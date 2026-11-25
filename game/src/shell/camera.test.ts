@@ -6,8 +6,8 @@ import { SUB_SHIFT, TILE_PX } from '../core/types';
 import type { CameraTuning } from '../core/types';
 import { TUNING } from '../tuning';
 
-import { NO_PAD, cameraTarget, feetAnchor, levelSize, padReach, riseLookMax, snapCamera, stepCamera } from './camera';
-import type { CameraState, CameraTarget, PadReach, Size } from './camera';
+import { NO_PAD, cameraTarget, feetAnchor, frameShift, levelSize, padReach, riseLookMax, snapCamera, stepCamera } from './camera';
+import type { CameraState, CameraTarget, FrameScene, PadButtonsOnView, PadReach, Size } from './camera';
 import { STRIP_H } from './hudModel';
 
 /**
@@ -28,6 +28,8 @@ const CAM: CameraTuning = Object.freeze({
   camRiseBandTop: 0.45,
   camRiseLookSpeed: 1.5,
   camVerticalMaxStep: 4,
+  camFrameDownPx: 32,
+  camFrameUpPx: 16,
 });
 
 const VIEW: Size = { w: 320, h: 180 };
@@ -877,5 +879,118 @@ describe('the live camera numbers of src/tuning.ts', () => {
     // The band's top lies under the top bar's strip: on the lowest view it must still be above where the feet rest.
     const lowest = TUNING.view.viewMinRows * TILE_PX;
     expect(STRIP_H + t.camAirBandTop * lowest, `camera.camAirBandTop: the band's top (${STRIP_H} px of strip + camAirBandTop of the view) must stay above camAnchorY on a ${lowest} px view`).toBeLessThan(t.camAnchorY * lowest);
+  });
+});
+
+describe('the standing framing: what is near the hero is kept out from under the top bar and the buttons (the route watch re-check)', () => {
+  // The smallest phone (568 x 320 at 2): a 284 x 160 view; the pad as laid out there with both items, art px of the view.
+  const SE: Size = { w: 284, h: 160 };
+  const PAD: PadReach = { left: 80, right: 121, bottom: 48 };
+  const BUTTONS: PadButtonsOnView = {
+    left: { x: 10, y: 118, w: 32, h: 32 },
+    right: { x: 48, y: 118, w: 32, h: 32 },
+    jump: { x: 236, y: 112, w: 38, h: 38 },
+    fire: { x: 163, y: 120, w: 30, h: 30 },
+    thrust: { x: 199, y: 120, w: 30, h: 30 },
+    pause: { x: 260, y: 5, w: 18, h: 18 },
+  };
+  // Level 9's start, in small: the hero on deck 1, two rows above the level's bottom; deck 2's floor five rows up,
+  // with a thruster pack (J) and a Cinderpeg (C) on it, as at the foot of lift B.
+  const rows = [
+    ...Array.from({ length: 15 }, (_, r) => (r === 0 ? '#'.repeat(30) : `#${'.'.repeat(28)}#`)),
+    '#...J.......C.......T.....D..#',
+    '###################.##########',
+    `#${'.'.repeat(28)}#`,
+    `#${'.'.repeat(28)}#`,
+    `#${'.'.repeat(28)}#`,
+    '#.P..........................#',
+    '#'.repeat(30),
+    '#'.repeat(30),
+  ];
+  const level = levelFromRows(rows);
+  const cellOnView = (cam: CameraState, col: number, row: number): { x: number; y: number } => ({ x: col * TILE_PX - cam.scrollX, y: row * TILE_PX - cam.scrollY });
+  const underStrip = (y: number): boolean => Math.min(y + TILE_PX, STRIP_H) - Math.max(y, 0) >= TILE_PX / 2;
+  const overlaps = (x: number, y: number, r: { x: number; y: number; w: number; h: number }): boolean => x < r.x + r.w && r.x < x + TILE_PX && y < r.y + r.h && r.y < y + TILE_PX;
+
+  it("level 9's start on the 568 x 320 phone: the deck-2 pack and Cinderpeg are drawn below the strip, not in the top bar's row", () => {
+    const game = playingGame(level);
+    const scene: FrameScene = { game, buttons: BUTTONS };
+    const size = levelSize(level);
+    // Without the framing (keys' anchor, the bottom pass): the pack lies under the strip, where it read as a HUD icon.
+    const plain = snapCamera(cameraTarget(game), SE, size, CAM, PAD);
+    expect(underStrip(cellOnView(plain, 4, 15).y), 'the plain anchor hides it').toBe(true);
+    let cam = snapCamera(cameraTarget(game), SE, size, CAM, PAD, scene);
+    for (let i = 0; i < 60; i++) cam = stepCamera(cam, cameraTarget(game), SE, size, CAM, PAD, scene);
+    for (const [col, row] of [
+      [4, 15],
+      [12, 15],
+    ] as const) {
+      const at = cellOnView(cam, col, row);
+      expect(at.y, `the thing at ${col},${row}: clear of the strip`).toBeGreaterThanOrEqual(STRIP_H);
+    }
+    // His feet rest lower on screen, and he stays clear of every button: his feet at most at their top.
+    expect(cam.shift).toBeGreaterThan(0);
+    const feet = cameraTarget(game).feetY - cam.scrollY;
+    expect(feet).toBeLessThanOrEqual(SE.h - (PAD.bottom ?? 0));
+  });
+
+  it('never moves the view for nothing: with nothing hidden it keeps the anchor, the same as without a scene', () => {
+    const open = levelFromRows([...Array.from({ length: 14 }, () => '.'.repeat(40)), '.P..........T.............D.............', ...Array.from({ length: 9 }, () => '#'.repeat(40))]);
+    const game = playingGame(open);
+    const size = levelSize(open);
+    for (const pad of [PAD, NO_PAD]) {
+      const scene: FrameScene = { game, buttons: pad === NO_PAD ? null : BUTTONS };
+      expect(snapCamera(cameraTarget(game), SE, size, CAM, pad, scene)).toEqual(snapCamera(cameraTarget(game), SE, size, CAM, pad));
+    }
+  });
+
+  it('never brings anything new under a button or (other than a crystal) under the strip, never puts the hero on the buttons, and moves within its range', () => {
+    const rnd = seeded(7);
+    for (let trial = 0; trial < 300; trial++) {
+      // A random room: a floor somewhere, things scattered above and below it.
+      const W = 30;
+      const H = 24;
+      const floor = 8 + Math.floor(rnd() * 13);
+      const grid = Array.from({ length: H }, (_, r) => Array.from({ length: W }, (_, c) => (r === 0 || r >= H - 1 || c === 0 || c === W - 1 || r === floor + 1 ? '#' : '.')));
+      const put = (ch: string): void => {
+        for (;;) {
+          const c = 1 + Math.floor(rnd() * (W - 2));
+          const r = 1 + Math.floor(rnd() * (H - 3));
+          if (grid[r]?.[c] === '.' && r !== floor + 1) {
+            (grid[r] as string[])[c] = ch;
+            return;
+          }
+        }
+      };
+      (grid[floor] as string[])[2 + Math.floor(rnd() * (W - 4))] = 'P';
+      for (const ch of ['T', 'D', 'J', 'B', 'G', 'G', 'G', 'C', 'M', 'F', 'S']) put(ch);
+      let built;
+      try {
+        built = levelFromRows(grid.map((r) => r.join('')));
+      } catch {
+        continue; // a random room the level reader refuses (a Cinderpeg with no floor): skip it
+      }
+      const game = playingGame(built);
+      const size = levelSize(built);
+      const target = cameraTarget(game);
+      const scene: FrameScene = { game, buttons: BUTTONS };
+      const x = target.x - (SE.w / 2 - target.facing * CAM.camLookAheadPx);
+      const s = frameShift(scene, target, x, SE, size, CAM, PAD, PAD.bottom ?? 0);
+      expect(s).toBeLessThanOrEqual(CAM.camFrameDownPx);
+      expect(s).toBeGreaterThanOrEqual(-CAM.camFrameUpPx);
+      const anchor = snapCamera(target, SE, size, CAM, PAD);
+      const framed = snapCamera(target, SE, size, CAM, PAD, scene);
+      expect(target.feetY - framed.scrollY, `trial ${trial}: the hero's feet above the buttons`).toBeLessThanOrEqual(SE.h - (PAD.bottom ?? 0) + 0.5);
+      const drawn = [BUTTONS.left, BUTTONS.right, BUTTONS.jump, BUTTONS.pause];
+      const things = [built.trophy, built.door, ...built.pickups, ...built.enemies];
+      for (const th of things) {
+        const a = cellOnView(anchor, th.col, th.row);
+        const f = cellOnView(framed, th.col, th.row);
+        if (f.x + TILE_PX / 2 <= 0 || f.x + TILE_PX / 2 >= SE.w) continue;
+        const crystal = 'kind' in th && th.kind === 'crystal';
+        if (!crystal && underStrip(f.y)) expect(underStrip(a.y), `trial ${trial}: ${JSON.stringify(th)} newly under the strip`).toBe(true);
+        for (const r of drawn) if (overlaps(f.x, f.y, r)) expect(overlaps(a.x, a.y, r), `trial ${trial}: ${JSON.stringify(th)} newly under a button`).toBe(true);
+      }
+    }
   });
 });

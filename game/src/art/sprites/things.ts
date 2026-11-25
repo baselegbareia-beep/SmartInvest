@@ -400,47 +400,48 @@ const BLASTER_1: Frame = [
 ];
 
 /**
- * A jet pack: two domed bottles held by one lime strap with a white gauge needle in its
- * middle, two nozzles, and a lime pilot flame under each. About a fifth of it is lime,
- * so it reads as one of Sprue's tools and not as part of the building. (Two slate straps
- * and a 2 px gauge were tried first: at 2x it was a grey crate or a grille.)
+ * The thruster pack: the one tank Sprue wears on his back (`ovl_pack`), large, strapped with two lime bands, on a
+ * single nozzle between two small fins, a lime pilot flame under it. About a fifth of it is lime, so it reads as one
+ * of Sprue's tools and not as part of the building. It used to be two domed bottles side by side, the silhouette of
+ * the THRUST button's glyph (`btn_thrust`): on the 568 x 320 phone a pack seen beside that button read as part of it
+ * (the route watch's re-check). One finned tank shares little of the button's outline (`src/art/art.test.ts`).
  */
 const THRUSTER_0: Frame = [
   '................',
-  '................',
-  '...656...656....',
-  '..67554.67554...',
-  '..67554.67554...',
-  '..66554.66554...',
-  '..ggggg7ggggh...',
-  '..gggghhggggh...',
-  '..66554.66554...',
-  '..66554.66554...',
-  '..65544.65544...',
-  '..65544.65544...',
-  '...343...343....',
-  '...gh....gh.....',
-  '....g.....g.....',
-  '................',
+  '.......666......',
+  '......67765.....',
+  '.....6775554....',
+  '.....6755554....',
+  '.....ggggggh....',
+  '.....6755554....',
+  '.....6755543....',
+  '.....6555543....',
+  '.....ggggghh....',
+  '.....6555443....',
+  '....465544433...',
+  '...44.54443.33..',
+  '...4...343...3..',
+  '......53335.....',
+  '.......ggg......',
 ];
 
 const THRUSTER_1: Frame = [
-  '................',
   '..7.............',
-  '.77756...656....',
-  '..77554.67554...',
-  '..67554.67554...',
-  '..66554.66554...',
-  '..ggggg7ggggh...',
-  '..gggghhggggh...',
-  '..66554.66554...',
-  '..66554.66554...',
-  '..65544.65544...',
-  '..65544.65544...',
-  '...343...343....',
-  '...gh....gh.....',
-  '....g.....g.....',
-  '................',
+  '.777...666......',
+  '..7...67765.....',
+  '.....6775554....',
+  '.....6775554....',
+  '.....ggggggh....',
+  '.....6775554....',
+  '.....6755543....',
+  '.....6555543....',
+  '.....ggggghh....',
+  '.....6555443....',
+  '....465544433...',
+  '...44.54443.33..',
+  '...4...343...3..',
+  '......53335.....',
+  '.......ggg......',
 ];
 
 export const THINGS: SpriteGrids<'things'> = {

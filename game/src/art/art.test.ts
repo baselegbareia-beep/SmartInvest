@@ -480,6 +480,27 @@ describe('sprite grids', () => {
     }
   });
 
+  it("draws the thruster pack as one tank on a strap, not the twin bottles of the THRUST button (a pack seen beside the button read as part of it)", () => {
+    const runs = (row: string): number[] => (row.match(/[^.]+/g) ?? []).map((run) => run.length);
+    /** Rows with two bottle-wide shapes (4 px or more) side by side. */
+    const twinRows = (frame: readonly string[]): number => frame.filter((row) => runs(row).filter((n) => n >= 4).length >= 2).length;
+    const mask = (frame: readonly string[]): Set<string> => new Set(frame.flatMap((row, y) => Array.from(row).flatMap((c, x) => (c === '.' ? [] : [`${String(x)},${String(y)}`]))));
+    const shared = (a: readonly string[], b: readonly string[]): number => {
+      const ma = mask(a);
+      const mb = mask(b);
+      const both = [...ma].filter((p) => mb.has(p)).length;
+      return both / new Set([...ma, ...mb]).size;
+    };
+    const button = SPRITES.btn_thrust[0] ?? [];
+    expect(twinRows(button), 'the THRUST glyph is two bottles').toBeGreaterThanOrEqual(6);
+    SPRITES.pickup_thruster.forEach((frame, index) => {
+      expect(twinRows(frame), `pickup_thruster_${String(index)}: one tank`).toBe(0);
+      // Less than two fifths of the two outlines' pixels in common, as drawn and mirrored (the twin bottles shared 58 %).
+      expect(shared(frame, button), `pickup_thruster_${String(index)}`).toBeLessThan(0.4);
+      expect(shared(mirrorFrame(frame), button), `pickup_thruster_${String(index)}, mirrored`).toBeLessThan(0.4);
+    });
+  });
+
   it('keeps every hue in its lane (guide, section 1, rule 1)', () => {
     const sprue = ['hero_idle', 'hero_run', 'hero_jump', 'hero_fall', 'hero_thrust', 'hero_die', 'ovl_blaster', 'ovl_pack', 'thrust_flame', 'bolt'] as const;
     const lanes: readonly { readonly codes: string; readonly lane: string; readonly sprites: readonly SpriteName[] }[] = [

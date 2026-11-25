@@ -33,7 +33,7 @@ import type { DeathCause, GameEvent, GameState, Input, InputScript, ReplayResult
 import { MUTE_KEYS, PAUSE_KEYS, installKeyboard, releaseKeys } from '../../input/keyboard';
 import { TUNING } from '../../tuning';
 import { NO_CAMERA, cameraTarget, levelSize, snapCamera, stepCamera } from '../camera';
-import type { CameraState, PadReach, Size } from '../camera';
+import type { CameraState, FrameScene, PadButtonsOnView, PadReach, Size } from '../camera';
 import { Effects } from '../Effects';
 import { EventRouter } from '../EventRouter';
 import type { HudEvents, RouterHost, SessionEnd } from '../EventRouter';
@@ -42,7 +42,7 @@ import { onFreshKey } from '../freshKey';
 import { onSceneEnd } from '../sceneEnd';
 import { HitStop } from '../hitStop';
 import { InterpolationGate } from '../interpolation';
-import { controls, haptics, onPadPause, pad, padReachNow, phys, progress, settings, sfx } from '../singletons';
+import { controls, haptics, onPadPause, pad, padButtonsOnView, padReachNow, phys, progress, settings, sfx } from '../singletons';
 import { WorldView } from '../WorldView';
 
 import type { EndData } from './EndScene';
@@ -146,6 +146,8 @@ export class PlayScene extends Phaser.Scene {
   private snapPending = false;
   /** How far the touch buttons reach into the view (art px): the view may pass a side wall by that much. */
   private readonly padReach: PadReach = { left: 0, right: 0, bottom: 0 };
+  /** What the standing view frames (camera.ts, `frameShift`): the game and the pad's buttons over the view. Refilled every tick. */
+  private readonly frameScene: { game: GameState | null; buttons: PadButtonsOnView | null } = { game: null, buttons: null };
   /** The hold after a kill (TUNING.effects.killHitStopFrames); a replay's ignores every request. */
   private hitStop = new HitStop();
 
@@ -213,6 +215,7 @@ export class PlayScene extends Phaser.Scene {
     popups: number;
     popupRise: number;
     popupTop: number | null;
+    popupBoxes: { x: number; y: number; w: number; h: number }[];
     pointer: string | null;
     hero: { frame: string; visible: boolean; filled: boolean; dim: boolean; prompt: boolean } | null;
   } | null {
@@ -434,12 +437,19 @@ export class PlayScene extends Phaser.Scene {
   private afterTick(sim: GameState): void {
     this.router?.drain(this.tickEvents, sim);
     if (this.leaving) return;
-    this.cam = stepCamera(this.cam, cameraTarget(sim), this.viewSize, this.levelPx, TUNING.camera, this.padReach);
+    this.cam = stepCamera(this.cam, cameraTarget(sim), this.viewSize, this.levelPx, TUNING.camera, this.padReach, this.sceneFor(sim));
     this.view?.capture(sim, this.cam);
     if (this.snapPending) {
       this.snapPending = false;
       this.view?.snap();
     }
+  }
+
+  /** The camera's framing input for this tick: the game and the pad's buttons as drawn over the view (null: keys). */
+  private sceneFor(sim: GameState): FrameScene {
+    this.frameScene.game = sim;
+    this.frameScene.buttons = padButtonsOnView();
+    return this.frameScene as FrameScene;
   }
 
   /** One 60 Hz frame of the intro card: it ends after introFrames, or on a fresh press after introSkipAfterFrames. */
@@ -499,7 +509,7 @@ export class PlayScene extends Phaser.Scene {
     this.effects?.resize(this.viewSize.w, this.viewSize.h);
     const sim = this.sim;
     if (!sim) return;
-    this.cam = snapCamera(cameraTarget(sim), this.viewSize, this.levelPx, TUNING.camera, padReachNow(this.padReach));
+    this.cam = snapCamera(cameraTarget(sim), this.viewSize, this.levelPx, TUNING.camera, padReachNow(this.padReach), this.sceneFor(sim));
     this.view?.capture(sim, this.cam);
     this.view?.snap();
     this.draw(sim);
@@ -527,7 +537,7 @@ export class PlayScene extends Phaser.Scene {
       this.levelPx = levelSize(sim.level);
       // FIRE goes beside JUMP in a level without a thruster pack (THRUST's place); before the camera measures the pad.
       pad.setSlots({ fireBesideJump: !sim.level.pickups.some((p) => p.kind === 'thruster') });
-      this.cam = snapCamera(cameraTarget(sim), this.viewSize, this.levelPx, TUNING.camera, padReachNow(this.padReach));
+      this.cam = snapCamera(cameraTarget(sim), this.viewSize, this.levelPx, TUNING.camera, padReachNow(this.padReach), this.sceneFor(sim));
       this.snapPending = true;
       this.stepper.reset();
       this.gate.reset();
@@ -550,7 +560,7 @@ export class PlayScene extends Phaser.Scene {
     respawned: () => {
       const sim = this.sim;
       if (!sim) return;
-      this.cam = snapCamera(cameraTarget(sim), this.viewSize, this.levelPx, TUNING.camera, padReachNow(this.padReach));
+      this.cam = snapCamera(cameraTarget(sim), this.viewSize, this.levelPx, TUNING.camera, padReachNow(this.padReach), this.sceneFor(sim));
       this.snapPending = true;
       this.gate.reset();
     },
