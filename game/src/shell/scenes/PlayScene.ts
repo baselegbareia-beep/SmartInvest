@@ -66,6 +66,11 @@ export interface ReplaySpec {
    * pictures of those; the result still reports the first death and the first win.
    */
   readonly until?: 'levelCompleted' | 'sessionEnd';
+  /**
+   * Ticks from the real stepper instead of `ticksPerFrame`, drawn as in play (interpolated on a fast display): the
+   * script's input then plays as if pressed on those ticks, at the display's own pace.
+   */
+  readonly realTime?: boolean;
   /** Called once, when the replay stops: the win, the first death, the end of the script, or stopAtTick. */
   readonly done: (result: ReplayResult) => void;
 }
@@ -215,15 +220,16 @@ export class PlayScene extends Phaser.Scene {
     popups: number;
     popupRise: number;
     popupTop: number | null;
-    popupBoxes: { x: number; y: number; w: number; h: number }[];
+    popupBoxes: { x: number; y: number; w: number; h: number; id: number }[];
     pointer: string | null;
     hero: { frame: string; visible: boolean; filled: boolean; dim: boolean; prompt: boolean } | null;
+    heroBox: { x: number; y: number; w: number; h: number } | null;
   } | null {
     const view = this.view;
     const fx = this.effects;
     if (!view || !fx) return null;
     const cam = this.cameras.main;
-    return { scrollX: cam.scrollX, scrollY: cam.scrollY, camX: view.camX, camY: view.camY, shakeX: fx.shakeX, shakeY: fx.shakeY, ...fx.shown(), hero: view.heroShown() };
+    return { scrollX: cam.scrollX, scrollY: cam.scrollY, camX: view.camX, camY: view.camY, shakeX: fx.shakeX, shakeY: fx.shakeY, ...fx.shown(), hero: view.heroShown(), heroBox: view.heroBoxOnView() };
   }
 
   /** Test hook only: a fixed number of frames per rendered frame (null: the real stepper). */
@@ -300,10 +306,14 @@ export class PlayScene extends Phaser.Scene {
     });
     pad.show();
 
-    // Phaser keeps updating while blurred or hidden: pause explicitly (PHASER4-NOTES 16).
+    // Phaser keeps updating while blurred or hidden: pause explicitly (PHASER4-NOTES 16). And while the WebGL context
+    // is lost (a GPU reset with the page in view): the canvas is blank until it is restored, and the world ran on unseen.
     this.game.events.on(Phaser.Core.Events.BLUR, this.autoPause);
     this.game.events.on(Phaser.Core.Events.HIDDEN, this.autoPause);
     window.addEventListener('pagehide', this.autoPause);
+    this.game.renderer.on(Phaser.Renderer.Events.LOSE_WEBGL, this.autoPause); // the Canvas renderer never emits it
+    // A saved session's run is this tab's own: another tab's save does not replace it (singletons.ts ProgressStore).
+    progress.setPlaying(this.startData.saved && !this.replay);
     this.scale.on(Phaser.Scale.Events.RESIZE, this.onResize);
 
     onSceneEnd(this.events, (how) => {
@@ -311,6 +321,8 @@ export class PlayScene extends Phaser.Scene {
       this.game.events.off(Phaser.Core.Events.BLUR, this.autoPause);
       this.game.events.off(Phaser.Core.Events.HIDDEN, this.autoPause);
       window.removeEventListener('pagehide', this.autoPause);
+      this.game.renderer.off(Phaser.Renderer.Events.LOSE_WEBGL, this.autoPause);
+      progress.setPlaying(false);
       this.scale.off(Phaser.Scale.Events.RESIZE, this.onResize);
       for (const remove of keyRemovers.splice(0)) remove();
       onPadPause(() => undefined);
@@ -335,7 +347,8 @@ export class PlayScene extends Phaser.Scene {
     if (!sim || (this.mode !== 'running' && this.mode !== 'intro')) return;
     this.gate.sample(this.game.loop.rawDelta);
     padReachNow(this.padReach); // touch mode can change between frames (a key press turns it off)
-    const n = this.replay ? this.replay.spec.ticksPerFrame : (this.pace ?? this.stepper.advance(delta));
+    const fixed = this.replay !== null && this.replay.spec.realTime !== true;
+    const n = fixed && this.replay ? this.replay.spec.ticksPerFrame : (this.pace ?? this.stepper.advance(delta));
 
     for (let i = 0; i < n; i++) {
       if (this.mode === 'intro') {
@@ -491,10 +504,12 @@ export class PlayScene extends Phaser.Scene {
   private draw(sim: GameState): void {
     const view = this.view;
     if (!view) return;
-    const alpha = this.replay ? 1 : this.gate.alpha(this.stepper);
+    const alpha = this.replay && this.replay.spec.realTime !== true ? 1 : this.gate.alpha(this.stepper);
     const fx = this.effects;
     view.render(sim, alpha, fx?.shakeX ?? 0, fx?.shakeY ?? 0);
-    fx?.place(view.camX, view.camY, sim, this.hud()?.toastShowing ?? false);
+    const hud = this.hud();
+    fx?.place(view.camX, view.camY, sim, hud?.toastShowing ?? false);
+    hud?.heroAt(view.heroBoxOnView()); // the toast goes see-through while he is drawn under it
   }
 
   /** The HUD scene once it has run create() (it is launched in create() and starts a frame later). */
@@ -525,6 +540,9 @@ export class PlayScene extends Phaser.Scene {
     },
     lifeLost: (lives) => {
       this.hud()?.lifeLost(lives);
+    },
+    itemTaken: (kind) => {
+      this.hud()?.itemTaken(kind);
     },
   };
 

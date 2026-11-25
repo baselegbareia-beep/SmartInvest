@@ -25,6 +25,13 @@ import { TUNING } from '../src/tuning.ts';
  * And what its re-check found (the same day), after the camera's standing framing and the pop-up board:
  * - The bottom pass drew level 9 so low that the deck-2 pack sat dimmed in the top bar's row, read as a HUD icon.
  * - Pop-ups held under the cog's toast were drawn in one row and across the hero ('1+100', levels 1 and 2).
+ *
+ * And its second re-check (25 November 2026):
+ * - Pop-ups hopped round a moving hero from frame to frame, '+50' left and right of him on alternate frames (level 5).
+ * - On a 120 Hz display slivers of pop-ups lay on the hero as drawn between two ticks; under reduced motion a still
+ *   pop-up stayed on him once he walked into it.
+ * - No test saw the framing use the pad's buttons (the Play scene could have passed none).
+ * - Stepping a frozen replay one tick at a time took two round trips, and a busy machine let a tick slip by.
  */
 
 test.use({ viewport: { width: 568, height: 320 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true });
@@ -40,15 +47,17 @@ interface LookNow {
   camX: number;
   camY: number;
   popups: number;
+  popupRise: number;
   popupTop: number | null;
-  popupBoxes?: Box[];
+  popupBoxes: (Box & { id: number })[];
   pointer: string | null;
   hero: { frame: string; visible: boolean; filled: boolean } | null;
+  heroBox?: Box | null;
 }
 
 interface Hook {
   state(): { tick: number; phase: string; mode: string; player: { x: number; y: number } } | null;
-  replay(id: string, script: InputScript, ticksPerFrame?: number, options?: { stopAtTick?: number; until?: 'levelCompleted' | 'sessionEnd' }): Promise<unknown>;
+  replay(id: string, script: InputScript, ticksPerFrame?: number, options?: { stopAtTick?: number; until?: 'levelCompleted' | 'sessionEnd'; realTime?: boolean }): Promise<unknown>;
   freezeAtTick(tick: number): Promise<number>;
   freeze(on: boolean): void;
   heroOnPage(): Box | null;
@@ -81,16 +90,34 @@ async function open(page: Page): Promise<void> {
   await page.waitForFunction(() => (window as HookWindow).__E2E__ !== undefined && (window as HookWindow).__GAME_READY__ === true);
 }
 
-/** Starts `id`'s proof (with `extra` runs after it) at one tick per frame and freezes the game on `tick`. */
+/**
+ * Starts `id`'s proof (with `extra` runs after it) at one tick per frame and freezes the game on `tick`: in one round
+ * trip, the freeze asked for before the first frame can run.
+ */
 async function replayTo(page: Page, id: string, runs: InputScript['runs'], tick: number): Promise<void> {
-  await page.evaluate(
-    ([i, r]) => {
-      void (window as HookWindow).__E2E__?.replay(i, { runs: r }, 1, { until: 'sessionEnd' });
+  const at = await page.evaluate(
+    ([i, r, t]) => {
+      const hook = (window as HookWindow).__E2E__;
+      void hook?.replay(i, { runs: r }, 1, { until: 'sessionEnd' });
+      return hook?.freezeAtTick(t);
     },
-    [id, runs] as const,
+    [id, runs, tick] as const,
   );
-  const at = await page.evaluate((t) => (window as HookWindow).__E2E__?.freezeAtTick(t), tick);
   expect(at).toBe(tick);
+}
+
+/**
+ * From a frozen game, runs on to `tick` and freezes there, in one round trip: the freeze is asked for before the game
+ * is let go. (Two calls, `freeze(false)` and then `freezeAtTick`, let a frame or more go by between them on a busy
+ * machine, and the replay, at one tick per frame, could pass the tick asked for: "Expected 610, Received 611".)
+ */
+async function stepTo(page: Page, tick: number): Promise<number | undefined> {
+  return page.evaluate((t) => {
+    const hook = (window as HookWindow).__E2E__;
+    const at = hook?.freezeAtTick(t);
+    hook?.freeze(false);
+    return at;
+  }, tick);
 }
 
 /** The pad's drawn buttons now (FIRE and THRUST only while shown), page CSS px. */
@@ -125,14 +152,13 @@ test("level 8: the packs the hero flies for are clear of THRUST (and every butto
     void (window as HookWindow).__E2E__?.replay('level-08', { runs: r }, 1, { until: 'sessionEnd' });
   }, script.runs);
   for (const p of packs) {
-    expect(await page.evaluate((t) => (window as HookWindow).__E2E__?.freezeAtTick(t), p.tick)).toBe(p.tick);
+    expect(await stepTo(page, p.tick)).toBe(p.tick);
     const cell = await page.evaluate((c) => (window as HookWindow).__E2E__?.cellOnPage(c.col, c.row) ?? null, p.cell);
     if (!cell) throw new Error('no level drawn');
     const buttons = await drawnButtons(page);
     expect(buttons.map((b) => b.id).sort(), 'the pack is worn: THRUST is on the pad').toContain('thrust');
     expect(cell.x + cell.w > 0 && cell.x < 568 && cell.y + cell.h > 0 && cell.y < 320, `the pack at tick ${p.tick} is on screen`).toBe(true);
     expect(under(cell, buttons), `the pack at ${p.cell.col},${p.cell.row} on tick ${p.tick}: ${JSON.stringify(cell)}`).toEqual([]);
-    await page.evaluate(() => (window as HookWindow).__E2E__?.freeze(false));
   }
 });
 
@@ -166,7 +192,7 @@ test('level 2: a death by falling into a pit is drawn at the bottom edge of the 
   ];
   for (const tick of [108, 130]) {
     if (tick === 108) await replayTo(page, 'level-02', runs, tick);
-    else expect(await page.evaluate((t) => (window as HookWindow).__E2E__?.freezeAtTick(t), tick)).toBe(tick);
+    else expect(await stepTo(page, tick)).toBe(tick);
     const at = await page.evaluate(() => {
       const hook = (window as HookWindow).__E2E__;
       const canvas = document.querySelector('#game canvas')?.getBoundingClientRect();
@@ -176,7 +202,6 @@ test('level 2: a death by falling into a pit is drawn at the bottom edge of the 
     if (!at.hero) throw new Error('no hero');
     expect(at.hero.y + at.hero.h, `tick ${tick}: the whole sprite is in the picture`).toBeLessThanOrEqual(at.bottom + 0.01);
     expect(at.look?.hero?.visible).toBe(true);
-    await page.evaluate(() => (window as HookWindow).__E2E__?.freeze(false));
   }
 });
 
@@ -240,7 +265,7 @@ test('the ready gate: the hero is never hidden by its blink, and a chevron over 
   // Every tick of the next 130: the hero shown, dimmed on alternate 8-tick spans, the chevron after 90 ticks of waiting.
   const seen: { tick: number; visible: boolean; dim: boolean; prompt: boolean }[] = [];
   for (let t = start + 2; t <= start + 130; t += 4) {
-    expect(await page.evaluate((x) => (window as HookWindow).__E2E__?.freezeAtTick(x), t)).toBe(t);
+    expect(await stepTo(page, t)).toBe(t);
     const at = await page.evaluate(() => {
       const hook = (window as HookWindow).__E2E__;
       const hero = hook?.look()?.hero as { visible: boolean; dim: boolean; prompt: boolean } | null | undefined;
@@ -249,7 +274,6 @@ test('the ready gate: the hero is never hidden by its blink, and a chevron over 
     expect(at.phase).toBe('ready');
     seen.push({ tick: t, visible: at.hero?.visible === true, dim: at.hero?.dim === true, prompt: at.hero?.prompt === true });
     if (t === start + 122) await page.screenshot({ path: test.info().outputPath('gate.png') });
-    await page.evaluate(() => (window as HookWindow).__E2E__?.freeze(false));
   }
   expect(seen.filter((s) => !s.visible)).toEqual([]);
   expect(seen.some((s) => s.dim) && seen.some((s) => !s.dim), 'he blinks: dimmed, then bright').toBe(true);
@@ -289,13 +313,12 @@ test("level 9: the deck-2 pack is drawn below the top bar's strip, where Node's 
   }, script.runs);
   // At the ready gate's end, on the first hops along deck 1, and once he has walked under deck 2 (the re-check's t50).
   for (const tick of [14, 50, 90]) {
-    expect(await page.evaluate((t) => (window as HookWindow).__E2E__?.freezeAtTick(t), tick)).toBe(tick);
+    expect(await stepTo(page, tick)).toBe(tick);
     const look = await page.evaluate(() => (window as HookWindow).__E2E__?.look() ?? null);
     if (!look) throw new Error('no look');
     expect(look.camY, `tick ${tick}: the scroll Node's camera gives`).toBe(nodeScrollY('level-09', tick));
     const top = pack.row * 16 - look.camY;
     expect(top, `tick ${tick}: the pack's top, view px`).toBeGreaterThanOrEqual(STRIP_H);
-    await page.evaluate(() => (window as HookWindow).__E2E__?.freeze(false));
   }
 });
 
@@ -315,7 +338,7 @@ for (const { id, from, to } of [
     );
     let withTwo = 0;
     for (let tick = from; tick <= to; tick++) {
-      expect(await page.evaluate((t) => (window as HookWindow).__E2E__?.freezeAtTick(t), tick)).toBe(tick);
+      expect(await stepTo(page, tick)).toBe(tick);
       const at = await page.evaluate(() => {
         const hook = (window as HookWindow).__E2E__;
         return { look: hook?.look() ?? null, state: hook?.state() ?? null, toast: hook?.hud()?.toast ?? null };
@@ -332,8 +355,178 @@ for (const { id, from, to } of [
         for (const b of boxes.slice(n + 1)) expect(meet(a, b), `tick ${tick}: ${JSON.stringify(a)} on ${JSON.stringify(b)}`).toBe(false);
       });
       if (tick === from + 8) await page.screenshot({ path: test.info().outputPath(`${id}-cog.png`) });
-      await page.evaluate(() => (window as HookWindow).__E2E__?.freeze(false));
     }
     expect(withTwo, 'two pop-ups at once (the +10 and the +100)').toBeGreaterThan(0);
   });
 }
+
+/** One frame's pop-ups and hero as drawn, view px, with the tick it showed. */
+interface FrameSeen {
+  tick: number;
+  boxes: (Box & { id: number })[];
+  hero: Box | null;
+  camX: number;
+  camY: number;
+  rise: number;
+}
+
+type RecWindow = HookWindow & { __seen?: FrameSeen[]; __watch?: boolean };
+
+/** Records every rendered frame's pop-ups and drawn hero (the page's own animation frames) until `stopWatching`. */
+async function watchFrames(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const w = window as RecWindow;
+    w.__seen = [];
+    w.__watch = true;
+    const loop = (): void => {
+      const hook = w.__E2E__;
+      const look = hook?.look();
+      const tick = hook?.state()?.tick ?? -1;
+      if (look) w.__seen?.push({ tick, boxes: look.popupBoxes, hero: look.heroBox ?? null, camX: look.camX, camY: look.camY, rise: look.popupRise });
+      if (w.__watch) requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+  });
+}
+
+async function stopWatching(page: Page): Promise<FrameSeen[]> {
+  return page.evaluate(() => {
+    const w = window as RecWindow;
+    w.__watch = false;
+    return w.__seen ?? [];
+  });
+}
+
+const meets = (a: Box, b: Box): boolean => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
+/** Frames on which a pop-up lies on the hero as drawn on that frame. */
+const onHero = (seen: FrameSeen[]): string[] =>
+  seen.flatMap((f) => (f.hero ? f.boxes.filter((b) => meets(b, f.hero as Box)).map((b) => `tick ${f.tick}: ${JSON.stringify(b)} on ${JSON.stringify(f.hero)}`) : []));
+
+test("level 5: a pop-up beside the hopping hero steps aside at most once and never flips round him ('+50' left and right of him on alternate frames, 36 px)", async ({ page }) => {
+  test.setTimeout(120_000);
+  await open(page);
+  const script = readScript('level-05');
+  await watchFrames(page);
+  await page.evaluate((r) => (window as HookWindow).__E2E__?.replay('level-05', { runs: r }, 1), script.runs);
+  const seen = (await stopWatching(page)).filter((f) => f.tick >= 760 && f.tick <= 845);
+  expect(seen.filter((f) => f.boxes.length >= 2).length, 'frames with two pop-ups by him (a +10 and the +50)').toBeGreaterThan(10);
+  // Each pop-up's move from one frame to the next, across plus up or down: in the world or on screen, whichever is less.
+  const moves: string[] = [];
+  const flips: string[] = [];
+  const last = new Map<number, { x: number; y: number; camX: number; camY: number; vx: number; vy: number }>();
+  for (const f of seen) {
+    for (const b of f.boxes) {
+      const q = last.get(b.id);
+      let vx = 0;
+      let vy = 0;
+      if (q) {
+        const sx = b.x - q.x;
+        const sy = b.y - q.y;
+        const wx = b.x + f.camX - (q.x + q.camX);
+        const wy = b.y + f.camY - (q.y + q.camY);
+        [vx, vy] = Math.abs(wx) + Math.abs(wy) <= Math.abs(sx) + Math.abs(sy) ? [wx, wy] : [sx, sy];
+        if (Math.abs(vx) + Math.abs(vy) >= 3) moves.push(`tick ${f.tick}: #${b.id} ${vx},${vy}`);
+        if (Math.abs(vx) + Math.abs(vy) >= 10 && Math.abs(q.vx) + Math.abs(q.vy) >= 10 && vx * q.vx + vy * q.vy < 0) flips.push(`tick ${f.tick}: #${b.id}`);
+      }
+      last.set(b.id, { x: b.x, y: b.y, camX: f.camX, camY: f.camY, vx, vy });
+    }
+  }
+  expect(flips).toEqual([]);
+  expect(moves.length, `steps of 3 px or more in one frame: ${moves.join('; ')}`).toBeLessThanOrEqual(4);
+  expect(onHero(seen)).toEqual([]);
+});
+
+test('level 1 at 120 Hz, drawn between ticks: no pop-up ever lies on the hero as drawn (slivers of them did)', async ({ page }) => {
+  test.setTimeout(180_000);
+  // A display of 120 frames a second, on a clock of its own: two frames a tick, the second drawn half way between ticks.
+  await page.addInitScript(() => {
+    const queue: FrameRequestCallback[] = [];
+    let now = -1;
+    window.requestAnimationFrame = (cb: FrameRequestCallback): number => {
+      queue.push(cb);
+      return queue.length;
+    };
+    window.cancelAnimationFrame = (): void => undefined;
+    const frame = (): void => {
+      now = now < 0 ? performance.now() : now + 1000 / 120;
+      for (const cb of queue.splice(0)) cb(now);
+      setTimeout(frame, 0);
+    };
+    setTimeout(frame, 0);
+  });
+  await open(page);
+  const script = readScript('level-01');
+  await watchFrames(page);
+  const result = (await page.evaluate((r) => (window as HookWindow).__E2E__?.replay('level-01', { runs: r }, 1, { realTime: true }), script.runs)) as { won: boolean };
+  const seen = await stopWatching(page);
+  expect(result.won, 'the proof wins at 120 Hz too').toBe(true);
+  // Frames drawn between ticks: two frames of one tick with the hero drawn in different places.
+  let between = 0;
+  for (let i = 1; i < seen.length; i++) {
+    const a = seen[i - 1];
+    const b = seen[i];
+    if (a && b && a.tick === b.tick && a.hero && b.hero && (a.hero.x !== b.hero.x || a.hero.y !== b.hero.y)) between += 1;
+  }
+  expect(between, 'frames that show the hero between two ticks').toBeGreaterThan(100);
+  expect(seen.filter((f) => f.boxes.length > 0).length, 'frames with a pop-up').toBeGreaterThan(200);
+  expect(onHero(seen)).toEqual([]);
+});
+
+test.describe('under reduced motion', () => {
+  test.use({ reducedMotion: 'reduce' });
+
+  for (const id of ['level-01', 'level-02']) {
+    test(`${id}: a still pop-up the hero walks into is taken down, never drawn on him, and none rises`, async ({ page }) => {
+      test.setTimeout(120_000);
+      await open(page);
+      const script = readScript(id);
+      await watchFrames(page);
+      await page.evaluate(([i, r]) => (window as HookWindow).__E2E__?.replay(i, { runs: r }, 1), [id, script.runs] as const);
+      const seen = await stopWatching(page);
+      expect(seen.filter((f) => f.boxes.length > 0).length, 'frames with a pop-up').toBeGreaterThan(50);
+      expect(onHero(seen)).toEqual([]);
+      expect(Math.max(...seen.map((f) => f.rise)), 'how far a pop-up rose').toBe(0);
+    });
+  }
+});
+
+/** The view's scroll on `tick` of `id`'s proof as Node's camera gives it on this phone, touch, with the pad's buttons or with none. */
+function nodeScrollWith(id: string, tick: number, buttons: boolean): number {
+  const level = parseLevel(readFileSync(path.join(import.meta.dirname, '..', 'levels', `${id}.txt`), 'utf8'), id);
+  const script = readScript(id);
+  const stop = { runs: [] as [number, number][] };
+  let left = tick;
+  for (const [bits, n] of script.runs) {
+    if (left <= 0) break;
+    stop.runs.push([bits, Math.min(n, left)]);
+    left -= n;
+  }
+  let scrollY = Number.NaN;
+  const camera = shippedCamera(TUNING);
+  const watched: typeof camera = {
+    snap: (g, v, l, p, b) => camera.snap(g, v, l, p, buttons ? b : null),
+    step: (prev, g, v, l, p, b) => {
+      const next = camera.step(prev, g, v, l, p, buttons ? b : null);
+      scrollY = next.scrollY;
+      return next;
+    },
+  };
+  measureRoute(level, stop, compileTuning(TUNING), TUNING, { name: 'se', w: 568, h: 320, dpr: 2, touch: true }, watched, shippedPopups());
+  return scrollY;
+}
+
+test("level 1: the framing weighs the pad's buttons as drawn: the scroll is Node's with them, not without them (no test saw them used)", async ({ page }) => {
+  test.setTimeout(120_000);
+  await open(page);
+  const script = readScript('level-01');
+  // Ticks where the buttons change the framing on this phone (Node, both ways).
+  const ticks = [150, 250, 620];
+  for (const t of ticks) expect(nodeScrollWith('level-01', t, true), `tick ${t}: the buttons change the framing`).not.toBe(nodeScrollWith('level-01', t, false));
+  await replayTo(page, 'level-01', script.runs, ticks[0] ?? 0);
+  for (const tick of ticks) {
+    if (tick !== ticks[0]) expect(await stepTo(page, tick)).toBe(tick);
+    const look = await page.evaluate(() => (window as HookWindow).__E2E__?.look() ?? null);
+    expect(look?.camY, `tick ${tick}: the scroll with the buttons`).toBe(nodeScrollWith('level-01', tick, true));
+  }
+});

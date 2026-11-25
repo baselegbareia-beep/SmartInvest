@@ -5,17 +5,21 @@ name: Game
 #   /        the existing root site: every tracked file outside game/, as before
 #   /game/   the built game
 #
-# ONE MANUAL STEP, BEFORE THE GAME IS MERGED INTO THE DEFAULT BRANCH:
+# ONE MANUAL STEP, JUST BEFORE THE GAME IS MERGED INTO THE DEFAULT BRANCH
+# (claude/mobile-financial-charts-SsZsI; the repository has no main):
 #   Settings > Pages > Build and deployment > Source = "GitHub Actions".
 # While the source is still "Deploy from a branch", GitHub publishes the branch
 # as it is: /game/ would then serve the game's unbuilt source (a blank page),
 # and that publisher would compete with the deploy job below.
+# Make the switch and the merge in one sitting: from the switch until the merge
+# brings this file to the default branch, nothing new is published at all.
 # The step is also listed in game/docs/PLAN.md (Phase 0, owner's step 2).
 #
 # Known consequence: the deploy job needs the check job, so a push that only
-# changes the root site still waits for the game's checks, and nothing is
-# published while they fail. That is on purpose (a broken game is never
-# published) and ends when the game moves to its own repository.
+# changes the root site still waits for the game's checks (and for the run of
+# the push before it, see concurrency below), and nothing is published while
+# they fail. That is on purpose (a broken game is never published) and ends
+# when the game moves to its own repository.
 
 on:
   pull_request:
@@ -30,6 +34,16 @@ on:
 
 permissions:
   contents: read
+
+# Runs for one branch never overlap: a push's run waits for the run before it to
+# end, so an older commit can never be published after a newer one (without this,
+# the deploys went out in the order the checks happened to finish). A newer push
+# replaces a run that is still waiting. On a pull request a newer push also
+# cancels the run in progress, which checks a commit that is no longer the head.
+# A run started again by hand later is caught by the deploy job's head check.
+concurrency:
+  group: game-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
@@ -120,10 +134,30 @@ jobs:
         with:
           path: _site
 
+      # A run of an older commit, started again by hand ("Re-run jobs") after a newer
+      # commit reached the branch, must not publish over it. The newest commit's own
+      # run publishes; this one ends green with a note in its summary.
+      - name: Is this still the newest commit?
+        id: head
+        env:
+          BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          newest="$(git ls-remote --exit-code origin "refs/heads/$BRANCH")"
+          newest="${newest%%[[:space:]]*}"
+          if [ "$newest" = "$GITHUB_SHA" ]; then
+            echo "newest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "newest=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Not published: $BRANCH is now at $newest, not $GITHUB_SHA. The run of $newest publishes the site."
+            echo "Not published: $BRANCH is now at $newest, not $GITHUB_SHA. The run of $newest publishes the site." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Deploy to GitHub Pages
+        if: steps.head.outputs.newest == 'true'
         uses: actions/deploy-pages@v5
 
       - name: Link to the game
+        if: steps.head.outputs.newest == 'true'
         env:
           GAME_URL: ${{ steps.pages.outputs.base_url }}/game/
         run: echo "Play the game at $GAME_URL" >> "$GITHUB_STEP_SUMMARY"

@@ -99,7 +99,7 @@ describe('the pop-up board: never on each other, on the hero, on the score or on
     expect(watch(board, camY, true, () => hero)).toEqual([]);
   });
 
-  it('a hero jumping up through his own +10 never covers it: it steps aside, then goes back to rising from its place', () => {
+  it('a hero jumping up through his own +10 never covers it: it steps aside and rises on from there', () => {
     const camY = 0;
     const board = new PopupBoard(false);
     board.spawn(17, 108, 80, camY, false);
@@ -108,18 +108,83 @@ describe('the pop-up board: never on each other, on the hero, on the score or on
     expect(watch(board, camY, false, heroAt)).toEqual([]);
   });
 
-  it('under reduced motion a pop-up stays where it was first drawn (placed off the hero when it appears), however he moves after', () => {
+  it('under reduced motion a pop-up stays where it was first drawn (placed off the hero when it appears); when he comes onto it, it is taken down, not moved', () => {
     const camY = 0;
     const board = new PopupBoard(true);
     board.spawn(17, 108, 80, camY, false);
     board.place(camY, false, { x: 100, y: 90, w: 16, h: 16 });
     const first = board.shown().map((p) => ({ x: p.drawX, y: p.drawY }));
     expect(first[0]?.y, 'off the hero from the start').toBeLessThanOrEqual(90 - POPUP_H);
+    let gone = -1;
     for (let f = 0; f < POPUP_FRAMES - 1; f++) {
       board.advance(1);
-      board.place(camY, false, { x: 100 + f, y: 96 - f, w: 16, h: 16 });
-      expect(board.shown().map((p) => ({ x: p.drawX, y: p.drawY })), `frame ${f}`).toEqual(first);
+      // He rises a px a frame toward it (rows 80 to 87): on frame 2 his sprite's top row, 87, reaches it.
+      const hero = { x: 100 + f, y: 89 - f, w: 16, h: 16 };
+      board.place(camY, false, hero);
+      const now = boxes(board);
+      for (const b of now) expect(meet(b, hero), `frame ${f}: on the hero`).toBe(false);
+      if (now.length === 0) {
+        if (gone < 0) gone = f;
+        continue;
+      }
+      expect(board.shown().map((p) => ({ x: p.drawX, y: p.drawY })), `frame ${f}: where it was first drawn`).toEqual(first);
     }
+    expect(gone, 'taken down the frame he reaches it').toBe(2);
+  });
+
+  /** Frames on which a pop-up moved `min` px or more (across plus up or down) since the frame before; and flips round him. */
+  const motion = (board: PopupBoard, heroAt: (frame: number) => Box, frames: number): { jumps: number; flips: number; most: number; mostX: number; mostY: number; faults: string[] } => {
+    const last = new Map<number, { x: number; y: number; vx: number; vy: number }>();
+    let jumps = 0;
+    let flips = 0;
+    let most = 0;
+    let mostX = 0;
+    let mostY = 0;
+    const faults: string[] = [];
+    for (let f = 0; f < frames; f++) {
+      board.advance(1);
+      const hero = heroAt(f);
+      board.place(0, false, hero);
+      for (const p of board.shown()) {
+        if (meet({ x: p.drawX, y: p.drawY, w: p.w, h: POPUP_H }, hero)) faults.push(`frame ${f}: on the hero`);
+        const q = last.get(p.seq);
+        const vx = q ? p.drawX - q.x : 0;
+        const vy = q ? p.drawY - q.y : 0;
+        const d = Math.abs(vx) + Math.abs(vy);
+        most = Math.max(most, d);
+        mostX = Math.max(mostX, Math.abs(vx));
+        mostY = Math.max(mostY, Math.abs(vy));
+        if (d >= 3) jumps += 1;
+        if (q && d >= 10 && Math.abs(q.vx) + Math.abs(q.vy) >= 10 && vx * q.vx + vy * q.vy < 0) flips += 1;
+        last.set(p.seq, { x: p.drawX, y: p.drawY, vx, vy });
+      }
+    }
+    return { jumps, flips, most, mostX, mostY, faults };
+  };
+
+  it('a hero walking into a pop-up beside him pushes it along at his pace: never more than 2 px across a frame, rising as before, never on him (it hopped round him)', () => {
+    const board = new PopupBoard(false);
+    // A +10 just right of his head; he walks right at 1.5 px a frame, his sprite drawn on whole pixels.
+    board.spawn(17, 126, 92, 0, false);
+    const m = motion(board, (f) => ({ x: 100 + Math.floor(1.5 * (f + 1)), y: 96, w: 16, h: 16 }), POPUP_FRAMES - 1);
+    expect(m.faults).toEqual([]);
+    expect(m.mostX, 'the largest move across in one frame, px: his pace').toBeLessThanOrEqual(2);
+    expect(m.mostY, 'the largest move up or down in one frame, px: its rise').toBeLessThanOrEqual(1);
+  });
+
+  it("a hero hopping along under two pop-ups (level 5's '+10' and '+50', 568 x 320) makes each step aside at most once, and none flips round him", () => {
+    // As the route watch's re-check saw it on level 5, ticks 815 to 840: he walks right at 1.5 px a frame and hops (5 px a
+    // frame up, then down); the '+50' went left and right of him on alternate frames, 36 px each time.
+    const board = new PopupBoard(false);
+    board.spawn(17, 792, 152, 79, false);
+    board.advance(1);
+    board.place(79, false, { x: 769, y: 160, w: 16, h: 16 });
+    board.spawn(17, 793, 143, 79, false);
+    const hop = [0, 0, 0, 0, 0, 0, -5, -10, -15, -18, -18, -17, -16, -14, -12, -9, -6, -3, 0, 0, 0, -5, -10, -15, -18, -18, -17];
+    const m = motion(board, (f) => ({ x: 770 + Math.floor(1.5 * (f + 1)), y: 160 + (hop[f] ?? 0), w: 16, h: 16 }), POPUP_FRAMES - 2);
+    expect(m.faults).toEqual([]);
+    expect(m.flips, 'flips round him').toBe(0);
+    expect(m.jumps, 'moves of 3 px or more in one frame, both pop-ups').toBeLessThanOrEqual(2);
   });
 
   it('over random moments: never on each other, on the hero, above POPUP_TOP, nor above the toast band while it shows', () => {

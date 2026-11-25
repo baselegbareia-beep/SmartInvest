@@ -12,6 +12,7 @@ import {
   loadJson,
   loadProgress,
   loadSettings,
+  mergeSave,
   parseSettings,
   saveJson,
   saveProgress,
@@ -213,5 +214,40 @@ describe('progress and settings', () => {
     vi.stubGlobal('window', { localStorage: store });
     expect(saveSettings({ v: 1, sound: false, vibration: true })).toBe(true);
     expect(loadSettings()).toEqual({ v: 1, sound: false, vibration: true });
+  });
+});
+
+describe('two copies of the game on one origin', () => {
+  const run = (levelIndex: number, score: number, lives = 3) => ({ levelIndex, score, lives });
+  const save = (fields: Partial<SaveData>): SaveData => ({ ...defaultSave(), ...fields });
+
+  it('mergeSave keeps the larger unlocked level and best score, the campaign finished, and the writer\'s own run', () => {
+    // Tab A cleared level 1 and saved; tab B, opened before that, starts a NEW GAME from its old copy.
+    const stored = save({ unlocked: 1, bestScore: 410, resume: run(1, 410) });
+    const next = save({ unlocked: 0, bestScore: 0, resume: run(0, 0) });
+    expect(mergeSave(stored, next)).toEqual(save({ unlocked: 1, bestScore: 410, resume: run(0, 0) }));
+    expect(mergeSave(save({ finished: true }), save({ resume: run(2, 50) }))).toEqual(save({ finished: true, resume: run(2, 50) }));
+    // A game over in this tab clears this tab's run, whatever the store held.
+    expect(mergeSave(save({ resume: run(5, 900) }), save({ unlocked: 5, bestScore: 900 }))).toEqual(save({ unlocked: 5, bestScore: 900 }));
+  });
+
+  it('mergeSave gives back the very save it was given when the store adds nothing (one tab: nothing changes)', () => {
+    const next = save({ unlocked: 3, bestScore: 1200, resume: run(3, 1000) });
+    expect(mergeSave(save({ unlocked: 2, bestScore: 500 }), next)).toBe(next);
+    expect(mergeSave(defaultSave(), next)).toBe(next);
+  });
+
+  it('loadStoredJson reads what the store holds now, not this visit\'s memory copy', () => {
+    const store = new FakeStore();
+    const safe = createSafeStorage(() => store);
+    safe.saveJson('k', { n: 1 });
+    store.data.set('k', JSON.stringify({ n: 2 })); // another tab wrote meanwhile
+    expect(safe.loadJson('k')).toEqual({ n: 1 }); // the memory copy wins for this visit's own reads...
+    expect(safe.loadStoredJson('k')).toEqual({ n: 2 }); // ...the store says what the other tab saved
+    store.data.set('k', 'not json');
+    expect(safe.loadStoredJson('k')).toBeUndefined();
+    store.failRead = true;
+    expect(safe.loadStoredJson('k')).toBeUndefined();
+    expect(createSafeStorage(() => null).loadStoredJson('k')).toBeUndefined();
   });
 });

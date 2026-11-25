@@ -25,7 +25,7 @@ Places where the two spikes, the designs and the rulings disagree, and what this
 
 | # | Topic | The disagreement | Used here |
 |---|---|---|---|
-| 1 | Renderer type | Render spike's snippets say `Phaser.WEBGL`; input spike says `Phaser.AUTO` | `Phaser.AUTO`. It picked WebGL in every run [I][C]. Where WebGL is missing it falls back to the Canvas renderer, which runs the game but ignores tints [R][C]; `Phaser.WEBGL` would throw instead [I] |
+| 1 | Renderer type | Render spike's snippets say `Phaser.WEBGL`; input spike says `Phaser.AUTO` | `Phaser.AUTO`. It picked WebGL in every run [I][C]. Where WebGL is missing it falls back to the Canvas renderer, which runs the game but ignores tints and draws no nine-slice (`NineSliceRender`'s `renderCanvas` is a no-op) [R][C]; `Phaser.WEBGL` would throw instead [I]. So nothing the player must read is said by a tint or a nine-slice alone: the cog slot and the title's plate are frames of their own, the menu focus is a drawn rim, and plates are rectangles on Canvas (`src/shell/plate.ts`); e2e/canvas.spec.ts runs Chromium with `--disable-webgl` [C]. Text colours (tints) are still lost there: all text is white |
 | 2 | Scale mode | Input spike's config uses `Scale.FIT` + `CENTER_BOTH` at 320 x 180 (and notes it looks uneven); render spike proved `Scale.NONE` + CSS transform | Ruling R11: `Scale.NONE` + CSS transform. The merged config (input spike's keys, render spike's scale block) was run as one [C] |
 | 3 | View size rounding | Render spike: `Math.ceil`, canvas covers the window and overhangs by up to Z - 1 device pixels, no upper limit, minimum 320 x 200 px. Feel design and R11: `Math.floor`, minimum 17 x 10 tiles, cap 30 x 14 tiles, centred, pillarboxed to the notch | R11. The render spike's 72-case proof was for a canvas at the window's corner, so pixel uniformity was proven again with offsets and caps [C] |
 | 4 | Device pixel count | Render spike: `Math.round(innerWidth * dpr)`. Feel design and ARCHITECTURE 11.5: `Math.floor((cssW - insets) * dpr)` | `Math.floor`: the canvas can then never be larger than the window |
@@ -1758,6 +1758,7 @@ One path, `PlayScene.pauseGame()` (code in section 11), is called by:
 | Tab hidden | `game.events.on(Phaser.Core.Events.HIDDEN, ...)` | `document.hidden` stubbed and `visibilitychange` dispatched [I][C]. A really hidden tab: UNVERIFIED |
 | `pagehide` | `window.addEventListener('pagehide', ...)` | Synthetic event only [C]. Real navigation away: UNVERIFIED |
 | Rotation to portrait on a touch device | `installRotateGuard` (section 17) | Viewport rotation [C] |
+| WebGL context lost (a GPU reset, a driver update, memory pressure, with the page in view) | `game.renderer.on(Phaser.Renderer.Events.LOSE_WEBGL, ...)` in Play (the Canvas renderer never emits it) | `WEBGL_lose_context.loseContext()` [C]: before, the Play scene ran on while the canvas was blank (a life was lost to spikes unseen) and play went on with no menu after `restoreContext()`; now the pause menu is up, and waits when the picture comes back (e2e/renderer.spec.ts). Phaser's own restore of the textures works [C] |
 
 `pauseGame()` sets `mode = 'paused'` (so `update` stops calling `step`), resets the stepper, releases the pad, `Controls` and Phaser's keys, hides the pad, and launches the Pause scene. It returns at once when the game is not running, so it is safe to call from several triggers at the same moment.
 
@@ -1940,6 +1941,8 @@ Observed:
 | Corrupt JSON, or valid JSON of the wrong shape | n/a | Fallback value [I][C] |
 
 Phaser itself booted in every case and wrote nothing to `localStorage`, `sessionStorage` or IndexedDB [I]. Safari private mode is UNVERIFIED.
+
+**Two copies of the game on one origin** (two tabs, or the installed app beside a browser tab on Android and desktop; an iPhone home-screen app keeps its own store) share the store, and each keeps its own copy in memory. Written as it was, a tab opened before another one's progress put the old unlocked level and best score back on its next save (a NEW GAME there wiped a cleared level 1 and its 410 points [C]), and a stale tab's next change of settings switched the other's sound back on. Now (`src/shell/singletons.ts`, `storage.ts`): every progress write is merged with what the store holds then (`loadStoredJson`, which skips the memory copy; `mergeSave` keeps the larger unlocked level and best score, `finished`, and the writer's own run), every settings write starts from the stored settings, and a `window` `'storage'` listener (fired in every OTHER document of the origin, never in the writer) takes the other copy's save in: its settings at once (sound, vibration, the switches drawn again), its unlocked level and best score always, its run only while this copy plays no saved session of its own; a title on screen is built again for it [C] (e2e/tabs.spec.ts, two pages in one context).
 
 The service worker of Phase 5 has the same trap: in a sandboxed frame reading `navigator.serviceWorker` throws. Its registration is wrapped in `try / catch` and skipped inside any frame (ARCHITECTURE 11.7). UNVERIFIED until Phase 5.
 

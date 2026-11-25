@@ -14,6 +14,11 @@
  *
  * The game-over and win jingles started by the router ring on over this screen; it opens with the
  * shutter wipe.
+ *
+ * The buttons are there from the start but take no pick (drawn dimmed; the focus may move) until
+ * TUNING.effects.endMenuArmFrames have passed and the last line is shown (`armAt`): Space is also JUMP, and a
+ * jump pressed as the last life went (the player's own rhythm of restarting after a respawn) picked TRY AGAIN
+ * before GAME OVER was drawn; on the win, PLAY AGAIN wiped the score lines before they were shown.
  */
 import * as Phaser from 'phaser';
 
@@ -61,6 +66,8 @@ export class EndScene extends Phaser.Scene {
   private revealed = 0;
   /** The device asks for reduced motion: the glow holds still and NEW BEST! does not blink. */
   private still = false;
+  /** The frame (of `age`) from which the menu takes picks. */
+  private armAt = 0;
 
   constructor() {
     super('End');
@@ -79,6 +86,7 @@ export class EndScene extends Phaser.Scene {
     this.age = 0;
     this.revealed = 0;
     this.still = prefersReducedMotion();
+    this.armAt = 0;
   }
 
   create(data: EndData): void {
@@ -100,7 +108,8 @@ export class EndScene extends Phaser.Scene {
       // The furnace light rises behind the ridge: stepped amber strips, drawn over the stars and under the ridge.
       this.glow = glowBands(this.scale.height).map(() => this.add.rectangle(0, 0, 1, 1, COLOR.amber, 0).setOrigin(0, 0).setDepth(-9.5));
     }
-    this.menu = new Menu(this, entries, { panel: false, dim: false });
+    this.armAt = Math.max(TUNING.effects.endMenuArmFrames, ...this.lines.map((l) => l.showAt));
+    this.menu = new Menu(this, entries, { panel: false, dim: false, armed: false });
     this.shutter = new Shutter(this, 100);
     this.layout();
     this.reveal();
@@ -123,6 +132,7 @@ export class EndScene extends Phaser.Scene {
     this.backdrop?.advance(whole);
     this.reveal();
     if (this.won) this.drawGlow();
+    if (this.age >= this.armAt) this.menu?.arm();
   }
 
   /** Shows the lines whose time has come (a tick for each new one), and blinks NEW BEST!. */

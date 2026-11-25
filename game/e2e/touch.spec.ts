@@ -568,3 +568,34 @@ test.describe('the smallest phone, 568 x 320 at 2', () => {
     expect(standing, 'two or three tiles from the airlock').toBeLessThan((door.col - 1) * 16);
   });
 });
+
+test.describe('a pixel ratio that changes while the game runs (zoom, display size, another screen)', () => {
+  test.use({ viewport: { width: 740, height: 360 }, deviceScaleFactor: 2 });
+
+  /** Each pad glyph's canvas: its own pixels across, and the device pixels it covers on the page. */
+  const glyphs = (page: Page): Promise<{ id: string; canvasW: number; devicePx: number }[]> =>
+    page.evaluate(() =>
+      [...document.querySelectorAll<HTMLElement>('.touchpad [data-btn]')].map((el) => {
+        const c = el.querySelector('canvas');
+        return { id: el.dataset.btn ?? '', canvasW: c?.width ?? 0, devicePx: (Number.parseFloat(c?.style.width ?? '0') || 0) * window.devicePixelRatio };
+      }),
+    );
+
+  test('from 2 to 2.75, the glyphs are drawn again at one canvas pixel per device pixel, as on a fresh load at 2.75', async ({ page, browser }) => {
+    const { cdp, problems } = await openRoom(page);
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 740, height: 360, deviceScaleFactor: 2.75, mobile: true });
+    await expect.poll(() => page.evaluate(() => window.devicePixelRatio)).toBe(2.75);
+    await expect
+      .poll(async () => (await glyphs(page)).filter((g) => Math.abs(g.canvasW - g.devicePx) > 0.5).map((g) => g.id), { timeout: 5000 })
+      .toEqual([]);
+
+    // The same as a page opened at 2.75.
+    const fresh = await browser.newContext({ viewport: { width: 740, height: 360 }, deviceScaleFactor: 2.75, hasTouch: true, isMobile: true });
+    const other = await fresh.newPage();
+    await other.goto('./?level=test&touch=1&e2e=1');
+    await other.locator('.touchpad.is-visible').waitFor({ state: 'visible' });
+    expect((await glyphs(page)).map((g) => g.canvasW)).toEqual((await glyphs(other)).map((g) => g.canvasW));
+    await fresh.close();
+    expect(problems).toEqual([]);
+  });
+});

@@ -59,9 +59,9 @@ async function frames(page: Page, n: number): Promise<void> {
   );
 }
 
-/** Clicks the menu row whose label starts with `text`, where the hook says it is. */
+/** Clicks the menu row whose label starts with `text`, where the hook says it is, once the menu takes picks (an end screen's lights after a moment). */
 async function pick(page: Page, text: string): Promise<void> {
-  await expect.poll(async () => (await menuLabels(page)).some((l) => l.startsWith(text))).toBe(true);
+  await expect.poll(async () => (await page.evaluate(() => window.__E2E__?.menu() ?? [])).some((i) => i.label.startsWith(text) && i.armed)).toBe(true);
   const items = await page.evaluate(() => window.__E2E__?.menu() ?? []);
   const item = items.find((i) => i.label.startsWith(text));
   if (!item) throw new Error(`no menu row ${text}`);
@@ -271,13 +271,13 @@ test.describe('the HUD stands still under the pause menu', () => {
 test('visiting every scene again and again leaves no listener behind on any of them', async ({ page }) => {
   const problems = await open(page);
   const round = async (): Promise<void> => {
-    // Title -> Play (Enter starts or continues) -> Pause -> RESTART x3 (the last one is the game over) -> End -> Title.
+    // Title -> Play (Enter starts or continues) -> Pause -> RESTART x3 (the last one, GIVE UP, is the game over) -> End -> Title.
     await page.keyboard.press('Enter');
     await expect.poll(() => scenes(page)).toContain('Hud');
     for (let i = 0; i < 3; i++) {
       await expect.poll(async () => (await state(page))?.mode).toMatch(/^(intro|running)$/);
       await openPause(page);
-      await pick(page, 'RESTART LEVEL');
+      await pick(page, i < 2 ? 'RESTART LEVEL' : 'GIVE UP');
       await expect.poll(async () => (await scenes(page)).includes('Pause')).toBe(false);
     }
     await expect.poll(() => scenes(page)).toEqual(['End']);

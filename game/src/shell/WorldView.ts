@@ -159,6 +159,17 @@ export class WorldView {
       : null;
   }
 
+  /**
+   * Test hook only: the hero's sprite as drawn on the last frame (interpolated on a fast display), with the fuel bar over
+   * it while it shows, art px from the view's top-left corner (the scroll without the shake); null while he is hidden.
+   */
+  heroBoxOnView(): { x: number; y: number; w: number; h: number } | null {
+    const hero = this.hero;
+    if (!hero?.visible) return null;
+    const bar = this.fuelBack?.visible === true ? FUELBAR_GAP + FUELBAR_H : 0;
+    return { x: hero.x - this.drawnCamX, y: hero.y - bar - this.drawnCamY, w: TILE_SIZE, h: TILE_SIZE + bar };
+  }
+
   /** Test hook only: the hero's sprite corner as last captured (whole art px in the level): where he is drawn. */
   heroDrawn(): { x: number; y: number } {
     return { x: this.heroTrack.curX, y: this.heroTrack.curY };

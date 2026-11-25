@@ -76,8 +76,14 @@ async function playRoom(page: Page, id: string): Promise<void> {
   await expect.poll(() => hook.mode(page), { timeout: 5000 }).toBe('running');
 }
 
-/** Taps (clicks) the menu item with these words. */
+/**
+ * Taps (clicks) the menu item with these words, once the menu shows it: the Pause scene is listed a frame before its
+ * menu is built, and on a busy machine the test could ask in between (an empty menu, 25 November 2026). An end
+ * screen takes no pick until its buttons light (menu.ts `armed`): that is waited for too, as a player would.
+ */
 async function pick(page: Page, words: string): Promise<void> {
+  await expect.poll(async () => (await hook.menu(page)).map((i) => i.label), { timeout: 5000 }).toContain(words);
+  await expect.poll(async () => (await hook.menu(page)).some((i) => i.label === words && i.armed), { timeout: 5000 }).toBe(true);
   const items = await hook.menu(page);
   const item = items.find((i) => i.label === words);
   if (!item) throw new Error(`no menu item "${words}" in ${JSON.stringify(items.map((i) => i.label))}`);

@@ -20,7 +20,8 @@
  *   const settings = loadSettings();  saveSettings({ ...settings, sound: false });
  *
  * `loadJson` / `saveJson` are the general form; `createSafeStorage` builds the same pair over another
- * store (tests pass fakes).
+ * store (tests pass fakes). `loadStoredJson` reads what the store holds now, for another copy of the game on the
+ * same origin: singletons.ts merges each progress save with it (`mergeSave`) and listens for the 'storage' event.
  */
 import { parseSave } from '../core/save';
 import type { SaveData, SettingsData } from '../core/types';
@@ -48,6 +49,12 @@ export interface SafeStorage {
    * is then still kept in memory for this visit, unless it cannot be written as JSON at all). Never throws.
    */
   readonly saveJson: (key: string, value: unknown) => boolean;
+  /**
+   * The value the STORE holds under `key` now, parsed, skipping this visit's memory copy: what another copy of the
+   * game on the same origin (a second tab, the installed app) may have saved since. `undefined` when there is no
+   * store, nothing under the key, or it cannot be parsed. Never throws.
+   */
+  readonly loadStoredJson: (key: string) => unknown;
 }
 
 /** A safe load / save pair over the store `source` returns, with its own memory copy. */
@@ -71,16 +78,23 @@ export function createSafeStorage(source: StoreSource): SafeStorage {
     }
   };
 
+  const parse = (raw: string | null): unknown => {
+    if (raw === null) return undefined;
+    try {
+      return JSON.parse(raw) as unknown;
+    } catch {
+      return undefined;
+    }
+  };
+
   return {
     loadJson(key: string): unknown {
       // Memory first: after a failed write the store may still hold an older value.
-      const raw = memory.get(key) ?? readStored(key);
-      if (raw === null) return undefined;
-      try {
-        return JSON.parse(raw) as unknown;
-      } catch {
-        return undefined;
-      }
+      return parse(memory.get(key) ?? readStored(key));
+    },
+
+    loadStoredJson(key: string): unknown {
+      return parse(readStored(key));
     },
 
     saveJson(key: string, value: unknown): boolean {
@@ -118,6 +132,26 @@ export function loadJson(key: string): unknown {
 /** `SafeStorage.saveJson` over the page's localStorage. */
 export function saveJson(key: string, value: unknown): boolean {
   return page.saveJson(key, value);
+}
+
+/** `SafeStorage.loadStoredJson` over the page's localStorage: what is stored now, whoever wrote it. */
+export function loadStoredJson(key: string): unknown {
+  return page.loadStoredJson(key);
+}
+
+/**
+ * Two copies of the game on one origin (two tabs, or the installed app beside a browser tab) share one store, and
+ * each keeps its own copy of the progress. Written as it was, the copy of a tab opened before another one's progress
+ * put the old unlocked level and best score back on its next save. So a save is merged with what is stored: what
+ * only grows stays at the larger (the highest level unlocked, the best score, the campaign finished), and the run in
+ * progress is the writer's own (`next.resume`: one tab's run is not another's). Pure.
+ */
+export function mergeSave(stored: SaveData, next: SaveData): SaveData {
+  const unlocked = Math.max(stored.unlocked, next.unlocked);
+  const bestScore = Math.max(stored.bestScore, next.bestScore);
+  const finished = stored.finished || next.finished;
+  if (unlocked === next.unlocked && bestScore === next.bestScore && finished === next.finished) return next;
+  return { v: 1, unlocked, bestScore, finished, resume: next.resume };
 }
 
 /** Settings of a first visit: sound on, vibration on. */

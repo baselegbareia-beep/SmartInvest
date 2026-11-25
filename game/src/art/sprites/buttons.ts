@@ -78,11 +78,12 @@ const FIRE: Frame = [
 ];
 
 /**
- * A flame under a bottle, twice: the twin bottles of the pack (pickup_thruster and
- * hud_thruster) joined by their strap, each lit down its left side, and under each
- * nozzle a long flame with a white core that tapers to a point. (A single bottle with a
- * T valve read as a helicopter, a bell or a little robot; a single bottle with a
- * teardrop flame read as a carrot; one wide plume under the pair read as a face.)
+ * A flame under a bottle, twice: twin bottles joined by a strap, each lit down its left
+ * side, and under each nozzle a long flame with a white core that tapers to a point. (A
+ * single bottle with a T valve read as a helicopter, a bell or a little robot; a single
+ * bottle with a teardrop flame read as a carrot; one wide plume under the pair read as a
+ * face.) The pack itself (pickup_thruster, hud_thruster) is one banded tank, a shape of its
+ * own: a pack drawn as this glyph read as part of the pad.
  */
 const THRUST: Frame = [
   '...ggg....ggg...',

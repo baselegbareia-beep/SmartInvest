@@ -993,4 +993,104 @@ describe('the standing framing: what is near the hero is kept out from under the
       }
     }
   });
+
+  /** A random room: a floor, the hero on it, and the level's things (and `extra`) scattered above and below. */
+  const randomRoom = (rnd: () => number, extra: readonly string[] = []): ReturnType<typeof levelFromRows> | null => {
+    const W = 30;
+    const H = 24;
+    const floor = 8 + Math.floor(rnd() * 13);
+    const grid = Array.from({ length: H }, (_, r) => Array.from({ length: W }, (_, c) => (r === 0 || r >= H - 1 || c === 0 || c === W - 1 || r === floor + 1 ? '#' : '.')));
+    const put = (ch: string): void => {
+      for (;;) {
+        const c = 1 + Math.floor(rnd() * (W - 2));
+        const r = 1 + Math.floor(rnd() * (H - 3));
+        if (grid[r]?.[c] === '.' && r !== floor + 1) {
+          (grid[r] as string[])[c] = ch;
+          return;
+        }
+      }
+    };
+    (grid[floor] as string[])[2 + Math.floor(rnd() * (W - 4))] = 'P';
+    for (const ch of ['T', 'D', 'J', 'B', 'G', 'G', 'G', 'C', 'M', 'F', 'S', ...extra]) put(ch);
+    try {
+      return levelFromRows(grid.map((r) => r.join('')));
+    } catch {
+      return null; // a random room the level reader refuses (a Cinderpeg with no floor)
+    }
+  };
+
+  it('over random rooms: never newly puts an up-and-down Arc Moth under the strip anywhere on its way in the next half second (src/shell/routeView.test.ts holds level 9)', () => {
+    const rnd = seeded(31);
+    let moths = 0;
+    for (let trial = 0; trial < 1500; trial++) {
+      const built = randomRoom(rnd, ['M', 'M']);
+      if (!built) continue;
+      const game = playingGame(built);
+      const size = levelSize(built);
+      const scene: FrameScene = { game, buttons: BUTTONS };
+      const t = cameraTarget(game);
+      const anchor = snapCamera(t, SE, size, CAM, PAD);
+      const framed = snapCamera(t, SE, size, CAM, PAD, scene);
+      // Where each moth flies over the next 30 ticks, the hero standing still (the core steps it: 0.75 px a tick).
+      const ahead = playingGame(built);
+      const ys = built.enemies.map(() => [] as number[]);
+      for (let k = 0; k <= 30; k++) {
+        ahead.run.enemies.forEach((e, i) => {
+          const spawn = built.enemies[i];
+          if (spawn?.kind === 'moth' && spawn.axis === 'v') ys[i]?.push(e.y >> SUB_SHIFT);
+        });
+        step(ahead, IN(''), []);
+      }
+      built.enemies.forEach((e, i) => {
+        const way = ys[i] ?? [];
+        if (way.length === 0) return;
+        moths += 1;
+        const x = e.col * TILE_PX - framed.scrollX;
+        if (x + TILE_PX / 2 <= 0 || x + TILE_PX / 2 >= SE.w) return;
+        const framedUnder = way.some((y) => underStrip(y - framed.scrollY));
+        const anchorUnder = way.some((y) => underStrip(y - anchor.scrollY));
+        if (framedUnder) expect(anchorUnder, `trial ${trial}: the moth at ${e.col},${e.row} (way ${way[0]} to ${way[way.length - 1]}) newly under the strip`).toBe(true);
+      });
+    }
+    expect(moths, 'up-and-down moths weighed').toBeGreaterThan(150);
+  });
+
+  it('does not raise his feet to bring a Cinderpeg out from under FIRE if an Arc Moth would then fly into the strip within half a second (it weighed the moth as one tall thing)', () => {
+    // The hero on a floor at row 12, facing a one-tile pit 4 tiles ahead with a Cinderpeg in it, under FIRE on this phone;
+    // an up-and-down moth flies in column 18 (left of PAUSE), from under the roof down to the floor.
+    const rows = Array.from({ length: 24 }, (_, r) => {
+      if (r === 0 || r >= 15) return '#'.repeat(30);
+      if (r === 13 || r === 14) return '#'.repeat(13) + (r === 13 ? '...' : '.C.') + '#'.repeat(14);
+      const row: string[] = Array.from({ length: 30 }, (_, c) => (c === 0 || c === 29 ? '#' : '.'));
+      if (r === 12) {
+        row[10] = 'P';
+        row[25] = 'T';
+        row[27] = 'D';
+      }
+      if (r === 8) row[18] = 'M';
+      return row.join('');
+    });
+    const built = levelFromRows(rows);
+    const game = playingGame(built);
+    game.run.player.hasBlaster = true;
+    const size = levelSize(built);
+    const scene: FrameScene = { game, buttons: BUTTONS };
+    const t = cameraTarget(game);
+    const x = t.x - (SE.w / 2 - CAM.camLookAheadPx);
+    const moth = game.run.enemies.find((e) => e.kind === 'moth');
+    if (!moth) throw new Error('no moth');
+    // Without the moth the framing raises his feet: the Cinderpeg, 4 tiles ahead, comes out from under FIRE.
+    moth.alive = false;
+    const raised = frameShift(scene, t, x, SE, size, CAM, PAD, PAD.bottom ?? 0);
+    expect(raised, 'his feet raised for the Cinderpeg').toBeLessThan(0);
+    // The moth 4 px below where a raise of 8 puts it half under the strip, flying down: within half a second it would be there.
+    moth.alive = true;
+    moth.y = (16 * 7 + 12) << SUB_SHIFT;
+    moth.dir = 1;
+    const withMoth = frameShift(scene, t, x, SE, size, CAM, PAD, PAD.bottom ?? 0);
+    const anchorY = t.feetY - feetAnchor(SE, CAM, PAD);
+    const sy = anchorY - withMoth;
+    expect(underStrip((moth.y >> SUB_SHIFT) - Math.round(sy)), `the moth at the framed view (shift ${withMoth})`).toBe(false);
+    expect(withMoth, 'his feet not raised into it').toBeGreaterThanOrEqual(0);
+  });
 });

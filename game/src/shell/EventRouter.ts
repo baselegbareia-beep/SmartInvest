@@ -88,6 +88,8 @@ export interface HudEvents {
   levelClear(bonus: number): void;
   /** The hero is back: the icon of the life just lost blinks. `lives` is the count now. */
   lifeLost(lives: number): void;
+  /** The blaster or the pack was taken: at a keyboard the HUD names the keys that use it (`X FIRES THE BLASTER`). */
+  itemTaken(kind: ItemKind): void;
 }
 
 /** Where the progress lives (src/shell/singletons.ts). */
@@ -187,6 +189,7 @@ export class EventRouter {
           break;
         case 'pickup':
           effects.pickup(event.kind, event.x, event.y, event.score);
+          if (event.kind !== 'crystal') hud.itemTaken(event.kind);
           break;
         case 'pickupRestored':
           effects.pickupRestored(event.kind, event.x, event.y);

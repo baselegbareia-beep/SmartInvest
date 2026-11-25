@@ -67,9 +67,16 @@ const drawRotate = (): void => {
 };
 
 let appliedDpr = dpr();
+/** The ratio the pad's glyphs were drawn at (singletons.ts pixelCanvas: whole device px per art px for that ratio). */
+let glyphDpr = dpr();
 const relayout = (): void => {
   drawRotate();
   appliedDpr = dpr();
+  if (appliedDpr !== glyphDpr) {
+    // At another ratio the old glyphs' art pixels come out uneven (8 and 9 device px at 2 to 2.75): draw them again.
+    glyphDpr = appliedDpr;
+    pad.redrawGlyphs();
+  }
   const view = currentView();
   setAppliedView(view, appliedDpr);
   pad.layout(); // first: applyLayout's resize event re-places the camera, which keeps the hero clear of the pad

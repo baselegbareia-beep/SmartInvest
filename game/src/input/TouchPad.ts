@@ -145,8 +145,8 @@ export interface TouchPadOptions {
   onPause: () => void;
   /**
    * The art of a button: an element (a small canvas at a whole number of CSS px per art px) that is
-   * centred inside the button. Called once per button when the pad is built. Without it the
-   * buttons are plain shapes.
+   * centred inside the button. Called once per button when the pad is built, and again by
+   * `redrawGlyphs()`. Without it the buttons are plain shapes.
    */
   glyph?: (id: ControlId) => HTMLElement | null;
 }
@@ -174,6 +174,12 @@ export interface TouchPad {
   setSlots(slots: ItemSlots): void;
   /** Measures the window and the safe area again. The pad does this by itself on every resize and rotation. */
   layout(): void;
+  /**
+   * Builds every glyph again (`options.glyph`) and lays the pad out. Call it when the device pixel ratio changed
+   * (browser zoom, a display-size change, the window moved to another screen): a glyph is drawn at a whole number of
+   * DEVICE px per art px for the ratio it was built at, and at any other its art pixels come out uneven (8 and 9).
+   */
+  redrawGlyphs(): void;
   /**
    * Where each button is drawn, in CSS px of the window (null before the pad was first measured), whether or
    * not the pad is on screen. The camera keeps the hero clear of them (src/shell/camera.ts, PadReach).
@@ -240,6 +246,20 @@ export function createTouchPad(parent: HTMLElement, controls: Controls, t: Touch
     root.append(el);
     buttons.set(id, el);
   }
+
+  /** Replaces each glyph with a new one from `options.glyph` (the old one goes). */
+  const buildGlyphs = (): void => {
+    for (const [id, el] of buttons) {
+      const art = options.glyph?.(id) ?? null;
+      const old = glyphs.get(id);
+      if (old) old.remove();
+      glyphs.delete(id);
+      if (art) {
+        el.append(art);
+        glyphs.set(id, art);
+      }
+    }
+  };
 
   // Looks are tuning values too: hand them to the stylesheet as custom properties.
   root.style.setProperty('--pad-idle', String(t.opacityIdle));
@@ -430,6 +450,10 @@ export function createTouchPad(parent: HTMLElement, controls: Controls, t: Touch
       tracker.setShown(fire, thrust);
     },
     layout: relayout,
+    redrawGlyphs() {
+      buildGlyphs();
+      relayout();
+    },
     buttonsOnPage: () => onPage,
     takeFirstTouch(event) {
       if (!visible) return;

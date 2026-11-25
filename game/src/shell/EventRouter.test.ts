@@ -154,6 +154,16 @@ describe('EventRouter', () => {
     ]);
   });
 
+  it('an item: its effect, then the HUD hears which one (at a keyboard it names the keys); a crystal is not an item', () => {
+    const r = rig(false);
+    const game = createSession([levelFromRows(['.PGBJ..T.D', '##########'], { frame: true })], REFERENCE_PHYS);
+    run(r, game, '', () => game.run.phaseTicks >= REFERENCE_PHYS.readyMinTicks);
+    run(r, game, 'R', () => game.run.player.hasThruster);
+    expect(r.log.filter((line) => line.startsWith('hud.'))).toEqual(['hud.itemTaken(blaster)', 'hud.itemTaken(thruster)']);
+    const blaster = r.log.indexOf('hud.itemTaken(blaster)');
+    expect(r.log[blaster - 1]).toMatch(/^effects\.pickup\(blaster,/);
+  });
+
   it('a death: vibration and effect at once; the HUD blink and the camera snap at the respawn', () => {
     const r = rig(true);
     const events: GameEvent[] = [];

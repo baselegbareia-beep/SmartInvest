@@ -5,7 +5,7 @@
   "type": "module",
   "description": "An original retro platformer for phones.",
   "engines": {
-    "node": ">=22.13.0"
+    "node": ">=22.18.0"
   },
   "scripts": {
     "dev": "vite",

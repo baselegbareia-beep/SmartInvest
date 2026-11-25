@@ -189,18 +189,33 @@ const BUTTON_LIST: readonly Button[] = ['left', 'right', 'jump', 'fire', 'thrust
 const BITS: Readonly<Record<Button, number>> = { left: 1, right: 2, jump: 4, fire: 8, thrust: 16 };
 
 /**
+ * Resumes the frozen game and arms its next stop (`freezeAtTick`) in one call inside the page, and resolves
+ * with the tick the game froze on. One call, because with `pace(1)` a run one tick long lasts one rendered
+ * frame: a stop armed by a second round trip after the resume can arrive after its tick, and on a busy machine
+ * it does. Inside one call no frame can run between the two (`freeze(false)` only clears Phaser's pause flag),
+ * so the stop sees every tick from the resume on. A tick already reached freezes the game at once and is
+ * reported as it is.
+ */
+const resumeUntil = (page: Page, tick: number): Promise<number | undefined> =>
+  page.evaluate((t) => {
+    const hook = window.__E2E__;
+    hook?.freeze(false);
+    return hook?.freezeAtTick(t);
+  }, tick);
+
+/**
  * Plays `runs` with real key presses, as `e2e/rooms.spec.ts` does: the Play scene steps one tick per rendered
  * frame (`pace(1)`), and on the tick each run starts the page freezes the game (`freezeAtTick`), the keys change
- * through the browser, Phaser's keyboard plugin and `Controls`, and the game goes on. The script starts on the
- * tick the game is at when this is called (`base`). On each of the ticks `look` (counted from `base`) the state
- * is read while the game stands still. Returns `base`, how many runs found their tick already past, and the
- * states read, by tick.
+ * through the browser, Phaser's keyboard plugin and `Controls`, and the game goes on until the next stop
+ * (`resumeUntil`). The script starts on the tick the game is at when this is called (`base`). On each of the
+ * ticks `look` (counted from `base`) the state is read while the game stands still. After the last stop the game
+ * goes on. Returns `base`, how many stops found their tick already past, and the states read, by tick.
  */
 async function playKeys(page: Page, runs: InputScript['runs'], look: readonly number[]) {
   await page.evaluate(() => {
     window.__E2E__?.pace(1);
   });
-  // Frozen here; the first run's stop below (tick base + 0) finds the game still standing there.
+  // Frozen here, on tick base.
   const base = (await page.evaluate(() => window.__E2E__?.freezeAtTick(0))) ?? 0;
   const starts = new Map<number, number>();
   let k = 0;
@@ -208,12 +223,14 @@ async function playKeys(page: Page, runs: InputScript['runs'], look: readonly nu
     starts.set(k, bits);
     k += length;
   }
+  // The stops, in order: each run's first tick and each tick of `look`. Each is armed before the game can pass it.
   const stops = [...new Set([...starts.keys(), ...look])].sort((a, b) => a - b);
   const seen = new Map<number, Awaited<ReturnType<typeof now>>>();
   let held = 0;
   let late = 0;
-  for (const t of stops) {
-    const at = await page.evaluate((tick) => window.__E2E__?.freezeAtTick(tick), base + t);
+  // The first run starts on tick base + 0: the game is frozen there again at once.
+  let at = await resumeUntil(page, base + (stops[0] ?? 0));
+  for (const [i, t] of stops.entries()) {
     if (at !== base + t) late += 1;
     if (look.includes(t)) seen.set(t, await now(page));
     const bits = starts.get(t);
@@ -226,10 +243,12 @@ async function playKeys(page: Page, runs: InputScript['runs'], look: readonly nu
       }
       held = bits;
     }
-    await page.evaluate(() => {
-      window.__E2E__?.freeze(false);
-    });
+    const next = stops[i + 1];
+    if (next !== undefined) at = await resumeUntil(page, base + next);
   }
+  await page.evaluate(() => {
+    window.__E2E__?.freeze(false);
+  });
   // Every key up again: what the player's hand does after the airlock.
   for (const b of BUTTON_LIST) if ((held & BITS[b]) !== 0) await page.keyboard.up(KEY_OF[b]);
   return { base, late, seen };

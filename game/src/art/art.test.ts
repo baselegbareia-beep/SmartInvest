@@ -233,10 +233,10 @@ describe('sprite format (grid.ts)', () => {
 // ---------------------------------------------------------------------------------------
 
 describe('manifest', () => {
-  it('lists 62 sprites and 111 frames, as the guide says', () => {
+  it('lists 62 sprites and 113 frames, as the guide says', () => {
     const [, sprites, frames] = /(\d+) sprites, (\d+) frames/.exec(guideSection(4)) ?? [];
     expect(SPRITE_COUNT).toBe(62);
-    expect(FRAME_COUNT).toBe(111);
+    expect(FRAME_COUNT).toBe(113);
     expect([Number(sprites), Number(frames)]).toEqual([SPRITE_COUNT, FRAME_COUNT]);
   });
 
@@ -501,6 +501,15 @@ describe('sprite grids', () => {
     });
   });
 
+  it('shows the held pack in the top bar as the pack he picked up: one banded tank, not twin bottles (the second re-check)', () => {
+    const runs = (row: string): number[] => (row.match(/[^.]+/g) ?? []).map((run) => run.length);
+    const icon = SPRITES.hud_thruster[0] ?? [];
+    // At 8 x 8 a bottle is 3 px wide: no row has two such shapes side by side (the twin-bottle icon had three).
+    expect(icon.filter((row) => runs(row).filter((n) => n >= 3).length >= 2), 'rows with two bottles').toEqual([]);
+    // Two lime bands across the tank, as on pickup_thruster.
+    expect(icon.filter((row) => /g{3}/.test(row)).length, 'lime bands').toBe(2);
+  });
+
   it('keeps every hue in its lane (guide, section 1, rule 1)', () => {
     const sprue = ['hero_idle', 'hero_run', 'hero_jump', 'hero_fall', 'hero_thrust', 'hero_die', 'ovl_blaster', 'ovl_pack', 'thrust_flame', 'bolt'] as const;
     const lanes: readonly { readonly codes: string; readonly lane: string; readonly sprites: readonly SpriteName[] }[] = [
@@ -511,7 +520,8 @@ describe('sprite grids', () => {
         sprites: [...sprue, 'door_opening', 'door_open', 'pickup_blaster', 'pickup_thruster', 'fx_scrap', 'hud_life', 'hud_blaster', 'hud_thruster', 'hud_pip', 'btn_fire', 'btn_thrust', 'icon'],
       },
       { codes: '8', lane: "cream: Sprue's light side", sprites: [...sprue, 'fx_scrap', 'hud_life', 'icon'] },
-      { codes: '9a', lane: "tan and rust: Sprue, and the Cinderpeg's slag", sprites: [...sprue, 'fx_scrap', 'hud_life', 'icon', 'cinderpeg'] },
+      // hud_cog's unlit frame is the gold cog darkened to rust (the gold lane's own shade): "a gold cog goes here".
+      { codes: '9a', lane: "tan and rust: Sprue, and the Cinderpeg's slag", sprites: [...sprue, 'fx_scrap', 'hud_life', 'icon', 'cinderpeg', 'hud_cog'] },
       { codes: 'ef', lane: 'red: fire, enemies, spike tips', sprites: ['fire', 'spikes', 'cinderpeg', 'moth', 'fx_poof'] },
       { codes: 'ijk', lane: 'ice: coolant', sprites: ['coolant_top', 'coolant_body'] },
       { codes: 'lmn', lane: 'violet and rose: ore', sprites: ['gem_a', 'gem_b', 'gem_c'] },

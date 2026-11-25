@@ -205,6 +205,58 @@ export const TOAST_PAD = 4;
 export const POPUP_TOP = STRIP_H + 2;
 export const POPUP_TOP_UNDER_TOAST = TOAST_BAND_BOTTOM + 2;
 /**
+ * While the hero is drawn under the toast's band (level 10's cog is taken in flight, high in the view: the band and
+ * the gold words covered most of him for half of the toast's 1.5 s), the band and its words are drawn at this
+ * opacity: he shows through, and the words still read as a shadow of themselves.
+ */
+export const TOAST_SEE_THROUGH = 0.25;
+/** ...and they stay so until he has been clear of it for this many frames, so a hero bobbing at its edge makes no flicker. */
+export const TOAST_CLEAR_FRAMES = 12;
+
+/**
+ * Whether the toast is drawn see-through now (TOAST_SEE_THROUGH): from the frame the hero's drawn box meets its band
+ * until he has been clear of it for TOAST_CLEAR_FRAMES frames. Fed by the HUD every rendered frame (`hero`) and
+ * every whole 60 Hz frame of its clock (`advance`, which stands still under the pause menu).
+ */
+export class ToastFade {
+  private clearFor = TOAST_CLEAR_FRAMES;
+
+  /** The hero as drawn this frame (view px; null: not drawn) against the toast's band (null: no toast). */
+  hero(hero: Rect | null, band: Rect | null): void {
+    if (hero !== null && band !== null && rectsMeet(hero, band)) this.clearFor = 0;
+  }
+
+  /** `frames` 60 Hz frames went by. */
+  advance(frames: number): void {
+    if (frames > 0) this.clearFor = Math.min(TOAST_CLEAR_FRAMES, this.clearFor + frames);
+  }
+
+  /** The opacity of the band and its words now: 1, or TOAST_SEE_THROUGH while the hero is (or just was) under it. */
+  get alpha(): number {
+    return this.clearFor < TOAST_CLEAR_FRAMES ? TOAST_SEE_THROUGH : 1;
+  }
+
+  reset(): void {
+    this.clearFor = TOAST_CLEAR_FRAMES;
+  }
+}
+
+/** A rectangle in view px (top-left corner and size). */
+export interface Rect {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+}
+
+const rectsMeet = (a: Rect, b: Rect): boolean => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
+/** The toast's band for words `textW` px wide in a view `viewW` px wide: centred, from the strip down to TOAST_BAND_BOTTOM. */
+export function toastBand(viewW: number, textW: number): Rect {
+  const x = Math.floor((viewW - textW) / 2);
+  return { x: x - TOAST_PAD, y: STRIP_H, w: textW + 2 * TOAST_PAD, h: TOAST_BAND_BOTTOM - STRIP_H };
+}
+/**
  * Nothing of the bar comes closer than this to the glass's side edges, CSS px. Phones round their
  * corners, and Android reports a safe-area inset only for a cutout, never for a rounded corner: on the
  * side without a cutout the canvas starts at the glass's edge, and the first life icon sat about 8 x 6

@@ -62,8 +62,8 @@ export default defineConfig({
     offlineApp(),
   ],
   build: {
-    // Phaser is one large pre-bundled module (about 1.4 MB minified), far above Vite's 500 kB default.
-    chunkSizeWarningLimit: 1600,
+    // Main chunk, 25 Nov 2026: Phaser 1,367 kB + the game 262 kB = 1,630 kB minified; kept whole, as the game needs all of it to start.
+    chunkSizeWarningLimit: 1700,
   },
   test: {
     environment: 'node',

@@ -63,6 +63,8 @@ const scenes = (page: Page): Promise<string[]> => page.evaluate(() => window.__E
 const state = (page: Page) => page.evaluate(() => window.__E2E__?.state() ?? null);
 
 async function pick(page: Page, words: string): Promise<void> {
+  // An end screen takes no pick until its buttons light (menu.ts `armed`): wait for that, as a player would.
+  await expect.poll(async () => (await page.evaluate(() => window.__E2E__?.menu() ?? [])).some((i) => i.label === words && i.armed), { timeout: 5000 }).toBe(true);
   const items = await page.evaluate(() => window.__E2E__?.menu() ?? []);
   const item = items.find((i) => i.label === words);
   if (!item) throw new Error(`no menu item "${words}" in ${JSON.stringify(items.map((i) => i.label))}`);
@@ -170,8 +172,8 @@ test('a game over clears the run and keeps the best score; the end screen says B
   const problems = watch(page);
   await openWith(page, save({ bestScore: 5000, resume: { levelIndex: 0, score: 1234, lives: 1 } }));
   await play(page, 'CONTINUE - LEVEL 1');
-  // The last life, spent by RESTART LEVEL: the game is over.
-  await pauseAndPick(page, 'RESTART LEVEL -1 LIFE');
+  // The last life, spent by RESTART LEVEL (which says so there: GIVE UP - GAME OVER): the game is over.
+  await pauseAndPick(page, 'GIVE UP - GAME OVER');
   await expect.poll(() => scenes(page)).toEqual(['End']);
   expect(await label(page)).toBe('GAME OVER. SCORE 01234. BEST 05000. TRY AGAIN - LEVEL 1. TITLE');
   expect(await stored(page)).toMatchObject({ bestScore: 5000, resume: null });
@@ -189,7 +191,7 @@ test('NEW BEST! only when the score beats the best score the run began with, and
   const problems = watch(page);
   await openWith(page, save({ bestScore: 1000, resume: { levelIndex: 0, score: 1234, lives: 1 } }));
   await play(page, 'CONTINUE - LEVEL 1');
-  await pauseAndPick(page, 'RESTART LEVEL -1 LIFE');
+  await pauseAndPick(page, 'GIVE UP - GAME OVER');
   await expect.poll(() => scenes(page)).toEqual(['End']);
   // The save was raised already (at the last death); the screen compares with the best the run began with.
   expect(await stored(page)).toMatchObject({ bestScore: 1234, resume: null });
@@ -207,7 +209,7 @@ test('after a game over, TRY AGAIN starts at the highest level reached with full
   expect(await buttons(page)).toEqual(['CONTINUE - LEVEL 2', 'NEW GAME']);
   await play(page, 'CONTINUE - LEVEL 2');
   expect(await state(page)).toMatchObject({ levelIndex: 1, score: 800, lives: 1 });
-  await pauseAndPick(page, 'RESTART LEVEL -1 LIFE');
+  await pauseAndPick(page, 'GIVE UP - GAME OVER');
   await expect.poll(() => scenes(page)).toEqual(['End']);
   expect(await buttons(page)).toEqual(['TRY AGAIN - LEVEL 2', 'TITLE']);
   await pick(page, 'TRY AGAIN - LEVEL 2');
@@ -220,8 +222,13 @@ test('after a game over, TRY AGAIN starts at the highest level reached with full
 test('NEW GAME starts at level 1 and keeps the best score and the unlocked levels', async ({ page }) => {
   const problems = watch(page);
   const unlocked = Math.min(1, levels - 1);
-  await openWith(page, save({ unlocked, bestScore: 2500, resume: { levelIndex: unlocked, score: 700, lives: 2 } }));
-  await play(page, 'NEW GAME');
+  const before = save({ unlocked, bestScore: 2500, resume: { levelIndex: unlocked, score: 700, lives: 2 } });
+  await openWith(page, before);
+  // There is a run to lose: the first pick asks again and changes nothing (e2e/menus.spec.ts has the rest of it).
+  await pick(page, 'NEW GAME');
+  await expect.poll(() => buttons(page)).toContain('NEW GAME? PRESS AGAIN');
+  expect(await stored(page)).toEqual(before);
+  await play(page, 'NEW GAME? PRESS AGAIN');
   expect(await state(page)).toMatchObject({ levelIndex: 0, score: 0, lives: 3 });
   expect(await stored(page)).toMatchObject({ unlocked, bestScore: 2500, resume: { levelIndex: 0, score: 0, lives: 3 } });
   expect(problems).toEqual([]);

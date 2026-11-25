@@ -7,7 +7,8 @@
  *   held()         the buttons held right now (`controls.held()`): what the keyboard and the pad report
  *   startLevel(id) a one-level session that is never saved: 'test', 'debug', 'level-01' ...
  *   replay(...)    a one-level session fed by an input script through the same step(), a fixed number
- *                  of ticks per rendered frame, drawn and routed normally; resolves with what happened
+ *                  of ticks per rendered frame (or, `realTime`, the real stepper's, drawn interpolated as in
+ *                  play), drawn and routed normally; resolves with what happened
  *   renderEffect   src/audio/offline.ts's renderEffect, unchanged (loaded on first use)
  *   freeze(on)     stops (and restarts) Phaser's updates and drawing, for a picture that must not move
  *   pace(n)        the Play scene steps exactly n frames per rendered frame from the controls (null: the
@@ -15,7 +16,8 @@
  *   freezeAtTick(t) resolves once run.tick reaches t, with the game frozen at that moment (checked after
  *                  every rendered frame inside the page, so no round trip lets a tick slip by)
  *   scenes()       the keys of the running scenes, in draw order
- *   menu()         the buttons of the menu on screen and where to tap them (CSS px)
+ *   menu()         the buttons of the menu on screen (the words drawn), where to tap them (CSS px), and whether
+ *                  the menu takes picks yet (an end screen's lights its buttons after a moment)
  *   menuText()     the words of the menu on screen (headings, the title's prompt) and whether each is drawn now
  *   heroOnPage()   where the hero's sprite was last drawn, in CSS px of the page (to check it is clear of the pad)
  *   cellOnPage(c, r) where a level cell (the airlock's, a crystal's) was last drawn, in CSS px of the page
@@ -66,6 +68,8 @@ export interface ReplayOptions {
   readonly stopAtTick?: number;
   /** 'sessionEnd': go on through deaths and level changes to the end of the script or of the session (the End screen). */
   readonly until?: 'levelCompleted' | 'sessionEnd';
+  /** Ticks from the real stepper, drawn as in play (interpolated on a fast display), not `ticksPerFrame` a frame. */
+  readonly realTime?: boolean;
 }
 
 export interface E2EHook {
@@ -88,7 +92,16 @@ export interface E2EHook {
    * The buttons and switches of the menu on screen (title, pause or end), with where to tap them in
    * CSS px of the page: `{ label: 'RESUME', focused, x, y, w, h }`. Empty when no menu is up.
    */
-  menu(): { readonly label: string; readonly focused: boolean; readonly x: number; readonly y: number; readonly w: number; readonly h: number }[];
+  menu(): {
+    readonly label: string;
+    readonly focused: boolean;
+    readonly x: number;
+    readonly y: number;
+    readonly w: number;
+    readonly h: number;
+    /** The menu takes picks now: an end screen's takes none until its buttons light (menu.ts `armed`). */
+    readonly armed: boolean;
+  }[];
   /** The text entries of the menu on screen (headings, the title's prompt), each with whether it is drawn now (the prompt blinks). */
   menuText(): { readonly text: string; readonly shown: boolean }[];
   /** The hero's 16 px sprite as last drawn, in CSS px of the page; null before a level. */
@@ -215,6 +228,7 @@ export function installE2EHook(game: Phaser.Game): void {
             ticksPerFrame,
             ...(options.stopAtTick === undefined ? {} : { stopAtTick: options.stopAtTick }),
             ...(options.until === undefined ? {} : { until: options.until }),
+            ...(options.realTime === undefined ? {} : { realTime: options.realTime }),
             done: resolve,
           },
         });
@@ -258,6 +272,7 @@ export function installE2EHook(game: Phaser.Game): void {
       return openMenuTargets().map((t) => ({
         label: t.label,
         focused: t.focused,
+        armed: t.armed,
         x: box.left + t.hit.x * k,
         y: box.top + t.hit.y * k,
         w: t.hit.w * k,

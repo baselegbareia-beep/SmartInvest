@@ -18,7 +18,9 @@
  * - (e) `beyondBottom`, `beyondSide`: ticks on which the view shows what lies below the level's bottom row, or
  *   beyond a side wall, where staying inside the level (or centring a level smaller than the view) would not.
  * - (f) `popupPairs`, `popupHero`, `popupBar`: frames on which two score pop-ups overlap, a pop-up overlaps the
- *   hero's sprite, or a pop-up reaches into the strip or (while it shows) the cog's toast band.
+ *   hero's sprite, or a pop-up reaches into the strip or (while it shows) the cog's toast band. `popupJumps`,
+ *   `popupFlips`: frames on which a pop-up moved 3 px or more, or flipped round the hero (10 px or more one way right
+ *   after 10 px or more the other), followed by the id the pop-ups give (`PlacedPopup`).
  * - (g) `hiddenNear`: (tick, thing) pairs for the cog (until taken), a pack or blaster (until taken) and the airlock
  *   (once open) within 8 tiles across and 4 tiles up or down of the hero that are not clearly seen: off the view,
  *   at least half under the strip, or more than a quarter under a button.
@@ -55,13 +57,18 @@ export interface CameraUnderTest<S extends { readonly scrollX: number; readonly 
   step(prev: S, game: GameState, view: Size, level: Size, pad: Readonly<PadReach>, buttons: PadButtonsOnView | null): S;
 }
 
+/** A pop-up as placed: world px, and (to follow it from frame to frame) an id that stays while it shows. */
+export interface PlacedPopup extends Rect {
+  readonly id?: number;
+}
+
 /** How score pop-ups are laid out: the shipped board (`PopupBoard`) or a prototype with the same members. */
 export interface PopupsUnderTest {
   clear(): void;
   spawn(textW: number, x: number, y: number, camY: number, toastUp: boolean): void;
   advance(frames: number): void;
   /** The pop-ups shown now, world px, after placing them for the scroll, the toast and the hero's sprite (world px). */
-  place(camY: number, toastUp: boolean, hero: Rect): readonly Rect[];
+  place(camY: number, toastUp: boolean, hero: Rect): readonly PlacedPopup[];
 }
 
 /** The shipped camera, framing the standing view as the Play scene does (`FrameScene`). */
@@ -85,6 +92,13 @@ export interface RouteCounts {
   popupPairs: number;
   popupHero: number;
   popupBar: number;
+  /**
+   * Frames on which a pop-up moved 3 px or more since the frame before (across plus up or down, in the world or on
+   * screen, whichever is less; its rise is 0.4 px a frame), and frames on which one moved 10 px or more one way right
+   * after moving 10 px or more the other way (it flips round the hero).
+   */
+  popupJumps: number;
+  popupFlips: number;
   hiddenNear: number;
   /** Vertical scroll travel, art px, and how often the vertical scroll turned round on a tick the hero stood. */
   camTravelY: number;
@@ -108,6 +122,8 @@ export const NO_COUNTS: Readonly<RouteCounts> = Object.freeze({
   popupPairs: 0,
   popupHero: 0,
   popupBar: 0,
+  popupJumps: 0,
+  popupFlips: 0,
   hiddenNear: 0,
   camTravelY: 0,
   camTurnsStanding: 0,
@@ -206,6 +222,8 @@ export function measureRoute<S extends { readonly scrollX: number; readonly scro
   let cam = camera.snap(game, size, levelPx, pad, padOnView);
   let toastLeft = 0;
   let lastDy = 0;
+  // Each pop-up as last placed (world px), the scroll then, and how it moved then: to see it jump or flip.
+  let lastPops = new Map<number, { x: number; y: number; sy: number; vx: number; vy: number }>();
   const flashes: { age: number; x: number; y: number; score: number }[] = [];
   const toPx = (sub: number): number => sub >> SUB_SHIFT;
 
@@ -225,6 +243,7 @@ export function measureRoute<S extends { readonly scrollX: number; readonly scro
           if (e.type === 'levelStarted') toastLeft = 0;
           popups.clear();
           flashes.length = 0;
+          lastPops = new Map();
         }
       }
       const before = cam;
@@ -285,6 +304,27 @@ export function measureRoute<S extends { readonly scrollX: number; readonly scro
             if (rz && overlap(ra, rz) > 0) pair = true;
           }
         }
+        let jump = false;
+        let flip = false;
+        const now = new Map<number, { x: number; y: number; sy: number; vx: number; vy: number }>();
+        for (const r of shown) {
+          if (r.id === undefined) continue;
+          const q = lastPops.get(r.id);
+          let vx = 0;
+          let vy = 0;
+          if (q) {
+            vx = r.x - q.x;
+            const worldY = r.y - q.y;
+            const screenY = r.y - sy - (q.y - q.sy);
+            vy = Math.abs(worldY) <= Math.abs(screenY) ? worldY : screenY;
+            if (Math.abs(vx) + Math.abs(vy) >= 3) jump = true;
+            if (Math.abs(vx) + Math.abs(vy) >= 10 && Math.abs(q.vx) + Math.abs(q.vy) >= 10 && vx * q.vx + vy * q.vy < 0) flip = true;
+          }
+          now.set(r.id, { x: r.x, y: r.y, sy, vx, vy });
+        }
+        lastPops = now;
+        if (jump) note('popupJumps', 'pop-up', run.tick);
+        if (flip) note('popupFlips', 'pop-up', run.tick);
         if (pair) note('popupPairs', 'pop-ups', run.tick);
         if (onHero) note('popupHero', 'pop-up', run.tick);
         if (onBar) note('popupBar', 'pop-up', run.tick);
@@ -378,7 +418,7 @@ export function shippedPopups(reducedMotion = false): PopupsUnderTest {
     },
     place: (camY, toastUp, hero) => {
       board.place(camY, toastUp, hero);
-      return board.shown().map((p) => ({ x: p.drawX, y: p.drawY, w: p.w, h: POPUP_H }));
+      return board.shown().map((p) => ({ x: p.drawX, y: p.drawY, w: p.w, h: POPUP_H, id: p.seq }));
     },
   };
 }

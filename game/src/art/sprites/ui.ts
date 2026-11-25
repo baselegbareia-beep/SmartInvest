@@ -6,7 +6,9 @@
  *   corners are cut by one pixel (look rule 5). The face is night, so white, lime,
  *   gold and slate text all read on it; the frame is steel, lit from the upper left,
  *   with the warm row underneath.
- * - logo_cog sits behind the first word of the title.
+ * - logo_cog sits behind the first word of the title: frame 1, its shape stamped flat in `indigo` (frame 0 is the
+ *   gold-rimmed cog). Drawn as a frame and not as a FILL tint of frame 0, so the Canvas renderer (no WebGL; it
+ *   ignores tints) shows the plate too, not the gold cog through the white letters.
  * - icon is the app icon: Sprue's rim and lime eye inside a gold cog on `night`. It is
  *   enlarged by whole numbers (5x to 16x) and may be cut to a circle by the phone, so
  *   what matters sits inside the middle 26 px.
@@ -125,6 +127,6 @@ const ICON: Frame = [
 
 export const UI: SpriteGrids<'ui'> = {
   ui_panel: [PANEL],
-  logo_cog: [LOGO_COG],
+  logo_cog: [LOGO_COG, LOGO_COG.map((row) => row.replace(/[^.]/g, '2'))],
   icon: [ICON],
 };

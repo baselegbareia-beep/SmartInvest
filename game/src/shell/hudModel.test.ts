@@ -18,8 +18,11 @@ import {
   TOAST_BAND_BOTTOM,
   TOAST_PAD,
   STRIP_H,
+  TOAST_CLEAR_FRAMES,
+  TOAST_SEE_THROUGH,
   TOAST_Y,
   FrameClock,
+  ToastFade,
   advanceBlink,
   cornerClearPx,
   countScore,
@@ -30,6 +33,7 @@ import {
   newHudModel,
   pauseReservePx,
   pipLit,
+  toastBand,
   topBarLayout,
 } from './hudModel';
 
@@ -280,5 +284,40 @@ describe('the strip behind the top bar', () => {
   it("hangs a band under the toast's words while it shows: the toast's row and its shadow, with a row of air", () => {
     expect(TOAST_BAND_BOTTOM).toBeGreaterThanOrEqual(TOAST_Y + 7 + 1 + 1); // 7 px glyphs, a 1 px shadow, a row of air
     expect(TOAST_PAD).toBeGreaterThan(0);
+  });
+});
+
+describe('the toast never hides the hero', () => {
+  // The 284 x 160 view of the 568 x 320 phone: 'COG FOUND! AIRLOCK OPEN' is 137 px wide; its band x 69, y 14, w 145, h 12.
+  const band = toastBand(284, textWidth('COG FOUND! AIRLOCK OPEN'));
+
+  it('its band hangs from the strip under the words, TOAST_PAD wider each side', () => {
+    expect(band).toEqual({ x: 69, y: STRIP_H, w: 145, h: TOAST_BAND_BOTTOM - STRIP_H });
+  });
+
+  it('is see-through from the frame the hero meets the band, and solid again once he has been clear of it a while', () => {
+    const fade = new ToastFade();
+    expect(fade.alpha).toBe(1);
+    fade.hero({ x: 20, y: 40, w: 16, h: 16 }, band); // far from it
+    expect(fade.alpha).toBe(1);
+    fade.hero({ x: 101, y: 14, w: 16, h: 16 }, band); // level 10's cog, tick 1000: under the words
+    expect(fade.alpha).toBe(TOAST_SEE_THROUGH);
+    fade.hero({ x: 101, y: 26, w: 16, h: 16 }, band); // just below it: still see-through for a while (no flicker)
+    fade.advance(TOAST_CLEAR_FRAMES - 1);
+    expect(fade.alpha).toBe(TOAST_SEE_THROUGH);
+    fade.advance(1);
+    expect(fade.alpha).toBe(1);
+    // Touching its edge by one pixel counts; no toast, or no hero drawn, does not.
+    fade.hero({ x: 69 - 15, y: 25, w: 16, h: 16 }, band);
+    expect(fade.alpha).toBe(TOAST_SEE_THROUGH);
+    fade.reset();
+    fade.hero({ x: 101, y: 14, w: 16, h: 16 }, null);
+    fade.hero(null, band);
+    expect(fade.alpha).toBe(1);
+  });
+
+  it('is clearly see-through, not merely lighter', () => {
+    expect(TOAST_SEE_THROUGH).toBeLessThanOrEqual(0.3);
+    expect(TOAST_SEE_THROUGH * STRIP_ALPHA).toBeLessThan(0.25);
   });
 });

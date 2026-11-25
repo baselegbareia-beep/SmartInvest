@@ -336,8 +336,12 @@ export interface EffectsTuning {
   /** The level intro card stays this long, and may be skipped by a press after introSkipAfterFrames. */
   readonly introFrames: number;
   readonly introSkipAfterFrames: number;
-  /** How long the "cog found" toast stays. */
+  /** How long the "cog found" toast stays (and the key hint when an item is taken at a keyboard). */
   readonly toastFrames: number;
+  /** An end screen takes no pick until this long after it opened, nor before its last line shows. */
+  readonly endMenuArmFrames: number;
+  /** NEW GAME over a run in progress asks again; the question stands this long. */
+  readonly confirmFrames: number;
   /** A crystal taken within this many frames of the last one plays the next note up the ladder. */
   readonly crystalLadderFrames: number;
 }

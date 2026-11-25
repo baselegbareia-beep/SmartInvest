@@ -12,11 +12,11 @@ import { BOTH_ITEMS, layoutControls } from '../input/touchLayout';
 import type { ControlId, Rect } from '../input/touchLayout';
 import { TUNING } from '../tuning';
 
-import { cameraTarget, levelSize, padReach, snapCamera, stepCamera } from './camera';
+import { cameraTarget, frameShift, levelSize, padReach, snapCamera, stepCamera } from './camera';
 import type { CameraState, PadReach } from './camera';
 import { chooseView, cssPerArtPx } from './chooseView';
 import { NO_COUNTS, addCounts, measureRoute, shippedCamera, shippedPopups } from './routeMeasure';
-import type { RouteCounts, Sighting, WatchWindow } from './routeMeasure';
+import type { CameraUnderTest, RouteCounts, Sighting, WatchWindow } from './routeMeasure';
 
 /**
  * The ten campaign proofs (`e2e/scripts/level-NN.json`, the routes `e2e/levels.spec.ts` replays) seen through
@@ -213,10 +213,11 @@ describe('the ten proofs through the shipped camera and pad: nothing a take-off 
  * through the shipped camera (with its standing framing), the pad as laid out on each window, and the score pop-ups as
  * Effects places them, on the phone windows of the route watch and a desktop, each with the touch pad and with keys.
  *
- * The ceilings are the numbers of this build (24 November 2026, after the re-check's fixes); the numbers before them,
- * on the camera and pop-ups of commit 0983171, are in the comments (thing-ticks, or ticks). Measured on the live
- * tuning, as tests/levelScripts.test.ts reads the scripts: a change to the camera, view or touch numbers, the pad's
- * layout or a level can move them. Lower is better everywhere; when a change lowers one, lower its ceiling here.
+ * The ceilings are the numbers of this build (25 November 2026, after the second re-check's fixes); the numbers before
+ * them, on the camera and pop-ups of commit 3c1db1b with the same levels, are in the comments (thing-ticks, ticks or
+ * frames). Measured on the live tuning and levels, as tests/levelScripts.test.ts reads the scripts: a change to the
+ * camera, view or touch numbers, the pad's layout or a level can move them. Lower is better everywhere; when a change
+ * lowers one, lower its ceiling here.
  */
 describe('the route watch, counted: nothing worse than this build on any window, the hero never under the bar or a button, no pop-up on another, on him or on the bar', () => {
   const ids = [...CAMPAIGN_IDS, 'test', 'debug'];
@@ -232,31 +233,32 @@ describe('the route watch, counted: nothing worse than this build on any window,
     { name: '568 x 232 @2 (a tab)', w: 568, h: 232, dpr: 2 },
     { name: '1280 x 720 @1', w: 1280, h: 720, dpr: 1 },
   ];
-  type Ceiling = Pick<RouteCounts, 'stripThings' | 'stripThingsNoCrystal' | 'ahead6' | 'ahead4' | 'risingTight' | 'beyondBottom' | 'beyondSide' | 'hiddenNear'>;
+  type Ceiling = Pick<RouteCounts, 'stripThings' | 'stripThingsNoCrystal' | 'ahead6' | 'ahead4' | 'risingTight' | 'beyondBottom' | 'beyondSide' | 'hiddenNear' | 'popupJumps'>;
   // (a) things at least half under the top bar's strip (and without the crystals); (b) things 0-6 and 0-4 tiles ahead
   // under a drawn button; (d) rising ticks with less than a tile clear above his head; (e) ticks showing what lies
-  // below the level or beyond a side wall; (g) the cog, a pack, the blaster or the open airlock near him, not clearly seen.
+  // below the level or beyond a side wall; (g) the cog, a pack, the blaster or the open airlock near him, not clearly
+  // seen; and frames on which a pop-up moved 3 px or more (a step aside from a hero who would run into it).
   const CEILING: Record<string, Ceiling> = {
-    // before: 3208, 1817, 763, 146, 936, 5142, 3683, 321
-    '568 x 320 @2 touch': { stripThings: 1866, stripThingsNoCrystal: 715, ahead6: 571, ahead4: 143, risingTight: 886, beyondBottom: 5142, beyondSide: 3683, hiddenNear: 252 },
-    // before: 2986, 790, 0, 0, 615, 0, 0, 237
-    '568 x 320 @2 keys': { stripThings: 2813, stripThingsNoCrystal: 717, ahead6: 0, ahead4: 0, risingTight: 602, beyondBottom: 0, beyondSide: 0, hiddenNear: 237 },
-    // before: 3444, 1416, 34, 0, 599, 5324, 4873, 265
-    '844 x 390 @3 touch': { stripThings: 2414, stripThingsNoCrystal: 738, ahead6: 34, ahead4: 0, risingTight: 590, beyondBottom: 5324, beyondSide: 4873, hiddenNear: 204 },
-    // before: 1795, 838, 0, 0, 472, 0, 0, 160
-    '844 x 390 @3 keys': { stripThings: 1776, stripThingsNoCrystal: 838, ahead6: 0, ahead4: 0, risingTight: 467, beyondBottom: 0, beyondSide: 0, hiddenNear: 160 },
-    // before: 3540, 1935, 74, 3, 927, 5107, 4334, 281
-    '740 x 360 @4 touch': { stripThings: 1728, stripThingsNoCrystal: 690, ahead6: 74, ahead4: 3, risingTight: 887, beyondBottom: 5107, beyondSide: 4334, hiddenNear: 213 },
-    // before: 3347, 844, 0, 0, 615, 0, 0, 215
-    '740 x 360 @4 keys': { stripThings: 3112, stripThingsNoCrystal: 740, ahead6: 0, ahead4: 0, risingTight: 602, beyondBottom: 0, beyondSide: 0, hiddenNear: 215 },
-    // before: 3342, 844, 152, 18, 96, 7110, 6827, 111
-    '568 x 232 @2 (a tab) touch': { stripThings: 2438, stripThingsNoCrystal: 537, ahead6: 152, ahead4: 18, risingTight: 96, beyondBottom: 7110, beyondSide: 6827, hiddenNear: 46 },
-    // before: 2302, 266, 0, 0, 96, 0, 0, 2
-    '568 x 232 @2 (a tab) keys': { stripThings: 2302, stripThingsNoCrystal: 266, ahead6: 0, ahead4: 0, risingTight: 96, beyondBottom: 0, beyondSide: 0, hiddenNear: 2 },
-    // before: 3385, 1191, 2, 0, 378, 5545, 4224, 186
-    '1280 x 720 @1 touch': { stripThings: 3009, stripThingsNoCrystal: 1175, ahead6: 2, ahead4: 0, risingTight: 370, beyondBottom: 5454, beyondSide: 4224, hiddenNear: 167 },
-    // before: 2384, 1344, 0, 0, 327, 0, 0, 129
-    '1280 x 720 @1 keys': { stripThings: 2384, stripThingsNoCrystal: 1344, ahead6: 0, ahead4: 0, risingTight: 327, beyondBottom: 0, beyondSide: 0, hiddenNear: 129 },
+    // before: 1866, 715, 571, 143, 870, 5142, 3695, 256, 402
+    '568 x 320 @2 touch': { stripThings: 1852, stripThingsNoCrystal: 701, ahead6: 571, ahead4: 143, risingTight: 868, beyondBottom: 5142, beyondSide: 3695, hiddenNear: 256, popupJumps: 45 },
+    // before: 2813, 717, 0, 0, 587, 0, 0, 241, 405
+    '568 x 320 @2 keys': { stripThings: 2813, stripThingsNoCrystal: 717, ahead6: 0, ahead4: 0, risingTight: 587, beyondBottom: 0, beyondSide: 0, hiddenNear: 241, popupJumps: 46 },
+    // before: 2414, 738, 34, 0, 565, 5324, 4863, 204, 404
+    '844 x 390 @3 touch': { stripThings: 2330, stripThingsNoCrystal: 670, ahead6: 34, ahead4: 0, risingTight: 558, beyondBottom: 5324, beyondSide: 4863, hiddenNear: 204, popupJumps: 45 },
+    // before: 1776, 838, 0, 0, 454, 0, 0, 160, 406
+    '844 x 390 @3 keys': { stripThings: 1776, stripThingsNoCrystal: 838, ahead6: 0, ahead4: 0, risingTight: 452, beyondBottom: 0, beyondSide: 0, hiddenNear: 160, popupJumps: 46 },
+    // before: 1728, 690, 74, 3, 864, 5107, 4346, 213, 403
+    '740 x 360 @4 touch': { stripThings: 1694, stripThingsNoCrystal: 656, ahead6: 74, ahead4: 3, risingTight: 860, beyondBottom: 5055, beyondSide: 4346, hiddenNear: 213, popupJumps: 45 },
+    // before: 3112, 740, 0, 0, 587, 0, 0, 215, 405
+    '740 x 360 @4 keys': { stripThings: 3112, stripThingsNoCrystal: 740, ahead6: 0, ahead4: 0, risingTight: 587, beyondBottom: 0, beyondSide: 0, hiddenNear: 215, popupJumps: 46 },
+    // before: 2438, 537, 152, 18, 96, 7208, 6816, 46, 406
+    '568 x 232 @2 (a tab) touch': { stripThings: 2383, stripThingsNoCrystal: 537, ahead6: 152, ahead4: 18, risingTight: 96, beyondBottom: 7208, beyondSide: 6816, hiddenNear: 46, popupJumps: 44 },
+    // before: 2302, 266, 0, 0, 96, 0, 0, 2, 410
+    '568 x 232 @2 (a tab) keys': { stripThings: 2302, stripThingsNoCrystal: 266, ahead6: 0, ahead4: 0, risingTight: 96, beyondBottom: 0, beyondSide: 0, hiddenNear: 2, popupJumps: 43 },
+    // before: 3009, 1175, 2, 0, 370, 5454, 4236, 167, 410
+    '1280 x 720 @1 touch': { stripThings: 3009, stripThingsNoCrystal: 1175, ahead6: 2, ahead4: 0, risingTight: 370, beyondBottom: 5454, beyondSide: 4236, hiddenNear: 167, popupJumps: 45 },
+    // before: 2384, 1344, 0, 0, 327, 0, 0, 129, 414
+    '1280 x 720 @1 keys': { stripThings: 2384, stripThingsNoCrystal: 1344, ahead6: 0, ahead4: 0, risingTight: 327, beyondBottom: 0, beyondSide: 0, hiddenNear: 129, popupJumps: 45 },
   };
   const windows: WatchWindow[] = phones.flatMap((p) => [
     { ...p, name: `${p.name} touch`, touch: true },
@@ -270,11 +272,11 @@ describe('the route watch, counted: nothing worse than this build on any window,
     for (const r of routes) {
       const list: Sighting[] = [];
       total = addCounts(total, measureRoute(r.level, r.script, PHYS, TUNING, w, camera, shippedPopups(), list));
-      seen.push(...list.filter((s) => s.what === 'heroStrip' || s.what === 'heroButton' || s.what.startsWith('popup')).map((s) => ({ ...s, thing: `${r.id}: ${s.thing}` })));
+      seen.push(...list.filter((s) => s.what === 'heroStrip' || s.what === 'heroButton' || (s.what.startsWith('popup') && s.what !== 'popupJumps')).map((s) => ({ ...s, thing: `${r.id}: ${s.thing}` })));
     }
     expect(total.ticks, 'the routes were played').toBeGreaterThan(10_000);
-    // (c) and (f): never.
-    expect(seen.slice(0, 5), 'the hero under the strip or a button; pop-ups on each other, on him or on the bar').toEqual([]);
+    // (c) and (f): never; nor a pop-up that flips round the hero (it hopped round him, '+50' on level 5).
+    expect(seen.slice(0, 5), 'the hero under the strip or a button; pop-ups on each other, on him or on the bar, or flipping').toEqual([]);
     const ceiling = CEILING[w.name];
     if (!ceiling) throw new Error(`no ceiling for ${w.name}`);
     for (const [k, max] of Object.entries(ceiling) as [keyof Ceiling, number][]) expect(total[k], `${w.name}: ${k}`).toBeLessThanOrEqual(max);
@@ -287,6 +289,51 @@ describe('the route watch, counted: nothing worse than this build on any window,
     measureRoute(r.level, r.script, PHYS, TUNING, { name: 'se', w: 568, h: 320, dpr: 2, touch: true }, camera, shippedPopups(), list);
     const strip = list.filter((s) => s.what === 'stripThings');
     expect(strip.filter((s) => s.thing === 'thruster 4,16' || s.thing === 'cinderpeg 3')).toEqual([]);
-    expect(strip.filter((s) => s.thing.startsWith('moth')).length, 'the moths: 99 thing-ticks before').toBeLessThanOrEqual(18);
+    expect(strip.filter((s) => s.thing.startsWith('moth')).length, 'the moths: 99 thing-ticks before, 18 after the first fix').toBeLessThanOrEqual(4);
+  });
+
+  it.each([
+    { name: '844 x 390 @3', w: 844, h: 390, dpr: 3, most: 23, before: 91 },
+    { name: '740 x 360 @4', w: 740, h: 360, dpr: 4, most: 4, before: 38 },
+  ])("level 9 on $name (touch): the framing no longer pushes the pool moths into the top bar's row ($before thing-ticks on 3c1db1b)", ({ name, w, h, dpr, most }) => {
+    const r = routes.find((x) => x.id === 'level-09');
+    if (!r) throw new Error('no level 9');
+    const list: Sighting[] = [];
+    measureRoute(r.level, r.script, PHYS, TUNING, { name, w, h, dpr, touch: true }, camera, shippedPopups(), list);
+    const moths = list.filter((s) => s.what === 'stripThings' && s.thing.startsWith('moth'));
+    expect(moths.length, moths.map((s) => `${s.tick} ${s.thing}`).join(', ')).toBeLessThanOrEqual(most);
+  });
+
+  it('the framing weighs the view as drawn: on every standing tick of every proof, its choice is the one for the left edge the side walls hold the view at (it weighed the dead zone\'s, up to 228 px off by a wall)', () => {
+    let standing = 0;
+    let wouldDiffer = 0;
+    const wrong: string[] = [];
+    for (const w of windows) {
+      for (const r of routes) {
+        const checked: CameraUnderTest<CameraState> = {
+          snap: (game, view, level, pad, buttons) => camera.snap(game, view, level, pad, buttons),
+          step: (prev, game, view, level, pad, buttons) => {
+            const next = camera.step(prev, game, view, level, pad, buttons);
+            const t = cameraTarget(game);
+            if (!t.onGround) return next;
+            standing += 1;
+            const scene = { game, buttons };
+            const drawn = frameShift(scene, t, next.x, view, level, TUNING.camera, pad, prev.passBottom);
+            if (drawn !== next.shift && wrong.length < 5) wrong.push(`${w.name} ${r.id} tick ${game.run.tick}: ${next.shift}, for the drawn view ${drawn}`);
+            // The left edge the dead zone asks for, before the walls hold it.
+            const anchor = view.w / 2 - next.look;
+            const screenX = t.x - prev.x;
+            const dz = TUNING.camera.camDeadzoneHalfW;
+            const asked = screenX > anchor + dz ? t.x - (anchor + dz) : screenX < anchor - dz ? t.x - (anchor - dz) : prev.x;
+            if (asked !== next.x && frameShift(scene, t, asked, view, level, TUNING.camera, pad, prev.passBottom) !== drawn) wouldDiffer += 1;
+            return next;
+          },
+        };
+        measureRoute(r.level, r.script, PHYS, TUNING, w, checked, shippedPopups());
+      }
+    }
+    expect(standing, "standing ticks weighed").toBeGreaterThan(10_000);
+    expect(wrong).toEqual([]);
+    expect(wouldDiffer, 'standing ticks on which the dead zone\'s left edge would have framed him otherwise').toBeGreaterThan(0);
   });
 });

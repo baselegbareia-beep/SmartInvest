@@ -19,6 +19,7 @@ import { Controls } from '../input/Controls';
 import { createHaptics } from '../input/haptics';
 import { createTouchPad } from '../input/TouchPad';
 import type { ControlId } from '../input/touchLayout';
+import { parseSave } from '../core/save';
 import { CAMPAIGN } from '../levels';
 import { TUNING } from '../tuning';
 
@@ -27,7 +28,7 @@ import type { PadButtonsOnView, PadReach } from './camera';
 import type { View } from './chooseView';
 import { cssPerArtPx } from './chooseView';
 import type { SaveStore } from './EventRouter';
-import { loadProgress, loadSettings, saveProgress, saveSettings } from './storage';
+import { PROGRESS_KEY, SETTINGS_KEY, loadProgress, loadSettings, loadStoredJson, mergeSave, parseSettings, saveProgress, saveSettings } from './storage';
 
 const byId = (id: string): HTMLElement => {
   const el = document.getElementById(id);
@@ -53,16 +54,37 @@ export const sfx = new Sfx();
 // Settings and progress
 // ---------------------------------------------------------------------------------------
 
-/** The sound and vibration switches (`${GAME_ID}:settings`). Changing one applies it and saves it. */
+/** Listeners told when another copy of the game on this origin changed a store; each `on` gives back its remover. */
+class Listeners {
+  private readonly set = new Set<() => void>();
+
+  on(listener: () => void): () => void {
+    this.set.add(listener);
+    return () => {
+      this.set.delete(listener);
+    };
+  }
+
+  tell(): void {
+    for (const listener of [...this.set]) listener();
+  }
+}
+
+/**
+ * The sound and vibration switches (`${GAME_ID}:settings`). Changing one applies it and saves it, over the settings
+ * as stored now: another tab may have changed the other switch meanwhile (its sound switched off came back on with
+ * this tab's next change). A change saved by another tab is applied here too (`readStored`, on the 'storage' event).
+ */
 class SettingsStore {
   private data: SettingsData = loadSettings();
+  private readonly changed = new Listeners();
 
   get current(): SettingsData {
     return this.data;
   }
 
   setSound(on: boolean): void {
-    this.data = { ...this.data, sound: on };
+    this.data = { ...this.stored(), sound: on };
     sfx.setMuted(!on);
     saveSettings(this.data);
   }
@@ -72,28 +94,87 @@ class SettingsStore {
   }
 
   setVibration(on: boolean): void {
-    this.data = { ...this.data, vibration: on };
+    this.data = { ...this.stored(), vibration: on };
     haptics.setEnabled(on);
     saveSettings(this.data);
   }
+
+  /** Another copy of the game saved its settings: apply them here. */
+  readStored(): void {
+    const next = this.stored();
+    if (next.sound === this.data.sound && next.vibration === this.data.vibration) return;
+    this.data = next;
+    sfx.setMuted(!next.sound);
+    haptics.setEnabled(next.vibration);
+    this.changed.tell();
+  }
+
+  /** Called after another copy of the game changed the settings (the title's sound switch, the pause menu's). */
+  onChange(listener: () => void): () => void {
+    return this.changed.on(listener);
+  }
+
+  /** The settings as stored now; this copy's own where the browser keeps nothing. */
+  private stored(): SettingsData {
+    const json = loadStoredJson(SETTINGS_KEY);
+    return json === undefined ? this.data : parseSettings(json);
+  }
 }
 
-/** The campaign's progress (`${GAME_ID}:progress`), read once at boot (ARCHITECTURE 10) and written when it changes. */
+/**
+ * The campaign's progress (`${GAME_ID}:progress`), read at boot (ARCHITECTURE 10) and written when it changes.
+ *
+ * Two copies of the game on one origin (two tabs, the installed app beside a browser tab) share the store. Each write
+ * is merged with what is stored now (storage.ts `mergeSave`: the larger unlocked level and best score, this copy's
+ * own run), and another copy's save is taken in on the 'storage' event (`readStored`): its unlocked level and best
+ * score always, its run only while this copy plays no saved session of its own (`setPlaying`), so that a title shown
+ * later offers that run's CONTINUE.
+ */
 class ProgressStore implements SaveStore {
   private data: SaveData = loadProgress(CAMPAIGN.length);
+  private playing = false;
+  private readonly changed = new Listeners();
 
   get current(): SaveData {
     return this.data;
   }
 
   write(next: SaveData): void {
+    this.data = mergeSave(parseSave(loadStoredJson(PROGRESS_KEY), CAMPAIGN.length), next);
+    saveProgress(this.data); // false where the browser keeps nothing: the copy in memory still lasts the visit
+  }
+
+  /** A saved session is being played here (the Play scene, from its start to its end): its run is this copy's own. */
+  setPlaying(on: boolean): void {
+    this.playing = on;
+  }
+
+  /** Another copy of the game saved its progress: take it in. */
+  readStored(): void {
+    const stored = loadStoredJson(PROGRESS_KEY);
+    if (stored === undefined) return; // cleared, or no store: keep this copy's
+    const theirs = parseSave(stored, CAMPAIGN.length);
+    const mine = this.data;
+    const next = mergeSave(mine, { ...theirs, resume: this.playing ? mine.resume : theirs.resume });
+    if (JSON.stringify(next) === JSON.stringify(mine)) return;
     this.data = next;
-    saveProgress(next); // false where the browser keeps nothing: the copy in memory still lasts the visit
+    this.changed.tell();
+  }
+
+  /** Called after another copy of the game saved progress (the title builds its offer again). */
+  onChange(listener: () => void): () => void {
+    return this.changed.on(listener);
   }
 }
 
 export const settings = new SettingsStore();
 export const progress = new ProgressStore();
+
+// Another copy of the game on this origin saved (the event never fires in the copy that wrote). A null key: cleared.
+window.addEventListener('storage', (event) => {
+  if (event.key === null || event.key === PROGRESS_KEY) progress.readStored();
+  if (event.key === null || event.key === SETTINGS_KEY) settings.readStored();
+});
 
 /** Vibration on deaths, the cog and an empty tank, honouring the BUZZ switch. */
 export const haptics = createHaptics(TUNING.touch, settings.current.vibration);

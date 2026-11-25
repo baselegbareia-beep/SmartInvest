@@ -7,8 +7,13 @@
  *   show(model)        every rendered frame, after Play's ticks: lives, level, score, cog, items, fuel,
  *                      and the level intro card while it is up
  *   cogFound()         the `COG FOUND! AIRLOCK OPEN` toast            (EventRouter, trophyCollected)
+ *   itemTaken(kind)    at a keyboard, the first time in the session: `X FIRES THE BLASTER` or
+ *                      `HOLD Z OR SHIFT TO THRUST` in the toast's place (EventRouter, pickup); a touch
+ *                      screen shows FIRE and THRUST buttons instead, and no screen named X or Z before
  *   levelClear(bonus)  the `LEVEL CLEAR +200` banner and its tally    (EventRouter, levelCompleted)
  *   lifeLost(lives)    the lost life's icon blinks five times         (EventRouter, respawned)
+ *   heroAt(box)        where the hero was drawn this frame (Play scene): while he is under the toast's band
+ *                      the band and its words are see-through (hudModel `ToastFade`)
  * Its own `update` only runs the clocks of those, in whole 60 Hz frames, and none of them while the
  * Play scene is paused (`HudData.held`, a FrameClock): under the pause menu the toast, the life blink,
  * the score count and the intro shutter stand still with the world and go on after RESUME.
@@ -19,6 +24,9 @@
  *   It is a band over the world: a dark strip (void at 70 %) lies behind it, so the level's own crystals
  *   and wall tops never read as part of the bar. Where each goes is src/shell/hudModel.ts; it is
  *   re-placed on every view resize.
+ * - The cog's slot shows its own unlit frame before the cog is taken (hud_cog_2, rust) and the gold one after: a
+ *   frame, not a tint, so the Canvas renderer (no WebGL; it ignores tints) shows the difference too. The card's and
+ *   the banner's plates are src/shell/plate.ts (the nine-slice, or rectangles on Canvas).
  * - The intro card: a shutter wipe opens on the dimmed level, with `LEVEL 3` (2x), the name in lime, the
  *   hint and the life icons on a plate, while the Play scene holds the card up (it is not stepped).
  * - The level-clear banner: `LEVEL CLEAR +200` on a plate under the bar, with the score tallied under
@@ -30,11 +38,13 @@ import * as Phaser from 'phaser';
 import { FONT_SIZE } from '../../art/font';
 import { FONT_KEY, TEXTURE_KEY } from '../../art/manifest';
 import { COLOR } from '../../art/palette';
+import type { ItemKind } from '../../core/types';
 import { TUNING } from '../../tuning';
 import type { HudEvents } from '../EventRouter';
 import {
   FUEL_PIPS,
   FrameClock,
+  ToastFade,
   NO_BLINK,
   PIP_Y,
   STRIP_ALPHA,
@@ -50,15 +60,18 @@ import {
   newHudModel,
   pauseReservePx,
   pipLit,
+  toastBand,
   topBarLayout,
 } from '../hudModel';
-import type { HudModel, IntroCard, LifeBlink } from '../hudModel';
+import type { HudModel, IntroCard, LifeBlink, Rect } from '../hudModel';
 import { textPx } from '../menuLayout';
 import { bannerLayout, introLayout } from '../screens';
 import type { PlacedLine } from '../screens';
 import { prefersReducedMotion } from '../motion';
+import { addPlate } from '../plate';
+import type { Plate } from '../plate';
 import { onSceneEnd } from '../sceneEnd';
-import { canvasEdgeGapsCss, cssPerArt } from '../singletons';
+import { app, canvasEdgeGapsCss, cssPerArt } from '../singletons';
 
 import { TEXT, scoreDigits } from './strings';
 import { Shutter, setScreenLabel } from './TitleScene';
@@ -90,7 +103,15 @@ export interface HudShown {
    * bottom of the screen (docs/LEVELS.md rule 11) also compares the pixels with and without the scene
    * (`__E2E__.hudPixels`), which sees every kind.
    */
-  readonly drawn: readonly { readonly kind: string; readonly x: number; readonly y: number; readonly w: number; readonly h: number }[];
+  readonly drawn: readonly {
+    readonly kind: string;
+    readonly x: number;
+    readonly y: number;
+    readonly w: number;
+    readonly h: number;
+    /** The object's own opacity (the toast's band and words are see-through over the hero). */
+    readonly alpha: number;
+  }[];
 }
 
 /** A display-list child that can say where it is drawn. */
@@ -109,8 +130,6 @@ function bounded(obj: Phaser.GameObjects.GameObject): Bounded | null {
 
 /** Darkness of the layer under the intro card. */
 const INTRO_DIM = 0.6;
-/** The `ui_panel` nine-slice: 24 x 24 with 8 px corners (docs/ART-AND-SOUND.md section 4). */
-const PANEL_CORNER = 8;
 const NEVER_HELD = (): boolean => false;
 
 /** Draw order inside the HUD scene: the bar, then the dim and the card over it, then the shutter. */
@@ -129,11 +148,11 @@ export class HudScene extends Phaser.Scene implements HudEvents {
   private toast: Phaser.GameObjects.BitmapText | null = null;
   /** The dark band behind the toast, hanging from the strip (hudModel TOAST_BAND_BOTTOM). */
   private toastBand: Phaser.GameObjects.Rectangle | null = null;
-  private bannerPlate: Phaser.GameObjects.NineSlice | null = null;
+  private bannerPlate: Plate | null = null;
   private bannerHeading: Phaser.GameObjects.BitmapText | null = null;
   private bannerTally: Phaser.GameObjects.BitmapText | null = null;
   private introDim: Phaser.GameObjects.Rectangle | null = null;
-  private introPlate: Phaser.GameObjects.NineSlice | null = null;
+  private introPlate: Plate | null = null;
   private introTexts: Phaser.GameObjects.BitmapText[] = [];
   private introLives: Phaser.GameObjects.Image[] = [];
   private shutter: Shutter | null = null;
@@ -152,6 +171,13 @@ export class HudScene extends Phaser.Scene implements HudEvents {
   /** Frames since the scene started: the pips' blink clock. */
   private clock = 0;
   private toastLeft = 0;
+  /** A key hint waiting for the toast showing now to end (an item taken under the cog's toast). */
+  private pendingHint: string | null = null;
+  /** The items whose keys were named this session. */
+  private hinted = new Set<ItemKind>();
+  /** The toast's band as placed (view px), for the hero's fade; null while no toast shows. */
+  private band: Rect | null = null;
+  private readonly fade = new ToastFade();
   private blink: LifeBlink = NO_BLINK;
   /** What each icon shows now, so a frame changes only what changed. */
   private livesShown: boolean[] = [];
@@ -179,6 +205,10 @@ export class HudScene extends Phaser.Scene implements HudEvents {
     this.bannerShown = false;
     this.clock = 0;
     this.toastLeft = 0;
+    this.pendingHint = null;
+    this.hinted = new Set();
+    this.band = null;
+    this.fade.reset();
     this.blink = NO_BLINK;
     this.livesShown = [];
     this.pipsShown = [];
@@ -204,11 +234,13 @@ export class HudScene extends Phaser.Scene implements HudEvents {
     this.pipsShown = this.pips.map(() => null);
     this.toast = text(TEXT.cogFound, COLOR.gold, DEPTH.toast).setVisible(false);
     this.toastBand = this.add.rectangle(0, STRIP_H, 1, TOAST_BAND_BOTTOM - STRIP_H, COLOR.void, STRIP_ALPHA).setOrigin(0, 0).setDepth(DEPTH.strip).setVisible(false);
-    this.bannerPlate = this.plate(DEPTH.banner).setVisible(false);
+    this.bannerPlate = addPlate(this, DEPTH.banner);
+    this.bannerPlate.setVisible(false);
     this.bannerHeading = text(TEXT.levelClear(0), COLOR.white, DEPTH.banner + 1, 2).setVisible(false);
     this.bannerTally = text(TEXT.score(0), COLOR.gold, DEPTH.banner + 1).setVisible(false);
     this.introDim = this.add.rectangle(0, 0, 1, 1, COLOR.void, INTRO_DIM).setOrigin(0, 0).setDepth(DEPTH.dim).setVisible(false);
-    this.introPlate = this.plate(DEPTH.card).setVisible(false);
+    this.introPlate = addPlate(this, DEPTH.card);
+    this.introPlate.setVisible(false);
     this.shutter = new Shutter(this, DEPTH.shutter);
 
     this.layout();
@@ -253,18 +285,36 @@ export class HudScene extends Phaser.Scene implements HudEvents {
         const shape = bounded(obj);
         if (!shape || !shape.visible || (shape.alpha ?? 1) <= 0) return [];
         const b = shape.getBounds();
-        return [{ kind: shape.type, x: b.x, y: b.y, w: b.width, h: b.height }];
+        return [{ kind: shape.type, x: b.x, y: b.y, w: b.width, h: b.height, alpha: shape.alpha ?? 1 }];
       }),
     };
   }
 
   cogFound(): void {
-    this.toastLeft = TUNING.effects.toastFrames;
-    this.showToast(true);
+    // A key hint showing now comes back after the cog's toast: the cog is the level's news.
+    const hint = this.toast?.visible === true && this.toast.text !== TEXT.cogFound ? this.toast.text : null;
+    this.startToast(TEXT.cogFound, COLOR.gold);
+    if (hint !== null) this.pendingHint = hint;
+  }
+
+  itemTaken(kind: ItemKind): void {
+    // A touch screen shows the item's own button (FIRE, THRUST); at a keyboard nothing named the key.
+    if (app.classList.contains('touch') || this.hinted.has(kind)) return;
+    this.hinted.add(kind);
+    const hint = kind === 'blaster' ? TEXT.fireHint : TEXT.thrustHint;
+    if (this.toast?.visible === true) this.pendingHint = hint;
+    else this.startToast(hint, COLOR.white);
+  }
+
+  /** Where the hero was drawn this frame (view px; null: not drawn), from the Play scene after it drew him. */
+  heroAt(hero: Rect | null): void {
+    this.fade.hero(hero, this.band);
+    this.drawFade();
   }
 
   levelClear(bonus: number): void {
     this.toastLeft = 0;
+    this.pendingHint = null;
     this.showToast(false);
     this.bannerBonus = bonus;
     this.bannerShown = true;
@@ -281,15 +331,45 @@ export class HudScene extends Phaser.Scene implements HudEvents {
   /** Takes every toast and banner down (a new level). */
   clearMessages(): void {
     this.toastLeft = 0;
+    this.pendingHint = null;
     this.blink = NO_BLINK;
     this.showToast(false);
     this.clearBanner();
+  }
+
+  /** Puts `text` in the toast's place, in `colour`, for TUNING.effects.toastFrames. */
+  private startToast(text: string, colour: number): void {
+    this.toastLeft = TUNING.effects.toastFrames;
+    this.toast?.setText(text).setTint(colour);
+    this.placeToast();
+    this.showToast(true);
   }
 
   /** The toast and the dark band behind it come and go together. */
   private showToast(on: boolean): void {
     this.toast?.setVisible(on);
     this.toastBand?.setVisible(on);
+    if (!on) {
+      this.band = null;
+      this.fade.reset();
+      this.drawFade();
+    }
+  }
+
+  /** Centres the toast's words and band in the view (its words change: the cog's toast, a key hint). */
+  private placeToast(): void {
+    if (!this.toast) return;
+    const band = toastBand(this.scale.width, textPx(this.toast.text));
+    this.toast.setPosition(band.x + TOAST_PAD, TOAST_Y);
+    this.toastBand?.setPosition(band.x, band.y).setSize(band.w, band.h);
+    this.band = this.toast.visible || this.toastLeft > 0 ? band : null;
+  }
+
+  /** The band and its words see-through while the hero is under them (ToastFade). */
+  private drawFade(): void {
+    const alpha = this.fade.alpha;
+    if (this.toast && this.toast.alpha !== alpha) this.toast.setAlpha(alpha);
+    if (this.toastBand && this.toastBand.alpha !== alpha) this.toastBand.setAlpha(alpha);
   }
 
   // -------------------------------------------------------------------------------------
@@ -301,8 +381,15 @@ export class HudScene extends Phaser.Scene implements HudEvents {
     this.clock += whole;
     if (this.toastLeft > 0) {
       this.toastLeft = Math.max(0, this.toastLeft - whole);
-      if (this.toastLeft === 0) this.showToast(false);
+      if (this.toastLeft === 0) {
+        this.showToast(false);
+        const hint = this.pendingHint;
+        this.pendingHint = null;
+        if (hint !== null) this.startToast(hint, COLOR.white);
+      }
     }
+    this.fade.advance(whole);
+    this.drawFade();
     this.blink = advanceBlink(this.blink, whole);
     this.shownScore = countScore(this.shownScore, this.model.score, whole);
     this.shutter?.advance(whole);
@@ -339,8 +426,8 @@ export class HudScene extends Phaser.Scene implements HudEvents {
       this.cogShown = m.hasTrophy;
       // Before it is taken the slot shows the cog's own filled shape, unlit (rust: the gold lane darkened), not the
       // light toothed ring of hud_cog_0, which read as a settings gear (the route watch): "a gold cog goes here".
-      const cog = this.cog?.setFrame('hud_cog_1').clearTint();
-      if (!m.hasTrophy) cog?.setTint(COLOR.rust).setTintMode(Phaser.TintModes.FILL);
+      // Its own frame, not a rust tint of the gold one: the Canvas renderer ignores tints, and showed it gold, taken.
+      this.cog?.setFrame(m.hasTrophy ? 'hud_cog_1' : 'hud_cog_2');
     }
     this.blaster?.setVisible(m.hasBlaster);
     this.thruster?.setVisible(m.hasThruster);
@@ -373,7 +460,7 @@ export class HudScene extends Phaser.Scene implements HudEvents {
         .setOrigin(0, 0)
         .setDepth(DEPTH.cardText),
     );
-    this.introPlate?.setPosition(layout.plate.x, layout.plate.y).setSize(layout.plate.w, layout.plate.h);
+    this.introPlate?.place(layout.plate.x, layout.plate.y, layout.plate.w, layout.plate.h);
     // A new level: the shutter opens on it (section 9, level intro), and the canvas says which level.
     this.shutter?.open();
     setScreenLabel(this, layout.lines.map((l) => l.text));
@@ -387,17 +474,10 @@ export class HudScene extends Phaser.Scene implements HudEvents {
       .setDepth(depth);
   }
 
-  private plate(depth: number): Phaser.GameObjects.NineSlice {
-    return this.add
-      .nineslice(0, 0, TEXTURE_KEY.sprites, 'ui_panel_0', 24, 24, PANEL_CORNER, PANEL_CORNER, PANEL_CORNER, PANEL_CORNER)
-      .setOrigin(0, 0)
-      .setDepth(depth);
-  }
-
   private placeBanner(): void {
     const { width, height } = this.scale;
     const b = bannerLayout(width, height, this.bannerBonus, this.shownScore);
-    this.bannerPlate?.setPosition(b.plate.x, b.plate.y).setSize(b.plate.w, b.plate.h);
+    this.bannerPlate?.place(b.plate.x, b.plate.y, b.plate.w, b.plate.h);
     this.bannerHeading?.setText(b.heading.text).setPosition(b.heading.x, b.heading.y);
     this.bannerTally?.setText(b.tally.text).setPosition(b.tally.x, b.tally.y);
   }
@@ -418,12 +498,7 @@ export class HudScene extends Phaser.Scene implements HudEvents {
     this.blaster?.setPosition(bar.blasterX, bar.y);
     this.thruster?.setPosition(bar.thrusterX, bar.y);
     this.pips.forEach((pip, i) => pip.setPosition(bar.pips[i] ?? 0, PIP_Y));
-    if (this.toast) {
-      const w = textPx(this.toast.text);
-      const x = Math.floor((width - w) / 2);
-      this.toast.setPosition(x, TOAST_Y);
-      this.toastBand?.setPosition(x - TOAST_PAD, STRIP_H).setSize(w + 2 * TOAST_PAD, TOAST_BAND_BOTTOM - STRIP_H);
-    }
+    this.placeToast();
     this.placeBanner();
     this.introDim?.setSize(width, height);
     if (this.shownCard) {

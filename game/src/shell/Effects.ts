@@ -174,9 +174,14 @@ export class Effects implements EffectsApi {
   private readonly popupTexts: Phaser.GameObjects.BitmapText[] = [];
   /** Where the score pop-ups go (fxModel): risen, kept out of the top bar and the toast, off each other and off the hero. */
   private readonly board: PopupBoard;
-  /** The hero's sprite (and fuel bar) as of the last tick, world px: pop-ups keep off it. */
+  /**
+   * The hero's sprite (and fuel bar) as drawn on this frame, world px: pop-ups keep off it. On a fast display the sprite is
+   * drawn between two ticks, so the board is given where it is drawn, not where the tick put him (at 120 Hz the pop-ups
+   * kept off the tick's place and slivers of them lay on the drawn sprite: the route watch's second re-check).
+   */
   private readonly heroBox = { x: 0, y: 0, w: TILE_SIZE, h: TILE_SIZE };
-  private heroShown = false;
+  /** As of the last tick: he thrusts, so the fuel bar is drawn over his head. */
+  private heroBurning = false;
   private readonly poofs: Poof[] = [];
   private readonly flashes: Flash[] = [];
   private readonly reducedMotion: boolean;
@@ -226,8 +231,8 @@ export class Effects implements EffectsApi {
   /**
    * Test hook only: particles alive, how strong the screen flash and the fade are as drawn now (0 = none), the
    * score pop-ups on screen, how far the highest-risen of them is drawn above where it was first drawn, px (0 under
-   * reduced motion), the top of the highest one in view px, each one's box in view px (its 1 px shadow included),
-   * and which way the airlock pointer points (null: hidden).
+   * reduced motion), the top of the highest one in view px, each one's box in view px (its 1 px shadow included) with
+   * an id that stays while it shows, and which way the airlock pointer points (null: hidden).
    */
   shown(): {
     particles: number;
@@ -236,13 +241,13 @@ export class Effects implements EffectsApi {
     popups: number;
     popupRise: number;
     popupTop: number | null;
-    popupBoxes: { x: number; y: number; w: number; h: number }[];
+    popupBoxes: { x: number; y: number; w: number; h: number; id: number }[];
     pointer: string | null;
   } {
     let popups = 0;
     let popupRise = 0;
     let popupTop: number | null = null;
-    const popupBoxes: { x: number; y: number; w: number; h: number }[] = [];
+    const popupBoxes: { x: number; y: number; w: number; h: number; id: number }[] = [];
     for (const p of this.board.slots) {
       const text = this.popupTexts[this.board.slots.indexOf(p)];
       if (!text?.visible) continue;
@@ -250,7 +255,7 @@ export class Effects implements EffectsApi {
       popupRise = Math.max(popupRise, (Number.isNaN(p.firstY) ? text.y : p.firstY) - text.y);
       const top = text.y - this.camY;
       popupTop = popupTop === null ? top : Math.min(popupTop, top);
-      popupBoxes.push({ x: text.x - this.camX, y: top, w: p.w, h: POPUP_H });
+      popupBoxes.push({ x: text.x - this.camX, y: top, w: p.w, h: POPUP_H, id: p.seq });
     }
     return {
       particles: this.emitter.getAliveParticleCount() + this.tinted.getAliveParticleCount(),
@@ -456,16 +461,28 @@ export class Effects implements EffectsApi {
    */
   popup(text: string, x: number, y: number): void {
     // The cog's own +100 comes with the toast, which the HUD puts up on the same tick: below its band from the start.
+    // Placed with the others when the frame is drawn (`place`), off the hero as drawn then.
     const slot = this.board.spawn(textWidth(text), x, y, this.camY, this.toastUp || this.cogNow);
-    this.popupTexts[this.board.slots.indexOf(slot)]?.setText(text).setVisible(true);
-    this.placePopups();
+    this.popupTexts[this.board.slots.indexOf(slot)]?.setText(text).setPosition(slot.drawX, slot.drawY).setVisible(true);
   }
 
-  /** Every pop-up shown, placed for the view as last drawn and the hero as of the last tick. */
+  /**
+   * Every pop-up shown, placed for the view as last drawn and the hero's sprite as drawn on this frame (one taken down
+   * under reduced motion is hidden).
+   */
   private placePopups(): void {
-    this.board.place(this.camY, this.toastUp || this.cogNow, this.heroShown ? this.heroBox : null);
+    const hero = this.spriteOf('hero');
+    const box = this.heroBox;
+    if (hero) {
+      box.x = hero.x;
+      box.y = hero.y - (this.heroBurning ? FUELBAR_RISE : 0);
+      box.h = TILE_SIZE + (this.heroBurning ? FUELBAR_RISE : 0);
+    }
+    this.board.place(this.camY, this.toastUp || this.cogNow, hero?.visible === true ? box : null);
     this.board.slots.forEach((p, i) => {
-      if (p.age < POPUP_FRAMES) this.popupTexts[i]?.setPosition(p.drawX, p.drawY);
+      const text = this.popupTexts[i];
+      if (p.age < POPUP_FRAMES) text?.setPosition(p.drawX, p.drawY);
+      else if (text?.visible) text.setVisible(false);
     });
   }
 
@@ -523,12 +540,9 @@ export class Effects implements EffectsApi {
     const playing = run.phase === 'playing';
     this.heroRising = playing && !p.onGround && p.vy < 0;
     this.heroSide = p.vx > 0 ? 1 : p.vx < 0 ? -1 : p.facing;
-    // The hero's sprite, and the fuel bar over it while he thrusts: pop-ups keep off both (FUELBAR_RISE, WorldView).
-    const burning = playing && p.thrusting;
-    this.heroShown = run.phase === 'playing' || run.phase === 'ready';
-    this.heroBox.x = heroDrawX(p, phys);
-    this.heroBox.y = heroDrawY(p, phys) - (burning ? FUELBAR_RISE : 0);
-    this.heroBox.h = TILE_SIZE + (burning ? FUELBAR_RISE : 0);
+    // The hero's sprite, and the fuel bar over it while he thrusts: pop-ups keep off both (FUELBAR_RISE, WorldView), as
+    // drawn on each frame, whenever it is drawn (`placePopups`).
+    this.heroBurning = playing && p.thrusting;
     const feet = toPx(p.y + phys.heroH);
     this.fall.observe(playing, p.onGround, feet);
     this.embers(run.tick);

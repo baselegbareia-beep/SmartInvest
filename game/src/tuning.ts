@@ -225,7 +225,9 @@ export const TUNING: Tuning = {
     shakeLandMinFallTiles: 5, // tiles. ...and how far the fall must be to count as hard.
     introFrames: 90, // frames. How long the level's name and hint stay before play (1.5 s)...
     introSkipAfterFrames: 20, // frames. ...and how soon a press may skip them.
-    toastFrames: 90, // frames. How long "COG FOUND! AIRLOCK OPEN" stays.
+    toastFrames: 90, // frames. How long "COG FOUND! AIRLOCK OPEN" stays (and, at a keyboard, "X FIRES THE BLASTER").
+    endMenuArmFrames: 45, // frames. GAME OVER and the win screen take no pick for this long (nor before their last line shows): Space is also JUMP, and a jump pressed as the last life went picked TRY AGAIN unseen.
+    confirmFrames: 180, // frames. NEW GAME over a run in progress asks "NEW GAME? TAP AGAIN" for this long (3 s), then forgets it.
     crystalLadderFrames: 45, // frames. Crystals taken this close together play rising notes.
   },
 

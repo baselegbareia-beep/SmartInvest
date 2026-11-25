@@ -6,7 +6,10 @@
  * - Stars, the Earth (top left), the ridge along the bottom; Sprue idling on a girder that juts in
  *   from the left; `logo_cog` behind the first word of the game's name (3x, from src/meta.ts) over the
  *   rest of it (1x).
- * - With saved progress (docs/ARCHITECTURE.md 10): `CONTINUE - LEVEL n` and `NEW GAME`. Without:
+ * - With saved progress (docs/ARCHITECTURE.md 10): `CONTINUE - LEVEL n` and `NEW GAME`. Where CONTINUE would
+ *   carry on past level 1 or with points, NEW GAME asks again before it throws that run away: its first pick
+ *   turns it into `NEW GAME? TAP AGAIN` (`PRESS AGAIN` with keys or a mouse) for TUNING.effects.confirmFrames;
+ *   only a second pick starts, and moving the focus or waiting takes the question back. Without:
  *   `TAP TO START` (`PRESS SPACE TO START` when the keyboard was used last), blinking once a second;
  *   a tap anywhere, or Space, Enter or a jump or fire key, starts a new game. `BEST 07900` once there
  *   is a best score. A build without any campaign level says so, and NEW GAME plays the test rooms.
@@ -16,6 +19,8 @@
  *   fullscreen (ARCHITECTURE 11.5). A refusal is ignored.
  * - The screen opens with the 12-frame shutter wipe. Under reduced motion there is no wipe and the
  *   prompt does not blink (docs/ART-AND-SOUND.md section 13).
+ * - Another copy of the game on the same origin (a second tab, the installed app) may save meanwhile: the title
+ *   is built again for its progress (singletons.ts `progress.onChange`), and its sound switch follows the settings.
  */
 import * as Phaser from 'phaser';
 
@@ -32,6 +37,7 @@ import type { Rect } from '../menuLayout';
 import { onSceneEnd } from '../sceneEnd';
 import { SHUTTER_FRAMES, ridgeRow, screenLabel, shutterBlades, splitTitle, titleBest, titleScenery } from '../screens';
 import type { Scenery } from '../screens';
+import { TUNING } from '../../tuning';
 import { app, canvasEdgeGapsCss, controls, cssPerArt, pad, progress, settings, sfx } from '../singletons';
 
 import { Menu } from './menu';
@@ -215,6 +221,10 @@ export class TitleScene extends Phaser.Scene {
   private readyFlagged = false;
   /** The words of the screen for its accessible name; the prompt's slot is filled in when the name is set. */
   private labelLines: string[] = [];
+  /** NEW GAME's entry index, or -1 when it needs no second pick (no run to lose, or the start prompt). */
+  private confirmIndex = -1;
+  /** Frames left of NEW GAME's question (0: not asked). */
+  private confirmLeft = 0;
 
   constructor() {
     super('Title');
@@ -236,6 +246,8 @@ export class TitleScene extends Phaser.Scene {
     this.newGame = null;
     this.readyFlagged = false;
     this.labelLines = [];
+    this.confirmIndex = -1;
+    this.confirmLeft = 0;
   }
 
   create(): void {
@@ -253,7 +265,17 @@ export class TitleScene extends Phaser.Scene {
     const continueRun = offer.continueRun;
     if (continueRun) {
       entries.push({ kind: 'button', text: TEXT.continueLevel(continueRun.levelNumber), onPick: () => { this.begin(continueRun.play); } });
-      entries.push({ kind: 'button', text: TEXT.newGame, onPick: () => { this.begin(offer.newGame); } });
+      // A run that NEW GAME would throw away: past level 1, or with points (the unlocked levels and the best score stay).
+      const lose = continueRun.levelNumber > 1 || (progress.current.resume?.score ?? 0) > 0;
+      if (lose) this.confirmIndex = entries.length;
+      entries.push({
+        kind: 'button',
+        text: TEXT.newGame,
+        onPick: () => {
+          if (lose && this.confirmLeft <= 0) this.askAgain();
+          else this.begin(offer.newGame);
+        },
+      });
     } else {
       this.promptIndex = entries.length;
       entries.push({ kind: 'text', text: this.prompt(), colour: COLOR.white });
@@ -267,14 +289,10 @@ export class TitleScene extends Phaser.Scene {
     this.backdrop = new Backdrop(this, { depth: -10, girder: true, hero: true });
     // The cog behind the name, as a stamped indigo shape at 2x: drawn in its own gold at 1x it sat behind the R of
     // the gold name and the R could not be read; as a dark plate behind the whole word the name reads at once.
-    this.logo = this.add
-      .image(0, 0, TEXTURE_KEY.sprites, 'logo_cog_0')
-      .setOrigin(0, 0)
-      .setScale(LOGO_SCALE)
-      .setTint(COLOR.indigo)
-      .setTintMode(Phaser.TintModes.FILL)
-      .setDepth(-1);
-    this.menu = new Menu(this, entries, { panel: false, dim: false });
+    // Its own indigo frame, not a FILL tint of the gold one: the Canvas renderer (no WebGL) ignores tints.
+    this.logo = this.add.image(0, 0, TEXTURE_KEY.sprites, 'logo_cog_1').setOrigin(0, 0).setScale(LOGO_SCALE).setDepth(-1);
+    // NEW GAME is the second button: the focus moving to any other takes its question back.
+    this.menu = new Menu(this, entries, { panel: false, dim: false, onFocus: (target) => { if (target !== 1) this.takeBack(); } });
     this.soundIcon = this.add.image(0, 0, TEXTURE_KEY.sprites, 'btn_sound_0').setOrigin(0, 0).setDepth(5);
     this.shutter = new Shutter(this, 100);
     this.layout();
@@ -300,6 +318,17 @@ export class TitleScene extends Phaser.Scene {
       );
     }
 
+    // Another tab saved: the offer may have changed (CONTINUE, BEST); its settings: the sound switch.
+    removers.push(
+      progress.onChange(() => {
+        if (!this.started) this.scene.restart();
+      }),
+      settings.onChange(() => {
+        this.showSound();
+        setScreenLabel(this, this.label());
+      }),
+    );
+
     onSceneEnd(this.events, () => {
       this.scale.off(Phaser.Scale.Events.RESIZE, this.layout);
       for (const remove of removers.splice(0)) remove();
@@ -314,6 +343,10 @@ export class TitleScene extends Phaser.Scene {
     this.age += whole;
     this.shutter?.advance(whole);
     this.backdrop?.advance(whole);
+    if (this.confirmLeft > 0) {
+      this.confirmLeft = Math.max(0, this.confirmLeft - whole);
+      if (this.confirmLeft === 0) this.takeBack();
+    }
     if (!this.readyFlagged && this.shutter?.isOpen === true) {
       // The browser tests wait for this (e2e/smoke.spec.ts takes its picture then): the title is drawn, shutter open.
       this.readyFlagged = true;
@@ -338,8 +371,36 @@ export class TitleScene extends Phaser.Scene {
 
   private label(): string[] {
     const prompt = this.promptIndex >= 0 ? this.prompt() : null;
-    const lines = this.labelLines.map((l) => (l === TEXT.tapToStart || l === TEXT.pressToStart ? (prompt ?? l) : l));
+    const asking = this.confirmLeft > 0 ? this.question() : null;
+    const lines = this.labelLines.map((l) => {
+      if (l === TEXT.tapToStart || l === TEXT.pressToStart) return prompt ?? l;
+      if (l === TEXT.newGame) return asking ?? l;
+      return l;
+    });
     return [...lines, TEXT.sound(settings.current.sound)];
+  }
+
+  /** NEW GAME's question, in the words of the input used last. */
+  private question(): string {
+    return app.classList.contains('touch') ? TEXT.newGameTapAgain : TEXT.newGamePressAgain;
+  }
+
+  /** NEW GAME was picked once over a run in progress: ask again, for a while. */
+  private askAgain(): void {
+    if (this.confirmIndex < 0) return;
+    this.confirmLeft = TUNING.effects.confirmFrames;
+    this.menu?.setButtonText(this.confirmIndex, this.question());
+    this.layout();
+    setScreenLabel(this, this.label());
+  }
+
+  /** NEW GAME's question is taken back (the focus moved, or it was left alone). */
+  private takeBack(): void {
+    if (this.confirmIndex < 0) return;
+    this.confirmLeft = 0;
+    if (this.menu?.setButtonText(this.confirmIndex, TEXT.newGame) !== true) return; // it said NEW GAME already
+    this.layout();
+    setScreenLabel(this, this.label());
   }
 
   /** Starts the session once, whatever asked first. */

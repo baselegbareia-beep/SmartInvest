@@ -1,5 +1,5 @@
 /**
- * The sprite manifest (docs/ART-AND-SOUND.md, section 4) as data: 62 sprites, 111 frames.
+ * The sprite manifest (docs/ART-AND-SOUND.md, section 4) as data: 62 sprites, 113 frames.
  *
  * This is the single list that the tests, the sheet builder (pixels.ts) and the game's
  * view code read. The grids themselves live in src/art/sprites/<group>.ts.
@@ -121,7 +121,7 @@ export const MANIFEST = [
 
   // --- Top bar (hud.ts)
   sprite('hud', 'hud_life', 8, 8, 2), // lit, dark
-  sprite('hud', 'hud_cog', 8, 8, 2), // outline, gold
+  sprite('hud', 'hud_cog', 8, 8, 3), // outline, gold, unlit (rust)
   sprite('hud', 'hud_blaster', 8, 8, 1),
   sprite('hud', 'hud_thruster', 8, 8, 1),
   sprite('hud', 'hud_pip', 2, 6, 2), // lime, slate
@@ -137,7 +137,7 @@ export const MANIFEST = [
 
   // --- Menus and icon (ui.ts)
   sprite('ui', 'ui_panel', 24, 24, 1),
-  sprite('ui', 'logo_cog', 32, 32, 1),
+  sprite('ui', 'logo_cog', 32, 32, 2), // gold-rimmed, flat indigo (the title's plate)
   sprite('ui', 'icon', 32, 32, 1),
 ] as const;
 
@@ -193,7 +193,7 @@ export function loopFrame(name: SpriteName, tick: number): string {
   return frameOf(name, index);
 }
 
-/** Sprites and frames in total: 62 and 111. */
+/** Sprites and frames in total: 62 and 113. */
 export const SPRITE_COUNT: number = SPRITE_SPECS.length;
 export const FRAME_COUNT: number = SPRITE_SPECS.reduce((sum, s) => sum + s.frames, 0);
 

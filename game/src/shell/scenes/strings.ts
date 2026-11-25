@@ -18,6 +18,9 @@ export const TEXT = {
   pressToStart: 'PRESS SPACE TO START',
   continueLevel: (levelNumber: number): string => `CONTINUE - LEVEL ${levelNumber}`,
   newGame: 'NEW GAME',
+  /** NEW GAME's label after one pick while a run is in progress (on touch, and with keys or a mouse): a second pick starts. */
+  newGameTapAgain: 'NEW GAME? TAP AGAIN',
+  newGamePressAgain: 'NEW GAME? PRESS AGAIN',
   /** Shown under the title when the build has no campaign level yet (NEW GAME then plays the two test rooms). */
   noCampaign: 'NO LEVELS YET: PLAYING THE TEST ROOMS',
   best: (score: number): string => `BEST ${scoreDigits(score)}`,
@@ -27,12 +30,19 @@ export const TEXT = {
   level: (levelNumber: number): string => `LEVEL ${levelNumber}`,
   cogFound: 'COG FOUND! AIRLOCK OPEN',
   levelClear: (bonus: number): string => `LEVEL CLEAR +${bonus}`,
+  /** At a keyboard (touch mode off), the toast when the blaster or the pack is first taken in a session. */
+  fireHint: 'X FIRES THE BLASTER',
+  thrustHint: 'HOLD Z OR SHIFT TO THRUST',
 
   // Pause
   paused: 'PAUSED',
   resume: 'RESUME',
   restartLevel: 'RESTART LEVEL -1 LIFE',
+  /** RESTART LEVEL on the last life: it ends the game. */
+  giveUp: 'GIVE UP - GAME OVER',
   quitToTitle: 'QUIT TO TITLE',
+  /** Under the pause menu's switches in keyboard play: the keys no screen names otherwise. */
+  keys: 'SPACE JUMP  X FIRE  Z THRUST',
   sound: (on: boolean): string => (on ? 'SOUND ON' : 'SOUND OFF'),
   buzz: (on: boolean): string => (on ? 'BUZZ ON' : 'BUZZ OFF'),
 

@@ -3,11 +3,11 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { compileTuning } from '../src/core/compileTuning';
-import { createSession, step } from '../src/core/game';
+import { cloneGame, createSession, step } from '../src/core/game';
 import { parseLevel, withoutItem } from '../src/core/level';
 import { inputFromBits } from '../src/core/script';
 import type { Cell, DeathCause, GameEvent, GameState, InputScript, LevelData, LevelProof, Phys, ValidateOptions } from '../src/core/types';
-import { Tile } from '../src/core/types';
+import { InputBit, SUB, Tile, TILE, TILE_PX } from '../src/core/types';
 import { handicap } from '../src/core/validate/handicap';
 import { replayScript, validateLevel } from '../src/core/validate/index';
 import { COMFORT_OPTIONS, DEFAULT_OPTIONS, LEVELS_STEP_BUDGET, REQUIRES_OPTIONS } from '../src/core/validate/options';
@@ -395,6 +395,111 @@ describe('(d) the campaign, played as one game', () => {
         `${lifeBonus} for ${game.session.lives} lives left`,
     );
   });
+});
+
+// ---------------------------------------------------------------------------
+// A window a level file promises, measured on the level itself
+// ---------------------------------------------------------------------------
+
+/**
+ * Level 8, flight 2 (the file's comments; docs/LEVELS.md, section 8): from pillar 1 (cols 15-20) under the
+ * roof to pillar 2 (cols 28-31), with fire beyond it. The flight runs along the roof until the tank is dry
+ * and lands far along pillar 2, so the window that counts is the small-pad one of docs/LEVELS.md, section 2:
+ * everything let go 8 frames after touchdown. Measured as padWindow in src/core/limits.test.ts measures a
+ * pad: Sprue at rest on a standing pixel of pillar 1, full tank, packs 1 and 2 taken; RIGHT held from the
+ * first tick and THRUST from k ticks later (k < 0: THRUST first, RIGHT -k ticks later, which also flies from
+ * under the lintel's tip); every input released on each tick after touchdown + 8; a success is Sprue at rest
+ * on pillar 2 six ticks after that. The window is the longest run of winning k, and the worst standing pixel
+ * counts. Rule 3: levels 1 to 8 use ordinary windows only, 18 frames or more with the shipped numbers. With
+ * pillar 2 three tiles wide (cols 28-30, to 2026-11-25) it was 17, from a run along the pillar.
+ */
+const FLIGHT_2: {
+  readonly row: number;
+  readonly pillar1: readonly [number, number];
+  readonly react: number;
+  readonly kFrom: number;
+  readonly kTo: number;
+} = { row: 9, pillar1: [15, 20], react: 8, kFrom: -40, kTo: 110 };
+
+/** The columns of the first pillar east of pillar 1, as the level's grid has it (its top is row FLIGHT_2.row + 1). */
+function pillar2Of(level: LevelData): readonly [number, number] {
+  const solid = (col: number): boolean => level.tiles[(FLIGHT_2.row + 1) * level.width + col] === Tile.Solid;
+  let from = FLIGHT_2.pillar1[1] + 1;
+  while (from < level.width && !solid(from)) from++;
+  let to = from;
+  while (to + 1 < level.width && solid(to + 1)) to++;
+  return [from, to];
+}
+
+function flight2Window(level: LevelData, phys: Phys): { readonly frames: number; readonly worstX: number } {
+  const { row, pillar1, react, kFrom, kTo } = FLIGHT_2;
+  const pillar2 = pillar2Of(level);
+  const top = (row + 1) * TILE;
+  const base = createSession([level], phys);
+  // Idle through the ready gate's minimum: the first held control then opens it and plays its tick in full.
+  while (base.run.phase === 'ready' && base.run.phaseTicks < base.run.phaseLength) step(base, NOTHING_HELD);
+  const packsTaken = level.pickups.flatMap((pickup, index) => (pickup.kind === 'thruster' && pickup.col <= pillar1[1] ? [index] : []));
+  const attempt = (x: number, k: number): boolean => {
+    const game = cloneGame(base);
+    const p = game.run.player;
+    p.x = x * SUB;
+    p.y = top - phys.heroH;
+    p.hasThruster = true;
+    p.fuel = phys.fuelTicks;
+    for (const index of packsTaken) game.run.taken[index] = true;
+    const rightFrom = 1 + Math.max(0, -k);
+    const thrustFrom = 1 + Math.max(0, k);
+    let airborne = false;
+    let landedAt = 0;
+    for (let t = 1; t <= 600; t++) {
+      const held = landedAt > 0 && t > landedAt + react ? 0 : (t >= rightFrom ? InputBit.Right : 0) | (t >= thrustFrom ? InputBit.Thrust : 0);
+      step(game, inputFromBits(held));
+      if (game.run.phase !== 'playing') return false;
+      if (!p.onGround) airborne = true;
+      const onPillar2 = p.onGround && p.y + phys.heroH === top && p.x + phys.heroW > pillar2[0] * TILE && p.x < (pillar2[1] + 1) * TILE;
+      if (landedAt === 0 && airborne && onPillar2) landedAt = t;
+      if (landedAt > 0 && t > landedAt + react + 6 && p.onGround && p.vx === 0) return onPillar2;
+    }
+    return false;
+  };
+  let frames = Infinity;
+  let worstX = -1;
+  const heroPx = phys.heroW / SUB;
+  for (let x = pillar1[0] * TILE_PX; x <= (pillar1[1] + 1) * TILE_PX - heroPx; x++) {
+    let best = 0;
+    let run = 0;
+    for (let k = kFrom; k <= kTo; k++) {
+      run = attempt(x, k) ? run + 1 : 0;
+      best = Math.max(best, run);
+    }
+    if (best < frames) {
+      frames = best;
+      worstX = x;
+    }
+  }
+  return { frames, worstX };
+}
+
+describe('level 8, flight 2: the landing on pillar 2 is an ordinary window', () => {
+  it(
+    'from every standing pixel of pillar 1, with everything let go 8 frames after touchdown: 18 frames or more on the live numbers',
+    () => {
+      const file = files.find((candidate) => candidate.id === 'level-08');
+      if (file === undefined) throw new Error('levels/level-08.txt is missing');
+      const level = levelOf(file);
+      const [from, to] = pillar2Of(level);
+      // The pillar the comments name: it starts at col 28, under pack 3.
+      expect(from, `pillar 2 (cols ${from}-${to})`).toBe(28);
+      const live = flight2Window(level, PHYS);
+      const comfort = flight2Window(level, COMFORT_PHYS);
+      console.log(
+        `levels/level-08.txt  flight 2 onto pillar 2 (cols ${from}-${to}), let go 8 frames after touchdown: ${live.frames} / ${comfort.frames} frames ` +
+          `(worst standing pixel x ${live.worstX} / ${comfort.worstX})`,
+      );
+      expect(live.frames, `the worst standing pixel, x ${live.worstX}`).toBeGreaterThanOrEqual(18);
+    },
+    60_000,
+  );
 });
 
 describe.runIf(CRYSTALS_MODE)('LEVELS_CRYSTALS=1: crystals no state of the enemy-free map collected', () => {

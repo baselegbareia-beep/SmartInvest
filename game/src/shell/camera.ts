@@ -214,7 +214,8 @@ export function snapCamera(
 ): CameraState {
   const look = target.facing * t.camLookAheadPx;
   const x = target.x - anchorX(view, look);
-  const shift = scene ? frameShift(scene, target, x, view, level, t, pad, pad.bottom ?? 0) : 0;
+  // The framing weighs the view as it will be drawn: across, inside the side walls and their pass.
+  const shift = scene ? frameShift(scene, target, clampX(x, view, level, target.x, pad.left, pad.right), view, level, t, pad, pad.bottom ?? 0) : 0;
   const y = target.feetY - (feetAnchor(view, t, pad) + shift);
   return settle(x, y, look, view, level, target.x, pad.left, pad.right, pad.bottom ?? 0, 0, shift);
 }
@@ -295,8 +296,19 @@ const FRAME = {
   /** Per px of space shown below the level's bottom row; per px away from the anchor (ties go to less space, then to the anchor). */
   voidPx: 0.01,
   shiftPx: 0.001,
+  /**
+   * Per px his feet are raised above the anchor: he then sees that much less above him, and a jump from there comes that
+   * much nearer the strip. A raise of two tiles costs less than one thing, so it is still taken to show one.
+   */
+  raisePx: 0.1,
   /** The framing moves off the anchor only for a gain of at least this: one thing, or two crystals. */
   minGain: 2,
+  /**
+   * An up-and-down Arc Moth is newly hidden under the strip by a framing if it would be there anywhere on the way it
+   * flies in this many ticks (half a second: the view has eased most of the way by then, and the framing is weighed
+   * again every tick he stands).
+   */
+  mothSoonTicks: 30,
 } as const;
 
 const KIND_CRYSTAL = 0;
@@ -307,6 +319,8 @@ const HARM_STRIP = 1;
 const HARM_BUTTONS = 4;
 /** Not a harm: a thing cut off at the top at the anchor, which no framing may push further up (`frameShift`). */
 const CUT_TOP = 8;
+/** The most things weighed at once that fit the reused arrays before they grow; and the buttons (LEFT, RIGHT, JUMP, FIRE, THRUST). */
+const MAX_BUTTONS = 5;
 
 /** The level's hazard cells and each up-and-down Arc Moth's whole flight, found once per level. */
 interface LevelFrameData {
@@ -346,21 +360,74 @@ function levelFrameData(level: LevelData): LevelFrameData {
   return data;
 }
 
-/** The things the framing weighs this tick, reused (no allocation per tick): world art px. */
-const things = { n: 0, x: [] as number[], top: [] as number[], bottom: [] as number[], kind: [] as number[] };
+/**
+ * The things the framing weighs this tick, reused (no allocation per tick): world art px. `top` to `bottom` is where
+ * the thing can be (a tile; for an up-and-down moth its whole flight), `soonTop` to `soonBottom` where it can be within
+ * FRAME.mothSoonTicks (the same tile for anything else).
+ */
+const things = {
+  n: 0,
+  x: new Float64Array(64),
+  top: new Float64Array(64),
+  bottom: new Float64Array(64),
+  soonTop: new Float64Array(64),
+  soonBottom: new Float64Array(64),
+  kind: new Uint8Array(64),
+};
+/** Per thing, for the view's left edge of this tick: across the view (art px), across from his middle, whether it is on the view across. */
+let thingVx = new Float64Array(64);
+let thingAcross = new Float64Array(64);
+let thingOnView = new Uint8Array(64);
+/** Per thing and drawn button (`MAX_BUTTONS` a thing): how far they overlap across, art px (0 or less: not at all). */
+let thingButtonW = new Float64Array(64 * MAX_BUTTONS);
+/** Per thing: overlaps PAUSE across. */
+let thingUnderPauseX = new Uint8Array(64);
 /** Per thing: hidden in a way no framing may add (see `frameShift`), at the anchor and at a candidate. */
 let harmAtAnchor = new Uint8Array(64);
 let harmHere = new Uint8Array(64);
 
-function addThing(x: number, top: number, bottom: number, kind: number): void {
+/** Room for `n` things in every per-thing array (grown, never shrunk). */
+function roomFor(n: number): void {
+  if (things.x.length >= n) return;
+  const grow = <T extends Float64Array | Uint8Array>(a: T, size: number): T => {
+    const b = new (a.constructor as new (len: number) => T)(size);
+    b.set(a);
+    return b;
+  };
+  const size = n * 2;
+  things.x = grow(things.x, size);
+  things.top = grow(things.top, size);
+  things.bottom = grow(things.bottom, size);
+  things.soonTop = grow(things.soonTop, size);
+  things.soonBottom = grow(things.soonBottom, size);
+  things.kind = grow(things.kind, size);
+  thingVx = new Float64Array(size);
+  thingAcross = new Float64Array(size);
+  thingOnView = new Uint8Array(size);
+  thingButtonW = new Float64Array(size * MAX_BUTTONS);
+  thingUnderPauseX = new Uint8Array(size);
+  harmAtAnchor = new Uint8Array(size);
+  harmHere = new Uint8Array(size);
+}
+
+function addThing(x: number, top: number, bottom: number, kind: number, soonTop = top, soonBottom = bottom): void {
+  roomFor(things.n + 1);
   const i = things.n++;
   things.x[i] = x;
   things.top[i] = top;
   things.bottom[i] = bottom;
+  things.soonTop[i] = soonTop;
+  things.soonBottom[i] = soonBottom;
   things.kind[i] = kind;
 }
 
-/** Fills `things`: live enemies (an up-and-down moth as its whole flight), what can be taken, the cog, the airlock, hazards near him. */
+/**
+ * Fills `things`: live enemies, what can be taken, the cog, the airlock, hazards near him. An up-and-down moth is its
+ * whole flight for what the framing gains (so the framing does not follow it up and down), and the way it flies in the
+ * next FRAME.mothSoonTicks for what a framing may not newly hide. It was once judged as one tall thing, under the strip
+ * only when half of a flight of several tiles was: the framing then pushed level 9's pool moths into the top bar's row
+ * on the 844 x 390 phone (the route watch's second re-check).
+ */
 function gatherThings(game: GameState): void {
   const level = game.level;
   const run = game.run;
@@ -368,15 +435,37 @@ function gatherThings(game: GameState): void {
   things.n = 0;
   if (!run.hasTrophy) addThing(level.trophy.col * TILE_PX, level.trophy.row * TILE_PX, (level.trophy.row + 1) * TILE_PX, KIND_OTHER);
   addThing(level.door.col * TILE_PX, level.door.row * TILE_PX, (level.door.row + 1) * TILE_PX, KIND_OTHER);
-  level.pickups.forEach((p, i) => {
-    if (run.taken[i] !== true) addThing(p.col * TILE_PX, p.row * TILE_PX, (p.row + 1) * TILE_PX, p.kind === 'crystal' ? KIND_CRYSTAL : KIND_OTHER);
-  });
-  run.enemies.forEach((e, i) => {
-    if (!e.alive) return;
+  for (let i = 0; i < level.pickups.length; i++) {
+    const p = level.pickups[i];
+    if (p && run.taken[i] !== true) addThing(p.col * TILE_PX, p.row * TILE_PX, (p.row + 1) * TILE_PX, p.kind === 'crystal' ? KIND_CRYSTAL : KIND_OTHER);
+  }
+  const sub = 1 << SUB_SHIFT;
+  const soonPx = (FRAME.mothSoonTicks * game.phys.mothSpeed) / sub;
+  for (let i = 0; i < run.enemies.length; i++) {
+    const e = run.enemies[i];
+    if (!e?.alive) continue;
     const top = data.mothTop[i] ?? -1;
-    if (top >= 0) addThing(e.x >> SUB_SHIFT, top, data.mothBottom[i] ?? top + TILE_PX, KIND_OTHER);
-    else addThing(e.x >> SUB_SHIFT, e.y >> SUB_SHIFT, (e.y >> SUB_SHIFT) + TILE_PX, KIND_OTHER);
-  });
+    if (top < 0) {
+      addThing(e.x >> SUB_SHIFT, e.y >> SUB_SHIFT, (e.y >> SUB_SHIFT) + TILE_PX, KIND_OTHER);
+      continue;
+    }
+    // Where its tile's top goes in the next mothSoonTicks: on its way, turning round at either end of its flight.
+    const bottom = data.mothBottom[i] ?? top + TILE_PX;
+    const lowest = bottom - TILE_PX;
+    const y = e.y / sub;
+    let lo: number;
+    let hi: number;
+    if (e.dir < 0) {
+      const up = Math.min(soonPx, y - top);
+      lo = y - up;
+      hi = Math.max(y, Math.min(lowest, top + (soonPx - up)));
+    } else {
+      const down = Math.min(soonPx, lowest - y);
+      hi = y + down;
+      lo = Math.min(y, Math.max(top, lowest - (soonPx - down)));
+    }
+    addThing(e.x >> SUB_SHIFT, top, bottom, KIND_OTHER, Math.floor(lo), Math.floor(hi) + TILE_PX);
+  }
   const p = run.player;
   const midX = (p.x + (game.phys.heroW >> 1)) >> SUB_SHIFT;
   const midY = (p.y + (game.phys.heroH >> 1)) >> SUB_SHIFT;
@@ -388,10 +477,6 @@ function gatherThings(game: GameState): void {
     const cx = col * TILE_PX + TILE_PX / 2;
     const cy = row * TILE_PX + TILE_PX / 2;
     if (Math.abs(cx - midX) <= reach && Math.abs(cy - midY) <= reach) addThing(col * TILE_PX, row * TILE_PX, (row + 1) * TILE_PX, KIND_HAZARD);
-  }
-  if (harmAtAnchor.length < things.n) {
-    harmAtAnchor = new Uint8Array(things.n * 2);
-    harmHere = new Uint8Array(things.n * 2);
   }
 }
 
@@ -415,43 +500,71 @@ function gatherButtons(scene: FrameScene): void {
 }
 
 /**
- * What it costs to draw the view with its top-left corner at (`sx`, `y`): the things hidden under the strip and
- * under the buttons, weighed by FRAME. Marks in `harm` the things hidden in a way no framing may add: a thing
- * (other than a crystal) at least half under the strip, a thing overlapping a button, a thing within FRAME.bandPx
- * of him across (on screen or not) reaching into the bottom buttons' rows.
+ * What the things are across, for the view's left edge `sx` this tick (the same for every height `frameCost` weighs):
+ * where each lies across the view and from his middle, and how far it overlaps each drawn button and PAUSE across.
  */
-function frameCost(sx: number, y: number, view: Size, midX: number, facing: number, harm: Uint8Array): number {
+function measureAcross(sx: number, view: Size, midX: number): void {
+  const p = pauseButton;
+  for (let i = 0; i < things.n; i++) {
+    const x = things.x[i] ?? 0;
+    const vx = x - sx;
+    thingVx[i] = vx;
+    thingAcross[i] = x + TILE_PX / 2 - midX;
+    thingOnView[i] = vx + TILE_PX / 2 > 0 && vx + TILE_PX / 2 < view.w ? 1 : 0;
+    for (let b = 0; b < drawnButtons.length; b++) {
+      const r = drawnButtons[b];
+      thingButtonW[i * MAX_BUTTONS + b] = r ? Math.min(vx + TILE_PX, r.x + r.w) - Math.max(vx, r.x) : 0;
+    }
+    thingUnderPauseX[i] = p !== null && vx < p.x + p.w && p.x < vx + TILE_PX ? 1 : 0;
+  }
+}
+
+/** Whether a tile whose top lies anywhere from `first` to `last` (view px) is at some point at least half under the strip, or under PAUSE. */
+function underBar(i: number, first: number, last: number): boolean {
+  const p = pauseButton;
+  return Math.max(first, -TILE_PX / 2) <= Math.min(last, STRIP_H - TILE_PX / 2) || (p !== null && thingUnderPauseX[i] === 1 && first < p.y + p.h && p.y < last + TILE_PX);
+}
+
+/**
+ * What it costs to draw the view with its top edge at `y` (across as `measureAcross` last measured): the things hidden
+ * under the strip and under the buttons, weighed by FRAME. Marks in `harm` the things hidden in a way no framing may
+ * add: a thing (other than a crystal) at least half under the strip (a moth: anywhere on its way soon), a thing
+ * overlapping a button, a thing within FRAME.bandPx of him across (on screen or not) reaching into the bottom buttons'
+ * rows.
+ *
+ * A thing is a tile, or (an up-and-down moth) a tile anywhere from `top` to `bottom`: it is under the strip (or cut off
+ * at the top, or under PAUSE) when it is so anywhere on its way, and under a button when it is so by more than a tile's
+ * share of its flight.
+ */
+function frameCost(y: number, facing: number, harm: Uint8Array): number {
   let cost = 0;
   const touch = drawnButtons.length > 0;
   for (let i = 0; i < things.n; i++) {
     harm[i] = 0;
-    const vx = (things.x[i] ?? 0) - sx;
-    const top = (things.top[i] ?? 0) - y;
-    const bottom = (things.bottom[i] ?? 0) - y;
-    const h = bottom - top;
+    // Where its tile's top can be in the view: from `first` (a tile, or the top of a moth's flight) to `last`.
+    const first = (things.top[i] ?? 0) - y;
+    const last = (things.bottom[i] ?? 0) - y - TILE_PX;
     const kind = things.kind[i] ?? KIND_OTHER;
-    const across = (things.x[i] ?? 0) + TILE_PX / 2 - midX;
-    if (touch && Math.abs(across) <= FRAME.bandPx && bottom - bandTop > FRAME.bandSlackPx) harm[i] = HARM_BUTTONS;
-    if (vx + TILE_PX / 2 <= 0 || vx + TILE_PX / 2 >= view.w) continue; // off the view across
-    // Hidden at the top: at least half of it under the strip, or under PAUSE. `clear`: its rows below the strip and
-    // above the view's bottom edge.
-    const clear = Math.max(0, Math.min(bottom, view.h) - Math.max(top, STRIP_H));
-    // PAUSE, in the top right corner, belongs to the top bar: a thing under it is hidden there too.
-    const p = pauseButton;
-    const inStrip = Math.min(bottom, STRIP_H) - Math.max(top, 0) >= h / 2 || (p !== null && vx < p.x + p.w && p.x < vx + TILE_PX && top < p.y + p.h && p.y < bottom);
-    // No framing brings a thing (but a crystal) in under the strip, where it reads as part of the top bar. A thing (but
-    // a crystal) cut off at the top (less than half of it clear, partly in the picture) is marked: see `frameShift`.
-    if (kind !== KIND_CRYSTAL && inStrip) harm[i] = (harm[i] ?? 0) | HARM_STRIP;
-    if (kind !== KIND_CRYSTAL && clear < h / 2 && top < STRIP_H && bottom > 0) harm[i] = (harm[i] ?? 0) | CUT_TOP;
-    if (inStrip) {
+    const across = thingAcross[i] ?? 0;
+    if (touch && Math.abs(across) <= FRAME.bandPx && last + TILE_PX - bandTop > FRAME.bandSlackPx) harm[i] = HARM_BUTTONS;
+    if (thingOnView[i] !== 1) continue; // off the view across
+    // No framing brings a thing (but a crystal) in under the strip, where it reads as part of the top bar: a moth not
+    // where it will fly in the next half second. A thing (but a crystal) cut off at the top (less than half of it clear
+    // below the strip, partly in the picture) is marked: see `frameShift`.
+    if (kind !== KIND_CRYSTAL && underBar(i, (things.soonTop[i] ?? 0) - y, (things.soonBottom[i] ?? 0) - y - TILE_PX)) harm[i] = (harm[i] ?? 0) | HARM_STRIP;
+    if (kind !== KIND_CRYSTAL && last < STRIP_H - TILE_PX / 2 && last > -TILE_PX) harm[i] = (harm[i] ?? 0) | CUT_TOP;
+    if (underBar(i, first, last)) {
       cost += kind === KIND_CRYSTAL ? FRAME.stripCrystal : FRAME.strip;
       continue;
     }
     if (!touch) continue;
     let hit = false;
-    for (const r of drawnButtons) {
-      const w = Math.min(vx + TILE_PX, r.x + r.w) - Math.max(vx, r.x);
-      const hh = Math.min(bottom, r.y + r.h) - Math.max(top, r.y);
+    const h = last + TILE_PX - first;
+    for (let b = 0; b < drawnButtons.length; b++) {
+      const r = drawnButtons[b];
+      if (!r) continue;
+      const w = thingButtonW[i * MAX_BUTTONS + b] ?? 0;
+      const hh = Math.min(last + TILE_PX, r.y + r.h) - Math.max(first, r.y);
       // Any overlap for a tile; for a moth's long flight, more than its share of a tile.
       if (w > 0 && hh > 0 && w * hh > (TILE_PX * h) / 4 - 8 * TILE_PX) {
         hit = true;
@@ -474,13 +587,15 @@ function frameCost(sx: number, y: number, view: Size, midX: number, facing: numb
  * buttons. The candidates run from `camFrameUpPx` above the anchor to `camFrameDownPx` below it, never with his
  * feet on the buttons (on a touch screen) or below the air band (with keys), nor with his head closer than a tile
  * to the strip's band line. A candidate that hides anything the anchor leaves clear (a thing other than a crystal
- * under the strip or PAUSE, anything under a button or reaching into the bottom buttons' rows within FRAME.bandPx of
- * him) is not taken, and while a thing (other than a crystal) is cut off at the top at the anchor, no candidate moves
- * the view down (that would push it out of the picture rather than show it); of the rest, the one that hides least
- * (FRAME's weights, then the least space below the level, then the nearest the anchor) wins, if it gains at least
+ * under the strip or PAUSE, a moth where it will fly within half a second included; anything under a button or
+ * reaching into the bottom buttons' rows within FRAME.bandPx of him) is not taken, and while a thing (other than a
+ * crystal) is cut off at the top at the anchor, no candidate moves the view down (that would push it out of the
+ * picture rather than show it); of the rest, the one that hides least (FRAME's weights, then a little for every px his
+ * feet are raised, then the least space below the level, then the nearest the anchor) wins, if it gains at least
  * FRAME.minGain over the anchor. Otherwise 0: the anchor.
  *
- * `x` is the view's left edge this tick, `passBottom` the pass below the level in use. Allocates nothing.
+ * `x` is the view's left edge this tick as it will be drawn (inside the side walls and their pass: `clampX`), `passBottom`
+ * the pass below the level in use. Allocates nothing.
  */
 export function frameShift(scene: FrameScene, target: CameraTarget, x: number, view: Size, level: Size, t: CameraTuning, pad: Readonly<PadReach>, passBottom: number): number {
   if (t.camFrameDownPx <= 0 && t.camFrameUpPx <= 0) return 0;
@@ -496,11 +611,10 @@ export function frameShift(scene: FrameScene, target: CameraTarget, x: number, v
   const inner = level.h <= view.h ? Math.floor((level.h - view.h) / 2) : level.h - view.h;
   const lo = level.h <= view.h ? inner : 0;
   const hi = inner + Math.max(0, passBottom);
-  const yFor = (s: number): number => Math.min(Math.max(target.feetY - (anchor + s), lo), hi);
   const p = game.run.player;
   const midX = (p.x + (game.phys.heroW >> 1)) >> SUB_SHIFT;
-  const sx = Math.round(x);
-  frameCost(sx, Math.round(yFor(0)), view, midX, p.facing, harmAtAnchor);
+  measureAcross(Math.round(x), view, midX);
+  frameCost(Math.round(Math.min(Math.max(target.feetY - anchor, lo), hi)), p.facing, harmAtAnchor);
   // Something cut off at the top at the anchor: no framing pushes it further up and out of the picture to get it out
   // of the strip; only down, into the clear.
   let up = sLo;
@@ -508,14 +622,24 @@ export function frameShift(scene: FrameScene, target: CameraTarget, x: number, v
   let best = 0;
   let bestCost = Infinity;
   let atAnchor = Infinity;
+  // Heights the level's edge holds the view at come out the same: weighed once (the view at the level's bottom).
+  let lastY = Number.NaN;
+  let lastCost = 0;
+  let lastWorse = false;
   for (let s = Math.max(sLo, up); s <= sHi; s++) {
-    const y = yFor(s);
+    const y = Math.min(Math.max(target.feetY - (anchor + s), lo), hi);
     if (target.feetY - y > maxFeet + 1e-9) continue; // his feet on the buttons
-    let cost = frameCost(sx, Math.round(y), view, midX, p.facing, harmHere);
-    let worse = false;
-    for (let i = 0; i < things.n && !worse; i++) worse = ((harmHere[i] ?? 0) & ~(harmAtAnchor[i] ?? 0) & (HARM_STRIP | HARM_BUTTONS)) !== 0;
-    if (worse) continue;
+    const drawnY = Math.round(y);
+    if (drawnY !== lastY) {
+      lastY = drawnY;
+      lastCost = frameCost(drawnY, p.facing, harmHere);
+      lastWorse = false;
+      for (let i = 0; i < things.n && !lastWorse; i++) lastWorse = ((harmHere[i] ?? 0) & ~(harmAtAnchor[i] ?? 0) & (HARM_STRIP | HARM_BUTTONS)) !== 0;
+    }
+    if (lastWorse) continue;
+    let cost = lastCost;
     cost += FRAME.voidPx * Math.max(0, y - inner) + FRAME.shiftPx * Math.abs(s);
+    if (s < 0) cost += FRAME.raisePx * -s;
     if (s === 0) atAnchor = cost;
     if (cost < bestCost - 1e-9) {
       bestCost = cost;
@@ -558,7 +682,8 @@ export function stepCamera(
   let y = prev.y;
   let shift = prev.shift;
   if (target.onGround) {
-    shift = scene ? frameShift(scene, target, x, view, level, t, pad, passBottom) : 0;
+    // Weighed on the view as it will be drawn: across, inside the side walls and their pass (as `settle` puts it).
+    shift = scene ? frameShift(scene, target, clampX(x, view, level, target.x, passLeft, passRight), view, level, t, pad, passBottom) : 0;
     const rest = target.feetY - (feetAnchor(view, t, pad) + shift);
     const by = (rest - y) * t.camVerticalEase;
     y += Math.max(-t.camVerticalMaxStep, Math.min(t.camVerticalMaxStep, by));
@@ -614,15 +739,25 @@ function settle(
   pad?: Readonly<PadReach>,
 ): CameraState {
   const walls = sideWalls(view.w, level.w, heroX);
-  const lo = passLeft > 0 ? walls.lo - passLeft : walls.lo0;
-  const hi = passRight > 0 ? walls.hi + passRight : walls.hi0;
-  const cx = Math.min(Math.max(x, lo), hi);
+  const cx = clampX(x, view, level, heroX, passLeft, passRight);
   const cy = bound(y, view.h, level.h, passBottom);
   const keptLeft = pad && passLeft > pad.left ? Math.max(pad.left, Math.min(passLeft, walls.lo - cx)) : passLeft;
   const keptRight = pad && passRight > pad.right ? Math.max(pad.right, Math.min(passRight, cx - walls.hi)) : passRight;
   const reachBottom = pad?.bottom ?? 0;
   const keptBottom = pad && passBottom > reachBottom ? Math.max(reachBottom, Math.min(passBottom, cy - (level.h - view.h))) : passBottom;
   return { x: cx, y: cy, look, scrollX: whole(cx), scrollY: whole(cy), passLeft: keptLeft, passRight: keptRight, passBottom: keptBottom, rise, shift };
+}
+
+/**
+ * The view's left edge `x` kept inside the side walls, passed by `passLeft` and `passRight` (0: no pass on that side).
+ * Before this the framing weighed the view's left edge before the walls held it: up to 228 art px off by a wall (the
+ * route watch's second re-check).
+ */
+function clampX(x: number, view: Size, level: Size, heroX: number, passLeft: number, passRight: number): number {
+  const walls = sideWalls(view.w, level.w, heroX);
+  const lo = passLeft > 0 ? walls.lo - passLeft : walls.lo0;
+  const hi = passRight > 0 ? walls.hi + passRight : walls.hi0;
+  return Math.min(Math.max(x, lo), hi);
 }
 
 /**

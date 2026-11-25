@@ -2,7 +2,7 @@
  * Top bar: hud_* (docs/ART-AND-SOUND.md, sections 4 and 8).
  *
  * The frames of these sprites are states, not animations:
- * hud_life 0 lit, 1 dark; hud_cog 0 outline, 1 gold; hud_pip 0 lime, 1 slate.
+ * hud_life 0 lit, 1 dark; hud_cog 0 outline, 1 gold, 2 unlit (rust); hud_pip 0 lime, 1 slate.
  * The bar is one row at y = 3 to 11, so everything is at most 8 px tall. It lies over
  * the game, often over the steel of the top wall, so every icon must read on steel as
  * well as on space: the cog still to be found is an earthlight outline with an open
@@ -65,6 +65,13 @@ const COG_GOLD: Frame = [
   'd..dd..d',
 ];
 
+/**
+ * The cog still to be found, as the bar shows it: the gold cog's own filled shape, unlit, all `rust` (the gold lane
+ * darkened). A frame of its own, not a tint of COG_GOLD: Phaser's Canvas renderer ignores tints, and there the slot
+ * showed the gold cog all through the level, as if taken.
+ */
+const COG_UNLIT: Frame = COG_GOLD.map((row) => row.replace(/[^.]/g, 'a'));
+
 /** The bolt blaster: steel with a lime coil. */
 const BLASTER: Frame = [
   '........',
@@ -77,16 +84,20 @@ const BLASTER: Frame = [
   '........',
 ];
 
-/** The thruster pack: twin bottles on one lime strap with a white needle, a pilot flame under each (as pickup_thruster). */
+/**
+ * The thruster pack, as pickup_thruster draws it: one steel tank with two lime bands, two small fins and one nozzle, a
+ * lime pilot flame under it. (It was twin bottles, the THRUST button's glyph, until the pickup became one tank: the
+ * bar then showed a pack unlike the one he had picked up; the route watch's second re-check.)
+ */
 const THRUSTER: Frame = [
-  '.6....6.',
-  '675..675',
-  '675..675',
-  'ggg7gggh',
-  'gghhgghh',
-  '664..664',
-  '.3....3.',
-  '.g....g.',
+  '...66...',
+  '..6775..',
+  '..gggh..',
+  '..6754..',
+  '..gggh..',
+  '.465543.',
+  '.4.53.3.',
+  '...gg...',
 ];
 
 /** A fuel pip, full. */
@@ -111,7 +122,7 @@ const PIP_SLATE: Frame = [
 
 export const HUD: SpriteGrids<'hud'> = {
   hud_life: [LIFE_LIT, LIFE_DARK],
-  hud_cog: [COG_OUTLINE, COG_GOLD],
+  hud_cog: [COG_OUTLINE, COG_GOLD, COG_UNLIT],
   hud_blaster: [BLASTER],
   hud_thruster: [THRUSTER],
   hud_pip: [PIP_LIME, PIP_SLATE],
