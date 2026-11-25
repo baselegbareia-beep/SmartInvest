@@ -90,8 +90,9 @@ const BITS: Readonly<Record<Button, number>> = { left: 1, right: 2, jump: 4, fir
 
 /**
  * Plays a script's runs with real keys up to (not including) script tick `until`, then freezes the game there, as
- * e2e/rooms.spec.ts does (pace(1) and freezeAtTick, so a busy machine cannot let a tick slip). Returns the level tick
- * the script started on. Every key is let go before it returns, with the game still frozen.
+ * e2e/rooms.spec.ts does (pace(1), and each freezeAtTick armed in the same call that lets the game go on, so a busy
+ * machine cannot let a tick slip). Returns the level tick the script started on. Every key is let go before it
+ * returns, with the game still frozen.
  */
 async function playUntil(page: Page, runs: InputScript['runs'], until: number): Promise<number> {
   await page.evaluate(() => {
@@ -108,18 +109,27 @@ async function playUntil(page: Page, runs: InputScript['runs'], until: number): 
     }
     held = bits;
   };
+  // The frozen game goes on and its next stop is armed in one call inside the page, as resumeUntil in
+  // e2e/rooms.spec.ts does: a stop armed by a second round trip can come after a one-tick run's tick on a busy machine.
+  const resumeUntil = (tick: number): Promise<number | undefined> =>
+    page.evaluate((t) => {
+      const hook = window.__E2E__;
+      hook?.freeze(false);
+      return hook?.freezeAtTick(t);
+    }, tick);
+  // Frozen on tick base: the first run starts there.
   let k = 0;
+  let at: number | undefined = base;
   for (const [bits, length] of runs) {
     if (k >= until) break;
-    const at = await page.evaluate((t) => window.__E2E__?.freezeAtTick(t), base + k);
     expect(at, 'the script fell behind').toBe(base + k);
     await set(bits);
-    await page.evaluate(() => {
-      window.__E2E__?.freeze(false);
-    });
-    k += length;
+    k = Math.min(k + length, until);
+    at = await resumeUntil(base + k);
   }
-  await page.evaluate((t) => window.__E2E__?.freezeAtTick(t), base + until);
+  // A script shorter than `until` holds its last run's keys on to it.
+  if (k < until) at = await resumeUntil(base + until);
+  expect(at, 'the script fell behind').toBe(base + until);
   await set(0);
   await page.evaluate(() => {
     window.__E2E__?.pace(null);

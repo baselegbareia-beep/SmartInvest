@@ -1,6 +1,6 @@
 /**
- * The shell's visual feedback (docs/ART-AND-SOUND.md sections 4 "Effects" and 13): one particle
- * emitter, the enemy's white flash and burst, score pop-ups, the screen flash, the screen fade, the
+ * The shell's visual feedback (docs/ART-AND-SOUND.md sections 4 "Effects" and 13): two particle
+ * emitters, the enemy's white flash and burst, score pop-ups, the screen flash, the screen fade, the
  * shake and the airlock pointer. All of it is presentation: nothing here changes what happens in the
  * game, and `Math.random` is fine here (never in src/core).
  *
@@ -15,10 +15,11 @@
  *                 screen edge and the score pop-ups (kept under the top bar, and under the cog's toast while
  *                 the HUD shows it); `setPaused` with the pause menu; `resize` on a new view size.
  *
- * Particles. One emitter, burst-only, never more than MAX_PARTICLES alive. Each burst sets how its
- * particles move (MOTION) and which frames they show: a fixed frame (sparks, scrap bits) or a sequence
- * played once over the particle's life (fx_sparkle twinkles, fx_dust drifts apart), by a Particle
- * subclass; Phaser's animation manager is not used.
+ * Particles. Two emitters, burst-only, never more than MAX_PARTICLES alive between them: one for frames in
+ * their own colours (dust, scrap), one for tinted sparks and sparkles over white copies of their frames.
+ * Each burst sets how its particles move (MOTION) and which frames they show: a fixed frame (sparks, scrap
+ * bits) or a sequence played once over the particle's life (fx_sparkle twinkles, fx_dust drifts apart),
+ * by a Particle subclass; Phaser's animation manager is not used.
  *
  * Reduced motion (prefers-reduced-motion, docs/ART-AND-SOUND.md section 13): no shake, no screen flash
  * and no particles (no burst is fired); score pop-ups appear where they would rise from and stay there; the
@@ -48,13 +49,17 @@ import {
   POINTER_TICKS,
   POPUP_FRAMES,
   POPUP_H,
+  POPUP_HEAD_PX,
+  POPUP_MIN_FRAMES,
   POPUP_POOL,
   PopupBoard,
   ShakeTimer,
   emberDue,
   fireCells,
+  heroSweep,
   popupAnchor,
 } from './fxModel';
+import type { FallModel } from './fxModel';
 import { STRIP_H } from './hudModel';
 import { prefersReducedMotion } from './motion';
 import { airlockPointer, heroDrawX, heroDrawY, overlayAt } from './viewModel';
@@ -113,6 +118,8 @@ const RUN_DUST_EVERY = 10;
 const THRUST_SPARK_EVERY = 2;
 /** Pop-ups start this far above the centre of what scored: just above a 16 px thing. */
 const POPUP_LIFT_PX = 16;
+/** The hero's fall, as the pop-ups' look ahead under reduced motion takes it (`heroSweep`): the core's gravity, px per frame. */
+const HERO_FALL: FallModel = { rise: TUNING.gravity.gravityRise, fall: TUNING.gravity.gravityFall, maxFall: TUNING.gravity.maxFallSpeed };
 /** The fuel bar's top over the hero's sprite while he thrusts (WorldView: a 2 px bar 3 px above it). */
 const FUELBAR_RISE = 5;
 /**
@@ -182,6 +189,12 @@ export class Effects implements EffectsApi {
   private readonly heroBox = { x: 0, y: 0, w: TILE_SIZE, h: TILE_SIZE };
   /** As of the last tick: he thrusts, so the fuel bar is drawn over his head. */
   private heroBurning = false;
+  /** As of the last tick: how he moves (px per frame) and whether he is in the air; under reduced motion pop-ups appear off his way. */
+  private readonly heroMotion = { vx: 0, vy: 0, airborne: false };
+  /** Where his sprite will be over a pop-up's first POPUP_MIN_FRAMES frames at that (`heroSweep`), world px. */
+  private readonly heroAhead = { x: 0, y: 0, w: 0, h: 0 };
+  /** The view across, world px, for the pop-ups: they keep inside its side edges. */
+  private readonly viewSpan = { x: 0, w: 0 };
   private readonly poofs: Poof[] = [];
   private readonly flashes: Flash[] = [];
   private readonly reducedMotion: boolean;
@@ -231,7 +244,8 @@ export class Effects implements EffectsApi {
   /**
    * Test hook only: particles alive, how strong the screen flash and the fade are as drawn now (0 = none), the
    * score pop-ups on screen, how far the highest-risen of them is drawn above where it was first drawn, px (0 under
-   * reduced motion), the top of the highest one in view px, each one's box in view px (its 1 px shadow included) with
+   * reduced motion), the top of the highest one in view px, each one's box in view px (as `PopupBoard` places it: the
+   * text's width and POPUP_H rows, its 1 px shadow's row included but not the shadow's extra column on the right) with
    * an id that stays while it shows, and which way the airlock pointer points (null: hidden).
    */
   shown(): {
@@ -478,7 +492,11 @@ export class Effects implements EffectsApi {
       box.y = hero.y - (this.heroBurning ? FUELBAR_RISE : 0);
       box.h = TILE_SIZE + (this.heroBurning ? FUELBAR_RISE : 0);
     }
-    this.board.place(this.camY, this.toastUp || this.cogNow, hero?.visible === true ? box : null);
+    const shown = hero?.visible === true ? box : null;
+    const ahead = shown && this.reducedMotion ? heroSweep(shown, this.heroMotion, HERO_FALL, POPUP_MIN_FRAMES, POPUP_HEAD_PX, this.heroAhead) : null;
+    this.viewSpan.x = this.camX;
+    this.viewSpan.w = this.viewW;
+    this.board.place(this.camY, this.toastUp || this.cogNow, shown, ahead, this.viewSpan);
     this.board.slots.forEach((p, i) => {
       const text = this.popupTexts[i];
       if (p.age < POPUP_FRAMES) text?.setPosition(p.drawX, p.drawY);
@@ -543,6 +561,9 @@ export class Effects implements EffectsApi {
     // The hero's sprite, and the fuel bar over it while he thrusts: pop-ups keep off both (FUELBAR_RISE, WorldView), as
     // drawn on each frame, whenever it is drawn (`placePopups`).
     this.heroBurning = playing && p.thrusting;
+    this.heroMotion.vx = playing ? p.vx / (1 << SUB_SHIFT) : 0;
+    this.heroMotion.vy = playing ? p.vy / (1 << SUB_SHIFT) : 0;
+    this.heroMotion.airborne = playing && !p.onGround;
     const feet = toPx(p.y + phys.heroH);
     this.fall.observe(playing, p.onGround, feet);
     this.embers(run.tick);

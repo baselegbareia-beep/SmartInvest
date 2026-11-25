@@ -16,7 +16,7 @@ import { cameraTarget, frameShift, levelSize, padReach, snapCamera, stepCamera }
 import type { CameraState, PadReach } from './camera';
 import { chooseView, cssPerArtPx } from './chooseView';
 import { NO_COUNTS, addCounts, measureRoute, shippedCamera, shippedPopups } from './routeMeasure';
-import type { CameraUnderTest, RouteCounts, Sighting, WatchWindow } from './routeMeasure';
+import type { CameraUnderTest, PopupsUnderTest, RouteCounts, Sighting, WatchWindow } from './routeMeasure';
 
 /**
  * The ten campaign proofs (`e2e/scripts/level-NN.json`, the routes `e2e/levels.spec.ts` replays) seen through
@@ -215,7 +215,7 @@ describe('the ten proofs through the shipped camera and pad: nothing a take-off 
  *
  * The ceilings are the numbers of this build (25 November 2026, after the second re-check's fixes); the numbers before
  * them, on the camera and pop-ups of commit 3c1db1b with the same levels, are in the comments (thing-ticks, ticks or
- * frames). Measured on the live tuning and levels, as tests/levelScripts.test.ts reads the scripts: a change to the
+ * frames; popupAway and popupFar were first counted in the final round and have none). Measured on the live tuning and levels, as tests/levelScripts.test.ts reads the scripts: a change to the
  * camera, view or touch numbers, the pad's layout or a level can move them. Lower is better everywhere; when a change
  * lowers one, lower its ceiling here.
  */
@@ -233,33 +233,44 @@ describe('the route watch, counted: nothing worse than this build on any window,
     { name: '568 x 232 @2 (a tab)', w: 568, h: 232, dpr: 2 },
     { name: '1280 x 720 @1', w: 1280, h: 720, dpr: 1 },
   ];
-  type Ceiling = Pick<RouteCounts, 'stripThings' | 'stripThingsNoCrystal' | 'ahead6' | 'ahead4' | 'risingTight' | 'beyondBottom' | 'beyondSide' | 'hiddenNear' | 'popupJumps'>;
+  type Ceiling = Pick<
+    RouteCounts,
+    'stripThings' | 'stripThingsNoCrystal' | 'ahead6' | 'ahead4' | 'risingTight' | 'beyondBottom' | 'beyondSide' | 'hiddenNear' | 'popupJumps' | 'popupAway' | 'popupFar'
+  >;
   // (a) things at least half under the top bar's strip (and without the crystals); (b) things 0-6 and 0-4 tiles ahead
   // under a drawn button; (d) rising ticks with less than a tile clear above his head; (e) ticks showing what lies
   // below the level or beyond a side wall; (g) the cog, a pack, the blaster or the open airlock near him, not clearly
-  // seen; and frames on which a pop-up moved 3 px or more (a step aside from a hero who would run into it).
+  // seen; frames on which a pop-up moved 3 px or more (a step aside from a hero who would run into it: 441 of the
+  // 450; on 9 a pop-up moved below the cog's toast band as it came up, or was pushed down by an older one); and pop-ups
+  // first drawn more than 16 px (32 px) from their own place. The last two count what fewer steps would cost: placing
+  // every pop-up off the hero's way from the start, as under reduced motion, took popupJumps from 450 to 136 over the ten
+  // windows, but popupAway from 220 to 326 and popupFar from 10 to 26; looking only 8 frames ahead, without the half tile
+  // over his head, gave 191, 210 and 26 (final round; docs/ART-AND-SOUND.md section 13). Which a player minds more, a
+  // step or a pop-up away from what scored, is the owner's call at the playtest: neither changes without a ceiling here.
   const CEILING: Record<string, Ceiling> = {
     // before: 1866, 715, 571, 143, 870, 5142, 3695, 256, 402
-    '568 x 320 @2 touch': { stripThings: 1852, stripThingsNoCrystal: 701, ahead6: 571, ahead4: 143, risingTight: 868, beyondBottom: 5142, beyondSide: 3695, hiddenNear: 256, popupJumps: 45 },
+    '568 x 320 @2 touch': { stripThings: 1852, stripThingsNoCrystal: 701, ahead6: 571, ahead4: 143, risingTight: 868, beyondBottom: 5142, beyondSide: 3695, hiddenNear: 256, popupJumps: 45, popupAway: 23, popupFar: 1 },
     // before: 2813, 717, 0, 0, 587, 0, 0, 241, 405
-    '568 x 320 @2 keys': { stripThings: 2813, stripThingsNoCrystal: 717, ahead6: 0, ahead4: 0, risingTight: 587, beyondBottom: 0, beyondSide: 0, hiddenNear: 241, popupJumps: 46 },
+    '568 x 320 @2 keys': { stripThings: 2813, stripThingsNoCrystal: 717, ahead6: 0, ahead4: 0, risingTight: 587, beyondBottom: 0, beyondSide: 0, hiddenNear: 241, popupJumps: 46, popupAway: 22, popupFar: 1 },
     // before: 2414, 738, 34, 0, 565, 5324, 4863, 204, 404
-    '844 x 390 @3 touch': { stripThings: 2330, stripThingsNoCrystal: 670, ahead6: 34, ahead4: 0, risingTight: 558, beyondBottom: 5324, beyondSide: 4863, hiddenNear: 204, popupJumps: 45 },
+    '844 x 390 @3 touch': { stripThings: 2330, stripThingsNoCrystal: 670, ahead6: 34, ahead4: 0, risingTight: 558, beyondBottom: 5324, beyondSide: 4863, hiddenNear: 204, popupJumps: 45, popupAway: 22, popupFar: 1 },
     // before: 1776, 838, 0, 0, 454, 0, 0, 160, 406
-    '844 x 390 @3 keys': { stripThings: 1776, stripThingsNoCrystal: 838, ahead6: 0, ahead4: 0, risingTight: 452, beyondBottom: 0, beyondSide: 0, hiddenNear: 160, popupJumps: 46 },
+    '844 x 390 @3 keys': { stripThings: 1776, stripThingsNoCrystal: 838, ahead6: 0, ahead4: 0, risingTight: 452, beyondBottom: 0, beyondSide: 0, hiddenNear: 160, popupJumps: 46, popupAway: 22, popupFar: 1 },
     // before: 1728, 690, 74, 3, 864, 5107, 4346, 213, 403
-    '740 x 360 @4 touch': { stripThings: 1694, stripThingsNoCrystal: 656, ahead6: 74, ahead4: 3, risingTight: 860, beyondBottom: 5055, beyondSide: 4346, hiddenNear: 213, popupJumps: 45 },
+    '740 x 360 @4 touch': { stripThings: 1694, stripThingsNoCrystal: 656, ahead6: 74, ahead4: 3, risingTight: 860, beyondBottom: 5055, beyondSide: 4346, hiddenNear: 213, popupJumps: 45, popupAway: 23, popupFar: 1 },
     // before: 3112, 740, 0, 0, 587, 0, 0, 215, 405
-    '740 x 360 @4 keys': { stripThings: 3112, stripThingsNoCrystal: 740, ahead6: 0, ahead4: 0, risingTight: 587, beyondBottom: 0, beyondSide: 0, hiddenNear: 215, popupJumps: 46 },
+    '740 x 360 @4 keys': { stripThings: 3112, stripThingsNoCrystal: 740, ahead6: 0, ahead4: 0, risingTight: 587, beyondBottom: 0, beyondSide: 0, hiddenNear: 215, popupJumps: 46, popupAway: 22, popupFar: 1 },
     // before: 2438, 537, 152, 18, 96, 7208, 6816, 46, 406
-    '568 x 232 @2 (a tab) touch': { stripThings: 2383, stripThingsNoCrystal: 537, ahead6: 152, ahead4: 18, risingTight: 96, beyondBottom: 7208, beyondSide: 6816, hiddenNear: 46, popupJumps: 44 },
+    '568 x 232 @2 (a tab) touch': { stripThings: 2383, stripThingsNoCrystal: 537, ahead6: 152, ahead4: 18, risingTight: 96, beyondBottom: 7208, beyondSide: 6816, hiddenNear: 46, popupJumps: 44, popupAway: 22, popupFar: 1 },
     // before: 2302, 266, 0, 0, 96, 0, 0, 2, 410
-    '568 x 232 @2 (a tab) keys': { stripThings: 2302, stripThingsNoCrystal: 266, ahead6: 0, ahead4: 0, risingTight: 96, beyondBottom: 0, beyondSide: 0, hiddenNear: 2, popupJumps: 43 },
+    '568 x 232 @2 (a tab) keys': { stripThings: 2302, stripThingsNoCrystal: 266, ahead6: 0, ahead4: 0, risingTight: 96, beyondBottom: 0, beyondSide: 0, hiddenNear: 2, popupJumps: 43, popupAway: 21, popupFar: 1 },
     // before: 3009, 1175, 2, 0, 370, 5454, 4236, 167, 410
-    '1280 x 720 @1 touch': { stripThings: 3009, stripThingsNoCrystal: 1175, ahead6: 2, ahead4: 0, risingTight: 370, beyondBottom: 5454, beyondSide: 4236, hiddenNear: 167, popupJumps: 45 },
+    '1280 x 720 @1 touch': { stripThings: 3009, stripThingsNoCrystal: 1175, ahead6: 2, ahead4: 0, risingTight: 370, beyondBottom: 5454, beyondSide: 4236, hiddenNear: 167, popupJumps: 45, popupAway: 22, popupFar: 1 },
     // before: 2384, 1344, 0, 0, 327, 0, 0, 129, 414
-    '1280 x 720 @1 keys': { stripThings: 2384, stripThingsNoCrystal: 1344, ahead6: 0, ahead4: 0, risingTight: 327, beyondBottom: 0, beyondSide: 0, hiddenNear: 129, popupJumps: 45 },
+    '1280 x 720 @1 keys': { stripThings: 2384, stripThingsNoCrystal: 1344, ahead6: 0, ahead4: 0, risingTight: 327, beyondBottom: 0, beyondSide: 0, hiddenNear: 129, popupJumps: 45, popupAway: 21, popupFar: 1 },
   };
+  /** The pop-up counts that must be 0: on another, on the hero, on the bar, past a side, cut short, flipping round him. */
+  const NEVER_POPUP: ReadonlySet<keyof RouteCounts> = new Set(['popupPairs', 'popupHero', 'popupBar', 'popupSide', 'popupShort', 'popupFlips']);
   const windows: WatchWindow[] = phones.flatMap((p) => [
     { ...p, name: `${p.name} touch`, touch: true },
     { ...p, name: `${p.name} keys`, touch: false },
@@ -272,7 +283,7 @@ describe('the route watch, counted: nothing worse than this build on any window,
     for (const r of routes) {
       const list: Sighting[] = [];
       total = addCounts(total, measureRoute(r.level, r.script, PHYS, TUNING, w, camera, shippedPopups(), list));
-      seen.push(...list.filter((s) => s.what === 'heroStrip' || s.what === 'heroButton' || (s.what.startsWith('popup') && s.what !== 'popupJumps')).map((s) => ({ ...s, thing: `${r.id}: ${s.thing}` })));
+      seen.push(...list.filter((s) => s.what === 'heroStrip' || s.what === 'heroButton' || NEVER_POPUP.has(s.what)).map((s) => ({ ...s, thing: `${r.id}: ${s.thing}` })));
     }
     expect(total.ticks, 'the routes were played').toBeGreaterThan(10_000);
     // (c) and (f): never; nor a pop-up that flips round the hero (it hopped round him, '+50' on level 5).
@@ -335,5 +346,76 @@ describe('the route watch, counted: nothing worse than this build on any window,
     expect(standing, "standing ticks weighed").toBeGreaterThan(10_000);
     expect(wrong).toEqual([]);
     expect(wouldDiffer, 'standing ticks on which the dead zone\'s left edge would have framed him otherwise').toBeGreaterThan(0);
-  });
+    // All 10 windows and 12 routes: 2 to 3 s on a lightly loaded machine, 11 to 13 s beside eight busy loops (vitest's 5 s ran out).
+  }, 60_000);
+
+  // Under reduced motion (shippedPopups(true)): frames on which a pop-up moved 3 px or more on screen, nearly all a step
+  // out of the hero's way while it has shown fewer than POPUP_MIN_FRAMES frames (85 of 91: 8 with the pad and 9 with
+  // keys on each window, of 11 to 32 px, each in one frame); the other 6, on level 8 on the 568, 844 and 740 windows, a
+  // pop-up moved 5 to 11 px down below the cog's toast band as the toast comes up. Before, none moved, but 30 of the
+  // 175 on the 568 x 320 phone (touch) were taken down after one or two frames, 48 after fewer than 10. The board moves one each time he comes onto it in that time (a random walk that
+  // turns and jumps often moves a few twice); on the proofs none moves twice, which the docs say and this holds.
+  const STILL_STEPS: Record<string, number> = {
+    '568 x 320 @2 touch': 9,
+    '568 x 320 @2 keys': 10,
+    '844 x 390 @3 touch': 9,
+    '844 x 390 @3 keys': 10,
+    '740 x 360 @4 touch': 9,
+    '740 x 360 @4 keys': 10,
+    '568 x 232 @2 (a tab) touch': 8,
+    '568 x 232 @2 (a tab) keys': 9,
+    '1280 x 720 @1 touch': 8,
+    '1280 x 720 @1 keys': 9,
+  };
+
+  /** shippedPopups(true), and how many frames each pop-up moved 3 px or more on, in the world or on screen, whichever is less (as popupJumps). */
+  function countingSteps(): { popups: PopupsUnderTest; steps: Map<number, number> } {
+    const inner = shippedPopups(true);
+    const steps = new Map<number, number>();
+    let last = new Map<number, { x: number; y: number; camY: number }>();
+    return {
+      steps,
+      popups: {
+        clear: () => {
+          inner.clear();
+          last = new Map();
+        },
+        spawn: (textW, x, y, camY, toastUp) => {
+          inner.spawn(textW, x, y, camY, toastUp);
+        },
+        advance: (frames) => {
+          inner.advance(frames);
+        },
+        place: (camY, toastUp, hero, ahead, view) => {
+          const shown = inner.place(camY, toastUp, hero, ahead, view);
+          const now = new Map<number, { x: number; y: number; camY: number }>();
+          for (const p of shown) {
+            if (p.id === undefined) continue;
+            const q = last.get(p.id);
+            const across = q ? Math.abs(p.x - q.x) : 0;
+            if (q && across + Math.min(Math.abs(p.y - q.y), Math.abs(p.y - camY - (q.y - q.camY))) >= 3) steps.set(p.id, (steps.get(p.id) ?? 0) + 1);
+            now.set(p.id, { x: p.x, y: p.y, camY });
+          }
+          last = now;
+          return shown;
+        },
+      },
+    };
+  }
+
+  it.each(windows)('under reduced motion, $name: every pop-up shows POPUP_MIN_FRAMES frames or more, none on another, on him, on the bar or past a side, few move and none twice', (w) => {
+    let total: RouteCounts = { ...NO_COUNTS };
+    const seen: Sighting[] = [];
+    const twice: string[] = [];
+    for (const r of routes) {
+      const list: Sighting[] = [];
+      const { popups, steps } = countingSteps();
+      total = addCounts(total, measureRoute(r.level, r.script, PHYS, TUNING, w, camera, popups, list));
+      seen.push(...list.filter((s) => NEVER_POPUP.has(s.what)).map((s) => ({ ...s, thing: `${r.id}: ${s.thing}` })));
+      for (const [id, n] of steps) if (n > 1) twice.push(`${r.id}: pop-up #${id} moved on ${n} frames`);
+    }
+    expect(seen.slice(0, 5), 'pop-ups cut short, on each other, on him, on the bar or past a side').toEqual([]);
+    expect(total.popupJumps, `${w.name}: frames with a step`).toBeLessThanOrEqual(STILL_STEPS[w.name] ?? 0);
+    expect(twice, 'pop-ups that moved more than once').toEqual([]);
+  }, 30_000);
 });

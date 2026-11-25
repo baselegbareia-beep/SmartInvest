@@ -12,7 +12,8 @@ import { STRIP_H, TOAST_BAND_BOTTOM } from '../src/shell/hudModel.ts';
  * - at a desk, taking the blaster or the pack names the keys that use it (the touch pad shows FIRE and THRUST
  *   buttons, a keyboard showed nothing: X and Z were named nowhere in the game);
  * - the toast never hides the hero: while he is drawn under its band (level 10's cog is taken in flight, high in the
- *   view) the band and its words are see-through.
+ *   view) the band is see-through, and so is each word drawn over him; the other words stay solid, so the toast still
+ *   reads (faded all together, its words were faint for 64 of its 90 frames here).
  * Played through the test hook's replays of the levels' proofs (e2e/scripts), which press nothing on the page.
  */
 
@@ -100,7 +101,7 @@ test.describe('on a touch screen', () => {
 test.describe('the smallest phone, 568 x 320 at 2', () => {
   test.use({ viewport: { width: 568, height: 320 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true });
 
-  test("level 10: while the hero is drawn under the cog toast's band, the band and its words are see-through (they hid him)", async ({ page }) => {
+  test("level 10: while the hero is drawn under the cog toast's band, the band and the words over him are see-through (they hid him); the rest stay solid", async ({ page }) => {
     test.setTimeout(120_000);
     const problems = await open(page, '&touch=1');
     const script = readScript('level-10');
@@ -108,7 +109,8 @@ test.describe('the smallest phone, 568 x 320 at 2', () => {
       toast: string | null;
       hero: { x: number; y: number; w: number; h: number } | null;
       band: { x: number; y: number; w: number; h: number; alpha: number } | null;
-      words: number | null;
+      /** The toast's words as drawn: one text per word. */
+      words: { x: number; y: number; w: number; h: number; alpha: number }[];
     };
     await page.evaluate(() => {
       const w = window as Window & { __frames?: Frame[]; __watch?: boolean };
@@ -122,12 +124,12 @@ test.describe('the smallest phone, 568 x 320 at 2', () => {
           const drawn = (hud?.drawn ?? []) as { kind: string; x: number; y: number; w: number; h: number; alpha?: number }[];
           // The band: the dark rectangle that hangs from the strip (the strip itself spans the view's width).
           const band = drawn.find((d) => d.kind === 'Rectangle' && d.y >= 13 && d.y <= 15 && d.h >= 10 && d.h <= 13) ?? null;
-          const words = drawn.find((d) => d.kind === 'BitmapText' && d.y >= 15 && d.y <= 17 && band !== null && d.x >= band.x && d.x + d.w <= band.x + band.w + 2) ?? null;
+          const words = drawn.filter((d) => d.kind === 'BitmapText' && d.y >= 15 && d.y <= 17 && band !== null && d.x >= band.x && d.x + d.w <= band.x + band.w + 2);
           w.__frames?.push({
             toast,
             hero: hook?.look()?.heroBox ?? null,
             band: band ? { x: band.x, y: band.y, w: band.w, h: band.h, alpha: band.alpha ?? 1 } : null,
-            words: words ? (words.alpha ?? 1) : null,
+            words: words.map((d) => ({ x: d.x, y: d.y, w: d.w, h: d.h, alpha: d.alpha ?? 1 })),
           });
         }
         if (w.__watch) requestAnimationFrame(loop);
@@ -146,17 +148,20 @@ test.describe('the smallest phone, 568 x 320 at 2', () => {
       expect(f.band?.y).toBe(STRIP_H);
       expect((f.band?.y ?? 0) + (f.band?.h ?? 0)).toBe(TOAST_BAND_BOTTOM);
     }
-    const meets = (f: Frame): boolean => {
-      const h = f.hero;
-      const b = f.band;
-      return h !== null && b !== null && h.x < b.x + b.w && b.x < h.x + h.w && h.y < b.y + b.h && b.y < h.y + h.h;
-    };
+    const meet = (h: Frame['hero'], b: { x: number; y: number; w: number; h: number } | null): boolean =>
+      h !== null && b !== null && h.x < b.x + b.w && b.x < h.x + h.w && h.y < b.y + b.h && b.y < h.y + h.h;
+    const meets = (f: Frame): boolean => meet(f.hero, f.band);
     const under = cog.filter(meets);
     const clear = cog.filter((f) => !meets(f));
     expect(under.length, 'frames with the hero under the band (the case of the finding)').toBeGreaterThan(10);
-    expect(under.filter((f) => (f.band?.alpha ?? 1) > 0.3 || (f.words ?? 1) > 0.4), 'frames that hide him').toEqual([]);
+    expect(cog.every((f) => f.words.length === 4), 'COG FOUND! AIRLOCK OPEN drawn as its four words').toBe(true);
+    // Nothing drawn solid over him: the band, and every word whose bounds (its letters' cells and their shadow) meet his box.
+    const hiding = under.filter((f) => (f.band?.alpha ?? 1) > 0.3 || f.words.some((w) => meet(f.hero, w) && w.alpha > 0.3));
+    expect(hiding.length, 'frames that hide him').toBe(0);
+    // The words clear of him stay solid: the toast reads on every frame (faded with the band, all four were faint on 64 of 90).
+    expect(cog.filter((f) => !f.words.some((w) => w.alpha >= 0.99)).length, 'frames with every word faint').toBe(0);
     // Away from him it is the toast as before: solid.
-    expect(clear.some((f) => (f.band?.alpha ?? 0) >= 0.99 && (f.words ?? 0) >= 0.99), 'a solid toast while he is clear').toBe(true);
+    expect(clear.some((f) => (f.band?.alpha ?? 0) >= 0.99 && f.words.every((w) => w.alpha >= 0.99)), 'a solid toast while he is clear').toBe(true);
     expect(problems).toEqual([]);
   });
 });

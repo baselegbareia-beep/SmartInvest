@@ -40,7 +40,8 @@ interface Held {
 /** The fields of `window.__E2E__` this file uses. */
 interface TouchHook {
   held(): Held;
-  state(): { tick: number; mode: string; phase: string; player: { x: number; vx: number } };
+  /** Null before the first level is played: the hook can be there before the Play scene has a session. */
+  state(): { tick: number; mode: string; phase: string; player: { x: number; vx: number } } | null;
   scenes(): string[];
   menu(): { label: string; x: number; y: number; w: number; h: number }[];
   freeze(on: boolean): void;
@@ -89,6 +90,7 @@ const state = (page: Page): Promise<{ tick: number; x: number }> =>
     const hook = (window as unknown as HookWindow).__E2E__;
     if (!hook) throw new Error('window.__E2E__ is missing');
     const now = hook.state();
+    if (!now) throw new Error('window.__E2E__.state() is null: no level is being played');
     return { tick: now.tick, x: now.player.x };
   });
 const playerX = async (page: Page): Promise<number> => (await state(page)).x;
@@ -119,7 +121,8 @@ async function openRoom(page: Page): Promise<{ cdp: CDPSession; problems: string
     problems.push(`page error: ${error.message}`);
   });
   await page.goto('./?level=test&touch=1&e2e=1');
-  await page.waitForFunction(() => (window as unknown as HookWindow).__E2E__ !== undefined);
+  // The hook can be there before the room is: wait for its session, not just for the hook.
+  await page.waitForFunction(() => ((window as unknown as HookWindow).__E2E__?.state() ?? null) !== null);
   await page.locator('.touchpad.is-visible').waitFor({ state: 'visible' });
   // The intro card may still be up. The core is stepped only once it is gone: wait for a tick,
   // so that a press made by a test is a press in the level and not the one that skips the card.
@@ -215,18 +218,20 @@ const scenes = (page: Page): Promise<string[]> =>
     return hook.scenes();
   });
 
-const phase = (page: Page): Promise<string> =>
+/** The run's phase, or null before the first level is played. */
+const phase = (page: Page): Promise<string | null> =>
   page.evaluate(() => {
     const hook = (window as unknown as HookWindow).__E2E__;
     if (!hook) throw new Error('window.__E2E__ is missing');
-    return hook.state().phase;
+    return hook.state()?.phase ?? null;
   });
 
-const mode = (page: Page): Promise<string> =>
+/** The Play scene's mode, or null before the first level is played. */
+const mode = (page: Page): Promise<string | null> =>
   page.evaluate(() => {
     const hook = (window as unknown as HookWindow).__E2E__;
     if (!hook) throw new Error('window.__E2E__ is missing');
-    return hook.state().mode;
+    return hook.state()?.mode ?? null;
   });
 
 /** The middle of a menu button on the canvas, by its words, in CSS px. */
@@ -286,7 +291,7 @@ test('a key press hides the pad; the next touch on a button brings it back AND p
   });
   // No ?touch=1: touch mode comes from the coarse pointer of this emulated phone, and a key press can end it.
   await page.goto('./?level=test&e2e=1');
-  await page.waitForFunction(() => (window as unknown as HookWindow).__E2E__?.state().mode === 'running');
+  await page.waitForFunction(() => (window as unknown as HookWindow).__E2E__?.state()?.mode === 'running');
   await page.locator('.touchpad.is-visible').waitFor({ state: 'visible' });
   const right = await centre(page, 'right', 0);
   const cdp = await page.context().newCDPSession(page);
@@ -316,7 +321,7 @@ test('the hero standing by a side wall is drawn clear of the pad buttons (the vi
   });
   // The movement room starts its hero by the left wall, as several campaign levels do.
   await page.goto('./?level=test&touch=1&e2e=1');
-  await page.waitForFunction(() => (window as unknown as HookWindow).__E2E__?.state().mode === 'running');
+  await page.waitForFunction(() => (window as unknown as HookWindow).__E2E__?.state()?.mode === 'running');
   await page.locator('.touchpad.is-visible').waitFor({ state: 'visible' });
   const right = await page.locator('.touchpad [data-btn="right"]').boundingBox();
   const hero = await page.evaluate(() => (window as unknown as HookWindow).__E2E__?.heroOnPage() ?? null);
@@ -333,7 +338,7 @@ test('the debug room is won with real touches on the pad, FIRE and THRUST includ
     problems.push(`page error: ${error.message}`);
   });
   await page.goto('./?level=debug&touch=1&e2e=1');
-  await page.waitForFunction(() => (window as unknown as HookWindow).__E2E__?.state().mode === 'running');
+  await page.waitForFunction(() => (window as unknown as HookWindow).__E2E__?.state()?.mode === 'running');
   const cdp = await page.context().newCDPSession(page);
 
   const BUTTONS = [['left', 1], ['right', 2], ['jump', 4], ['fire', 8], ['thrust', 16]] as const;
@@ -360,32 +365,38 @@ test('the debug room is won with real touches on the pad, FIRE and THRUST includ
   await page.evaluate(() => {
     (window as unknown as HookWindow).__E2E__?.pace(1);
   });
+  // The frozen game goes on and its next stop is armed in one call inside the page, as resumeUntil in rooms.spec.ts
+  // does: a stop armed by a second round trip can come after a one-tick run's tick on a busy machine.
+  const resumeUntil = (t: number): Promise<number | undefined> =>
+    page.evaluate((stop) => {
+      const hook = (window as unknown as HookWindow).__E2E__;
+      hook?.freeze(false);
+      return hook?.freezeAtTick(stop);
+    }, t);
   // The script starts on the tick the game is frozen at now.
   const base = (await page.evaluate(() => (window as unknown as HookWindow).__E2E__?.freezeAtTick(0))) ?? 0;
   let k = 0;
   let late = 0;
+  let at = base;
   const seen = new Set<string>();
-  for (const [bits, length] of script.runs) {
-    const at = await page.evaluate((t) => (window as unknown as HookWindow).__E2E__?.freezeAtTick(t), base + k);
+  for (const [i, [bits, length]] of script.runs.entries()) {
     if (at !== base + k) late += 1;
     await setPad(bits);
     for (const name of await lit(page)) seen.add(name);
-    await page.evaluate(() => {
-      (window as unknown as HookWindow).__E2E__?.freeze(false);
-    });
     k += length;
+    // After the last run the game stays frozen: no stop is armed past it (stateAt goes on from there).
+    if (i + 1 < script.runs.length) at = (await resumeUntil(base + k)) ?? -1;
   }
   // The hero enters the airlock on the tick Node finds, not one earlier: the state frozen on each of the two ticks.
   const stateAt = async (t: number): Promise<ReturnType<TouchHook['state']> | undefined> => {
-    await page.evaluate((at) => (window as unknown as HookWindow).__E2E__?.freezeAtTick(at), t);
-    const state = await page.evaluate(() => (window as unknown as HookWindow).__E2E__?.state());
-    await page.evaluate(() => {
-      (window as unknown as HookWindow).__E2E__?.freeze(false);
-    });
-    return state;
+    await resumeUntil(t);
+    return page.evaluate(() => (window as unknown as HookWindow).__E2E__?.state());
   };
   const before = await stateAt(base + script.winTick - 1);
   const end = await stateAt(base + script.winTick);
+  await page.evaluate(() => {
+    (window as unknown as HookWindow).__E2E__?.freeze(false);
+  });
   await setPad(0);
   await page.evaluate(() => {
     (window as unknown as HookWindow).__E2E__?.pace(null);
@@ -450,7 +461,7 @@ for (const phone of [
     test("level 4's airlock beside the east wall is clear of the pad at the ready gate, and so is the hero", async ({ page }) => {
       const door = cellOf('level-04.txt', 'D');
       await page.goto('./?level=level-04&touch=1&e2e=1');
-      await page.waitForFunction(() => (window as unknown as HookWindow).__E2E__?.state().mode === 'running');
+      await page.waitForFunction(() => (window as unknown as HookWindow).__E2E__?.state()?.mode === 'running');
       await page.locator('.touchpad.is-visible').waitFor({ state: 'visible' });
       expect(await phase(page)).toBe('ready');
       const at = await page.evaluate((d) => {
@@ -474,7 +485,9 @@ test.describe('the smallest phone, 568 x 320 at 2', () => {
     const script = JSON.parse(readFileSync(path.join(import.meta.dirname, 'scripts', 'debug.json'), 'utf8')) as InputScript & { winTick: number };
     const door = cellOf('debug.txt', 'D');
     await page.goto('./?level=test&touch=1&e2e=1');
-    await page.waitForFunction(() => (window as unknown as HookWindow).__E2E__ !== undefined);
+    // The hook can be there before Boot has started the room, and a replay started before that would be replaced by it:
+    // wait for the room's session, not just for the hook.
+    await page.waitForFunction(() => ((window as unknown as HookWindow).__E2E__?.state() ?? null) !== null);
     const seen: { tick: number; under: string[] }[] = [];
     // The last 40 ticks before the airlock: the hero is 4 tiles from it, then 3, 2, 1.
     for (const stopAt of [script.winTick - 40, script.winTick - 25, script.winTick - 10, script.winTick - 1]) {
@@ -496,9 +509,10 @@ test.describe('the smallest phone, 568 x 320 at 2', () => {
     const door = cellOf('level-04.txt', 'D');
     // No ?touch=1: touch mode comes from this emulated phone, and a key press ends it.
     await page.goto('./?level=level-04&e2e=1');
-    await page.waitForFunction(() => (window as unknown as HookWindow).__E2E__?.state().mode === 'running');
+    await page.waitForFunction(() => (window as unknown as HookWindow).__E2E__?.state()?.mode === 'running');
     await page.locator('.touchpad.is-visible').waitFor({ state: 'visible' });
-    const heroX = async (): Promise<number> => (await page.evaluate(() => (window as unknown as HookWindow).__E2E__?.state().player.x ?? 0)) / 256;
+    // From state(page), which throws on a null state: a level that is not there must not pass as a hero at x = 0.
+    const heroX = async (): Promise<number> => (await playerX(page)) / 256;
     /** Holds `key` until the hero's left edge has passed `px` (checked every frame in the page, which freezes the game there), then lets go. */
     const walk = async (key: string, px: number, west: boolean): Promise<void> => {
       await page.keyboard.down(key);
@@ -507,8 +521,9 @@ test.describe('the smallest phone, 568 x 320 at 2', () => {
           new Promise<void>((resolve) => {
             const check = (): void => {
               const hook = (window as unknown as HookWindow).__E2E__;
-              const x = (hook?.state().player.x ?? 0) / 256;
-              if (a.west ? x < a.px : x > a.px) {
+              const sub = hook?.state()?.player.x;
+              const x = sub === undefined ? undefined : sub / 256;
+              if (x !== undefined && (a.west ? x < a.px : x > a.px)) {
                 hook?.freeze(true);
                 resolve();
               } else requestAnimationFrame(check);
@@ -527,7 +542,7 @@ test.describe('the smallest phone, 568 x 320 at 2', () => {
     await walk('ArrowLeft', (door.col - 14) * 16, true);
     await expect(page.locator('.touchpad.is-visible')).toHaveCount(0);
     await walk('ArrowRight', (door.col - 3) * 16, false);
-    await expect.poll(async () => (await page.evaluate(() => (window as unknown as HookWindow).__E2E__?.state().player.vx ?? 1)) === 0).toBe(true);
+    await expect.poll(async () => (await page.evaluate(() => (window as unknown as HookWindow).__E2E__?.state()?.player.vx ?? 1)) === 0).toBe(true);
 
     // The world stands still for the touch: then the airlock lies in JUMP's column, as the view is still inside the
     // level. (Since the bottom row of buttons got a pass of its own, the floor he stands on, the airlock's too, is drawn
@@ -549,8 +564,7 @@ test.describe('the smallest phone, 568 x 320 at 2', () => {
     const jumpButton = (await drawnButtons(page)).find((b) => b.id === 'jump');
     if (!jumpButton) throw new Error('no JUMP');
     expect(before.x + before.w, "the airlock reaches into JUMP's column when the pad comes back").toBeGreaterThan(jumpButton.x + 0.5);
-    const tickNow = (): Promise<number> => page.evaluate(() => (window as unknown as HookWindow).__E2E__?.state().tick ?? 0);
-    const from = await tickNow();
+    const from = await tick(page);
     await page.evaluate(() => {
       (window as unknown as HookWindow).__E2E__?.freeze(false);
     });
@@ -563,7 +577,7 @@ test.describe('the smallest phone, 568 x 320 at 2', () => {
         return at ? at.x + at.w <= jumpButton.x + 0.5 && under(at, await drawnButtons(page)).length === 0 : false;
       }, { timeout: 3000 })
       .toBe(true);
-    expect((await tickNow()) - from, 'ticks from the touch until the airlock is clear').toBeLessThanOrEqual(45);
+    expect((await tick(page)) - from, 'ticks from the touch until the airlock is clear').toBeLessThanOrEqual(45);
     expect(await heroX(), 'he did not move').toBe(standing);
     expect(standing, 'two or three tiles from the airlock').toBeLessThan((door.col - 1) * 16);
   });

@@ -13,7 +13,7 @@
  *   levelClear(bonus)  the `LEVEL CLEAR +200` banner and its tally    (EventRouter, levelCompleted)
  *   lifeLost(lives)    the lost life's icon blinks five times         (EventRouter, respawned)
  *   heroAt(box)        where the hero was drawn this frame (Play scene): while he is under the toast's band
- *                      the band and its words are see-through (hudModel `ToastFade`)
+ *                      the band is see-through, and so is each word drawn over him (hudModel `ToastFade`)
  * Its own `update` only runs the clocks of those, in whole 60 Hz frames, and none of them while the
  * Play scene is paused (`HudData.held`, a FrameClock): under the pause menu the toast, the life blink,
  * the score count and the intro shutter stand still with the world and go on after RESUME.
@@ -50,8 +50,6 @@ import {
   STRIP_ALPHA,
   STRIP_H,
   TOAST_BAND_BOTTOM,
-  TOAST_PAD,
-  TOAST_Y,
   advanceBlink,
   cornerClearPx,
   countScore,
@@ -61,6 +59,7 @@ import {
   pauseReservePx,
   pipLit,
   toastBand,
+  toastWords,
   topBarLayout,
 } from '../hudModel';
 import type { HudModel, IntroCard, LifeBlink, Rect } from '../hudModel';
@@ -145,7 +144,13 @@ export class HudScene extends Phaser.Scene implements HudEvents {
   private blaster: Phaser.GameObjects.Image | null = null;
   private thruster: Phaser.GameObjects.Image | null = null;
   private pips: Phaser.GameObjects.Image[] = [];
-  private toast: Phaser.GameObjects.BitmapText | null = null;
+  /** The toast's words now (`COG FOUND! AIRLOCK OPEN`, a key hint), or null while none shows. */
+  private toastText: string | null = null;
+  private toastColour: number = COLOR.gold;
+  /** One text per word of the toast (hudModel toastWords), so that a word over the hero fades on its own; made as needed. */
+  private toastWords: Phaser.GameObjects.BitmapText[] = [];
+  /** The words' boxes as placed (view px), for the hero's fade; empty while no toast shows. */
+  private wordBoxes: Rect[] = [];
   /** The dark band behind the toast, hanging from the strip (hudModel TOAST_BAND_BOTTOM). */
   private toastBand: Phaser.GameObjects.Rectangle | null = null;
   private bannerPlate: Plate | null = null;
@@ -208,6 +213,9 @@ export class HudScene extends Phaser.Scene implements HudEvents {
     this.pendingHint = null;
     this.hinted = new Set();
     this.band = null;
+    this.toastText = null;
+    this.toastWords = [];
+    this.wordBoxes = [];
     this.fade.reset();
     this.blink = NO_BLINK;
     this.livesShown = [];
@@ -232,7 +240,6 @@ export class HudScene extends Phaser.Scene implements HudEvents {
     this.thruster = icon('hud_thruster_0').setVisible(false);
     this.pips = Array.from({ length: FUEL_PIPS }, () => icon('hud_pip_1').setVisible(false));
     this.pipsShown = this.pips.map(() => null);
-    this.toast = text(TEXT.cogFound, COLOR.gold, DEPTH.toast).setVisible(false);
     this.toastBand = this.add.rectangle(0, STRIP_H, 1, TOAST_BAND_BOTTOM - STRIP_H, COLOR.void, STRIP_ALPHA).setOrigin(0, 0).setDepth(DEPTH.strip).setVisible(false);
     this.bannerPlate = addPlate(this, DEPTH.banner);
     this.bannerPlate.setVisible(false);
@@ -271,14 +278,14 @@ export class HudScene extends Phaser.Scene implements HudEvents {
 
   /** The `COG FOUND! AIRLOCK OPEN` toast is up (the Play scene keeps score pop-ups below its band meanwhile). */
   get toastShowing(): boolean {
-    return this.toast?.visible === true;
+    return this.toastText !== null;
   }
 
   /** What is on screen now, for the test hook. */
   shown(): HudShown {
     return {
       intro: this.introTexts.map((t) => t.text),
-      toast: this.toast?.visible === true ? this.toast.text : null,
+      toast: this.toastText,
       banner: this.bannerShown && this.bannerHeading ? this.bannerHeading.text : null,
       held: this.held(),
       drawn: this.children.list.flatMap((obj) => {
@@ -292,7 +299,7 @@ export class HudScene extends Phaser.Scene implements HudEvents {
 
   cogFound(): void {
     // A key hint showing now comes back after the cog's toast: the cog is the level's news.
-    const hint = this.toast?.visible === true && this.toast.text !== TEXT.cogFound ? this.toast.text : null;
+    const hint = this.toastText !== null && this.toastText !== TEXT.cogFound ? this.toastText : null;
     this.startToast(TEXT.cogFound, COLOR.gold);
     if (hint !== null) this.pendingHint = hint;
   }
@@ -302,20 +309,20 @@ export class HudScene extends Phaser.Scene implements HudEvents {
     if (app.classList.contains('touch') || this.hinted.has(kind)) return;
     this.hinted.add(kind);
     const hint = kind === 'blaster' ? TEXT.fireHint : TEXT.thrustHint;
-    if (this.toast?.visible === true) this.pendingHint = hint;
+    if (this.toastText !== null) this.pendingHint = hint;
     else this.startToast(hint, COLOR.white);
   }
 
   /** Where the hero was drawn this frame (view px; null: not drawn), from the Play scene after it drew him. */
   heroAt(hero: Rect | null): void {
-    this.fade.hero(hero, this.band);
+    this.fade.hero(hero, this.band, this.wordBoxes);
     this.drawFade();
   }
 
   levelClear(bonus: number): void {
     this.toastLeft = 0;
     this.pendingHint = null;
-    this.showToast(false);
+    this.hideToast();
     this.bannerBonus = bonus;
     this.bannerShown = true;
     this.placeBanner();
@@ -333,43 +340,61 @@ export class HudScene extends Phaser.Scene implements HudEvents {
     this.toastLeft = 0;
     this.pendingHint = null;
     this.blink = NO_BLINK;
-    this.showToast(false);
+    this.hideToast();
     this.clearBanner();
   }
 
   /** Puts `text` in the toast's place, in `colour`, for TUNING.effects.toastFrames. */
   private startToast(text: string, colour: number): void {
     this.toastLeft = TUNING.effects.toastFrames;
-    this.toast?.setText(text).setTint(colour);
+    this.toastText = text;
+    this.toastColour = colour;
+    this.fade.resetWords(); // other words now: none has met the hero yet
     this.placeToast();
-    this.showToast(true);
+    this.toastBand?.setVisible(true);
+    this.drawFade();
   }
 
-  /** The toast and the dark band behind it come and go together. */
-  private showToast(on: boolean): void {
-    this.toast?.setVisible(on);
-    this.toastBand?.setVisible(on);
-    if (!on) {
-      this.band = null;
-      this.fade.reset();
-      this.drawFade();
-    }
+  /** Takes the toast down: its words and the dark band behind it go together. */
+  private hideToast(): void {
+    this.toastText = null;
+    this.placeToast();
+    this.toastBand?.setVisible(false);
+    this.fade.reset();
+    this.drawFade();
   }
 
-  /** Centres the toast's words and band in the view (its words change: the cog's toast, a key hint). */
+  /** Centres the toast's words and band in the view (its words change: the cog's toast, a key hint); one text per word. */
   private placeToast(): void {
-    if (!this.toast) return;
-    const band = toastBand(this.scale.width, textPx(this.toast.text));
-    this.toast.setPosition(band.x + TOAST_PAD, TOAST_Y);
+    if (this.toastText === null) {
+      for (const word of this.toastWords) word.setVisible(false);
+      this.band = null;
+      this.wordBoxes = [];
+      return;
+    }
+    const band = toastBand(this.scale.width, textPx(this.toastText));
+    const words = toastWords(this.toastText, band);
+    while (this.toastWords.length < words.length) {
+      this.toastWords.push(this.add.bitmapText(0, 0, FONT_KEY, '', FONT_SIZE).setDropShadow(1, 1, COLOR.void, 1).setDepth(DEPTH.toast));
+    }
+    this.toastWords.forEach((text, i) => {
+      const word = words[i];
+      if (word) text.setText(word.text).setTint(this.toastColour).setPosition(word.box.x, word.box.y);
+      text.setVisible(word !== undefined);
+    });
     this.toastBand?.setPosition(band.x, band.y).setSize(band.w, band.h);
-    this.band = this.toast.visible || this.toastLeft > 0 ? band : null;
+    this.band = band;
+    this.wordBoxes = words.map((word) => word.box);
   }
 
-  /** The band and its words see-through while the hero is under them (ToastFade). */
+  /** The band see-through while the hero is under it, and each word while he is drawn over it (ToastFade). */
   private drawFade(): void {
     const alpha = this.fade.alpha;
-    if (this.toast && this.toast.alpha !== alpha) this.toast.setAlpha(alpha);
     if (this.toastBand && this.toastBand.alpha !== alpha) this.toastBand.setAlpha(alpha);
+    this.toastWords.forEach((text, i) => {
+      const a = this.fade.wordAlpha(i);
+      if (text.alpha !== a) text.setAlpha(a);
+    });
   }
 
   // -------------------------------------------------------------------------------------
@@ -382,7 +407,7 @@ export class HudScene extends Phaser.Scene implements HudEvents {
     if (this.toastLeft > 0) {
       this.toastLeft = Math.max(0, this.toastLeft - whole);
       if (this.toastLeft === 0) {
-        this.showToast(false);
+        this.hideToast();
         const hint = this.pendingHint;
         this.pendingHint = null;
         if (hint !== null) this.startToast(hint, COLOR.white);

@@ -17,10 +17,13 @@
  *   tile of undimmed view between his sprite's top and the strip.
  * - (e) `beyondBottom`, `beyondSide`: ticks on which the view shows what lies below the level's bottom row, or
  *   beyond a side wall, where staying inside the level (or centring a level smaller than the view) would not.
- * - (f) `popupPairs`, `popupHero`, `popupBar`: frames on which two score pop-ups overlap, a pop-up overlaps the
- *   hero's sprite, or a pop-up reaches into the strip or (while it shows) the cog's toast band. `popupJumps`,
- *   `popupFlips`: frames on which a pop-up moved 3 px or more, or flipped round the hero (10 px or more one way right
- *   after 10 px or more the other), followed by the id the pop-ups give (`PlacedPopup`).
+ * - (f) `popupPairs`, `popupHero`, `popupBar`, `popupSide`: frames on which two score pop-ups overlap, a pop-up overlaps
+ *   the hero's sprite, a pop-up reaches into the strip or (while it shows) the cog's toast band, or past the view's left
+ *   or right edge. `popupJumps`, `popupFlips`: frames on which a pop-up moved 3 px or more, or flipped round the hero
+ *   (10 px or more one way right after 10 px or more the other), followed by the id the pop-ups give (`PlacedPopup`).
+ *   `popupShort`: pop-ups gone after fewer than POPUP_MIN_FRAMES frames shown (a level start or a respawn aside).
+ *   `popupAway`, `popupFar`: pop-ups first drawn more than POPUP_AWAY_PX (POPUP_FAR_PX) from their own place (where
+ *   they appeared, risen by their age; across plus up or down), the cost of placing one off the hero's way from the start.
  * - (g) `hiddenNear`: (tick, thing) pairs for the cog (until taken), a pack or blaster (until taken) and the airlock
  *   (once open) within 8 tiles across and 4 tiles up or down of the hero that are not clearly seen: off the view,
  *   at least half under the strip, or more than a quarter under a button.
@@ -38,7 +41,8 @@ import type { ControlId, Rect } from '../input/touchLayout';
 import { cameraTarget, levelSize, padReach, snapCamera, stepCamera } from './camera';
 import type { CameraState, PadButtonsOnView, PadReach, Size } from './camera';
 import { chooseView, cssPerArtPx } from './chooseView';
-import { POPUP_H, PopupBoard, popupAnchor } from './fxModel';
+import { POPUP_H, POPUP_HEAD_PX, POPUP_MIN_FRAMES, PopupBoard, heroSweep, popupAnchor } from './fxModel';
+import type { ViewSpan } from './fxModel';
 import { STRIP_H, TOAST_BAND_BOTTOM, TOAST_PAD } from './hudModel';
 import { heroDrawX, heroDrawY } from './viewModel';
 
@@ -57,18 +61,30 @@ export interface CameraUnderTest<S extends { readonly scrollX: number; readonly 
   step(prev: S, game: GameState, view: Size, level: Size, pad: Readonly<PadReach>, buttons: PadButtonsOnView | null): S;
 }
 
-/** A pop-up as placed: world px, and (to follow it from frame to frame) an id that stays while it shows. */
+/**
+ * A pop-up as placed: world px, (to follow it from frame to frame) an id that stays while it shows, and its own place
+ * this frame (`ownX`, `ownY`: where it appeared, risen by its age, before any rule moved it).
+ */
 export interface PlacedPopup extends Rect {
   readonly id?: number;
+  readonly ownX?: number;
+  readonly ownY?: number;
 }
+
+/** `popupAway` and `popupFar`: a pop-up first drawn more than this far from its own place (px, across plus up or down). */
+export const POPUP_AWAY_PX = 16;
+export const POPUP_FAR_PX = 32;
 
 /** How score pop-ups are laid out: the shipped board (`PopupBoard`) or a prototype with the same members. */
 export interface PopupsUnderTest {
   clear(): void;
   spawn(textW: number, x: number, y: number, camY: number, toastUp: boolean): void;
   advance(frames: number): void;
-  /** The pop-ups shown now, world px, after placing them for the scroll, the toast and the hero's sprite (world px). */
-  place(camY: number, toastUp: boolean, hero: Rect): readonly PlacedPopup[];
+  /**
+   * The pop-ups shown now, world px, after placing them for the scroll, the toast, the hero's sprite (world px), where his
+   * sprite will be over the next POPUP_MIN_FRAMES frames (`heroSweep`) and the view across.
+   */
+  place(camY: number, toastUp: boolean, hero: Rect, ahead: Rect, view: ViewSpan): readonly PlacedPopup[];
 }
 
 /** The shipped camera, framing the standing view as the Play scene does (`FrameScene`). */
@@ -92,6 +108,10 @@ export interface RouteCounts {
   popupPairs: number;
   popupHero: number;
   popupBar: number;
+  popupSide: number;
+  popupShort: number;
+  popupAway: number;
+  popupFar: number;
   /**
    * Frames on which a pop-up moved 3 px or more since the frame before (across plus up or down, in the world or on
    * screen, whichever is less; its rise is 0.4 px a frame), and frames on which one moved 10 px or more one way right
@@ -122,6 +142,10 @@ export const NO_COUNTS: Readonly<RouteCounts> = Object.freeze({
   popupPairs: 0,
   popupHero: 0,
   popupBar: 0,
+  popupSide: 0,
+  popupShort: 0,
+  popupAway: 0,
+  popupFar: 0,
   popupJumps: 0,
   popupFlips: 0,
   hiddenNear: 0,
@@ -224,6 +248,10 @@ export function measureRoute<S extends { readonly scrollX: number; readonly scro
   let lastDy = 0;
   // Each pop-up as last placed (world px), the scroll then, and how it moved then: to see it jump or flip.
   let lastPops = new Map<number, { x: number; y: number; sy: number; vx: number; vy: number }>();
+  // How many frames each pop-up shown on the last frame has been shown: one gone before POPUP_MIN_FRAMES was cut short.
+  let lives = new Map<number, number>();
+  const fall = { rise: tuning.gravity.gravityRise, fall: tuning.gravity.gravityFall, maxFall: tuning.gravity.maxFallSpeed };
+  const ahead = { x: 0, y: 0, w: 0, h: 0 };
   const flashes: { age: number; x: number; y: number; score: number }[] = [];
   const toPx = (sub: number): number => sub >> SUB_SHIFT;
 
@@ -244,6 +272,7 @@ export function measureRoute<S extends { readonly scrollX: number; readonly scro
           popups.clear();
           flashes.length = 0;
           lastPops = new Map();
+          lives = new Map();
         }
       }
       const before = cam;
@@ -287,18 +316,21 @@ export function measureRoute<S extends { readonly scrollX: number; readonly scro
       const hy = heroDrawY(p, phys) - sy;
       const burning = run.phase === 'playing' && p.thrusting;
       const heroWorld: Rect = { x: hx + sx, y: hy + sy - (burning ? FUELBAR_RISE : 0), w: TILE_PX, h: TILE_PX + (burning ? FUELBAR_RISE : 0) };
-      // Effects.place, with the HUD's toast as it shows on this frame.
-      const shown = popups.place(sy, toastLeft > 0, heroWorld);
+      // Effects.place, with the HUD's toast as it shows on this frame, and (Effects.tick) how the hero moves.
+      heroSweep(heroWorld, { vx: playing ? p.vx / (1 << SUB_SHIFT) : 0, vy: playing ? p.vy / (1 << SUB_SHIFT) : 0, airborne: playing && !p.onGround }, fall, POPUP_MIN_FRAMES, POPUP_HEAD_PX, ahead);
+      const shown = popups.place(sy, toastLeft > 0, heroWorld, ahead, { x: sx, w: size.w });
       {
         let pair = false;
         let onHero = false;
         let onBar = false;
+        let onSide = false;
         for (let a = 0; a < shown.length; a++) {
           const ra = shown[a];
           if (!ra) continue;
           if (overlap(ra, heroWorld) > 0) onHero = true;
           const inView = { x: ra.x - sx, y: ra.y - sy, w: ra.w, h: ra.h };
           if (inView.y < STRIP_H || (toastLeft > 0 && overlap(inView, toastBand) > 0)) onBar = true;
+          if (inView.x < 0 || inView.x + inView.w > size.w) onSide = true;
           for (let z = a + 1; z < shown.length; z++) {
             const rz = shown[z];
             if (rz && overlap(ra, rz) > 0) pair = true;
@@ -323,11 +355,24 @@ export function measureRoute<S extends { readonly scrollX: number; readonly scro
           now.set(r.id, { x: r.x, y: r.y, sy, vx, vy });
         }
         lastPops = now;
+        const alive = new Map<number, number>();
+        for (const r of shown) {
+          if (r.id === undefined) continue;
+          alive.set(r.id, (lives.get(r.id) ?? 0) + 1);
+          if (lives.has(r.id) || r.ownX === undefined || r.ownY === undefined) continue;
+          // First drawn on this frame: how far from its own place.
+          const away = Math.abs(r.x - r.ownX) + Math.abs(r.y - r.ownY);
+          if (away > POPUP_AWAY_PX) note('popupAway', `pop-up ${away} px from its place`, run.tick);
+          if (away > POPUP_FAR_PX) note('popupFar', `pop-up ${away} px from its place`, run.tick);
+        }
+        for (const [id, n] of lives) if (!alive.has(id) && n < POPUP_MIN_FRAMES) note('popupShort', `pop-up shown ${n} frames`, run.tick);
+        lives = alive;
         if (jump) note('popupJumps', 'pop-up', run.tick);
         if (flip) note('popupFlips', 'pop-up', run.tick);
         if (pair) note('popupPairs', 'pop-ups', run.tick);
         if (onHero) note('popupHero', 'pop-up', run.tick);
         if (onBar) note('popupBar', 'pop-up', run.tick);
+        if (onSide) note('popupSide', 'pop-up', run.tick);
       }
       if (toastLeft > 0) toastLeft -= 1;
 
@@ -416,9 +461,9 @@ export function shippedPopups(reducedMotion = false): PopupsUnderTest {
     advance: (frames) => {
       board.advance(frames);
     },
-    place: (camY, toastUp, hero) => {
-      board.place(camY, toastUp, hero);
-      return board.shown().map((p) => ({ x: p.drawX, y: p.drawY, w: p.w, h: POPUP_H, id: p.seq }));
+    place: (camY, toastUp, hero, ahead, view) => {
+      board.place(camY, toastUp, hero, ahead, view);
+      return board.shown().map((p) => ({ x: p.drawX, y: p.drawY, w: p.w, h: POPUP_H, id: p.seq, ownX: p.x, ownY: p.y - board.rise(p.age) }));
     },
   };
 }

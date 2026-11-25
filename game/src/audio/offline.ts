@@ -4,12 +4,13 @@
  * the game) and measures what came out: length, peak, loudness, pitch over
  * time and where the energy sits. Node has no Web Audio, so this runs in a
  * browser: the game's test hook exposes it as `window.__E2E__.renderEffect`,
- * and `e2e/audio.spec.ts` calls it for every effect.
+ * and `e2e/audio.spec.ts` calls it for every effect and for every step of the
+ * crystal ladder.
  *
  * Everything below `renderRecipes` is plain arithmetic on sample arrays and is
  * unit-tested in Node.
  */
-import { RECIPES, effectLength } from './recipes';
+import { GEM_RECIPES, RECIPES, effectLength } from './recipes';
 import type { EffectName, Recipe } from './recipes';
 import { createMaster, createNoiseBuffer, scheduleEffect } from './synth';
 
@@ -154,18 +155,43 @@ export async function renderRecipes(name: string, recipes: readonly Recipe[]): P
 }
 
 /**
+ * A step of the crystal ladder: `gem:0` (D5, the same recipe as `gem`) to
+ * `gem:5` (D6), GEM_RECIPES[N]. RECIPES holds only the first step; the game
+ * picks the others as crystals are taken in a row.
+ */
+export type GemStepName = `gem:${number}`;
+
+/** What `renderEffect` takes: an effect of RECIPES, or a step of the crystal ladder. */
+export type RenderName = EffectName | GemStepName;
+
+/** `gem:N`, N a whole number written without a sign, a point or a leading zero. */
+const GEM_STEP = /^gem:(0|[1-9][0-9]*)$/;
+
+/**
+ * The recipe `renderEffect` renders for a name: RECIPES[name], or
+ * GEM_RECIPES[N] for `gem:N` with N from 0 to GEM_RECIPES.length - 1. Throws a
+ * plain Error for anything else (a name every object has, such as
+ * `toString`, included).
+ */
+export function recipeNamed(name: string): Recipe {
+  if (Object.hasOwn(RECIPES, name)) return RECIPES[name as EffectName];
+  const step = GEM_STEP.exec(name)?.[1];
+  const gem = step === undefined ? undefined : GEM_RECIPES[Number(step)];
+  if (gem) return gem;
+  throw new Error(`renderEffect: there is no effect called "${name}"`);
+}
+
+/**
  * Renders one effect by name, or several together (for example
  * `['cog', 'thrust', 'land']`: the loudest moment the game can plausibly
- * produce), and returns what it sounded like in numbers. Rejects with a plain
- * Error for an unknown name or where there is no OfflineAudioContext.
+ * produce), and returns what it sounded like in numbers. A name is an effect
+ * of RECIPES or a step of the crystal ladder (`gem:3`, see `recipeNamed`).
+ * Rejects with a plain Error for an unknown name or where there is no
+ * OfflineAudioContext.
  */
-export async function renderEffect(what: EffectName | readonly EffectName[]): Promise<EffectRender> {
+export async function renderEffect(what: RenderName | readonly RenderName[]): Promise<EffectRender> {
   const names: readonly string[] = typeof what === 'string' ? [what] : what;
-  const recipes: Recipe[] = [];
-  for (const name of names) {
-    if (!Object.hasOwn(RECIPES, name)) throw new Error(`renderEffect: there is no effect called "${name}"`);
-    recipes.push(RECIPES[name as EffectName]);
-  }
+  const recipes = names.map(recipeNamed);
   if (recipes.length === 0) throw new Error('renderEffect: no effect was named');
   return renderRecipes(names.join('+'), recipes);
 }

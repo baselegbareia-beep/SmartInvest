@@ -5,6 +5,7 @@ import { GAME_TITLE } from '../meta';
 import { TUNING } from '../tuning';
 
 import { chooseView, cssPerArtPx } from './chooseView';
+import { STRIP_H } from './hudModel';
 import {
   BUTTON_W_PX,
   CORNER_INSET_PX,
@@ -13,6 +14,7 @@ import {
   MIN_ROW_PX,
   MIN_SPACING_PX,
   MIN_TOUCH_CSS_PX,
+  PANEL_FRAME_PX,
   PANEL_MIN_W_PX,
   PANEL_PAD_PX,
   SWITCH_ICON_PX,
@@ -25,7 +27,8 @@ import {
   textOrigin,
   textPx,
 } from './menuLayout';
-import type { MenuItem, MenuLayout, Rect } from './menuLayout';
+import type { MenuItem, MenuLayout, MenuPlace, Rect } from './menuLayout';
+import { TEXT } from './scenes/strings';
 
 /** Ruling R11's numbers, as in chooseView.test.ts. */
 const R11: ViewTuning = { viewMinCols: 17, viewMinRows: 10, viewMaxCols: 30, viewMaxRows: 14 };
@@ -74,6 +77,15 @@ const SCREENS: Readonly<Record<string, readonly MenuItem[]>> = {
     { kind: 'button', text: 'QUIT TO TITLE' },
     { kind: 'switches', labels: ['SOUND OFF', 'BUZZ OFF'] },
   ],
+  /** The pause menu in keyboard play: the key line under the switches. */
+  pauseKeys: [
+    { kind: 'text', text: 'PAUSED', scale: 2 },
+    { kind: 'button', text: 'RESUME' },
+    { kind: 'button', text: 'RESTART LEVEL -1 LIFE' },
+    { kind: 'button', text: 'QUIT TO TITLE' },
+    { kind: 'switches', labels: ['SOUND OFF', 'BUZZ OFF'] },
+    { kind: 'text', text: TEXT.keys },
+  ],
   gameOver: [
     { kind: 'text', text: 'GAME OVER', scale: 2 },
     { kind: 'text', text: 'SCORE 04250' },
@@ -91,6 +103,12 @@ const SCREENS: Readonly<Record<string, readonly MenuItem[]>> = {
     { kind: 'button', text: 'TITLE' },
   ],
 };
+
+/** Where the pause menu is drawn: on the plate (menu.ts passes `framed` for a panel), off the top bar (PauseScene). */
+const PAUSE_PLACE: MenuPlace = { clearTop: STRIP_H, framed: true };
+/** Each screen's placement as its scene asks for it; the title and the end screens draw no plate. */
+const PLACES: Readonly<Record<string, MenuPlace>> = { pause: PAUSE_PLACE, pauseKeys: PAUSE_PLACE };
+const placeOf = (name: string): MenuPlace => PLACES[name] ?? {};
 
 const whole = (r: Rect): boolean => [r.x, r.y, r.w, r.h].every(Number.isInteger);
 const inside = (inner: Rect, outer: Rect): boolean =>
@@ -113,23 +131,33 @@ function neededPx(items: readonly MenuItem[], cssPerArt: number, pad: number, ga
   return 2 * pad + text + Math.max(0, items.length - 1) * gap + rows * menuRowPx(cssPerArt);
 }
 
-/** Everything wrong with one laid-out menu. */
-function problems(m: MenuLayout, items: readonly MenuItem[], viewW: number, viewH: number, cssPerArt: number): string[] {
+/** Everything wrong with one laid-out menu, placed as `place` asks. */
+function problems(m: MenuLayout, items: readonly MenuItem[], viewW: number, viewH: number, cssPerArt: number, place: MenuPlace = {}): string[] {
   const out: string[] = [];
   // Spacing gives way before the rows do: shared rows only when even the tightest spacing cannot hold 44 CSS px rows,
-  // and where the rows fit, the largest spacing that lets them (gaps shrink first, then the padding).
+  // and where the rows fit, the largest spacing that lets them (gaps shrink first, then the padding, which on the
+  // plate stops at its frame). A menu that keeps off the top bar fits its rows under the bar wherever they can be.
   const { pad, gaps } = spacingOf(m);
   const gap = gaps[0] ?? ITEM_GAP_PX;
   const ts = m.textScale;
+  const minPad = place.framed === true ? PANEL_FRAME_PX : MIN_SPACING_PX;
+  const clearTop = place.clearTop ?? 0;
+  const room = clearTop > 0 && neededPx(items, cssPerArt, minPad, MIN_SPACING_PX, ts) <= viewH - clearTop ? viewH - clearTop : viewH;
   if (ts === 2 && !(cssPerArt < LARGE_TEXT_BELOW)) out.push(`2x text at ${cssPerArt} CSS px per art px`);
   if (ts === 2 && !m.fits) out.push('2x text in a menu whose rows do not reach 44 CSS px');
   if (gaps.some((g) => g !== gap)) out.push(`uneven gaps ${gaps.join(', ')}`);
-  if (pad < MIN_SPACING_PX || gap < MIN_SPACING_PX || pad > PANEL_PAD_PX || gap > ITEM_GAP_PX) out.push(`spacing ${pad}/${gap} out of range`);
-  if (!m.fits && neededPx(items, cssPerArt, MIN_SPACING_PX, MIN_SPACING_PX, ts) <= viewH) out.push('shares the rows although tighter spacing would hold 44 CSS px rows');
-  if (!m.fits && (pad !== MIN_SPACING_PX || gap !== MIN_SPACING_PX)) out.push(`shares the rows with spacing ${pad}/${gap} left over`);
+  if (pad < minPad || gap < MIN_SPACING_PX || pad > PANEL_PAD_PX || gap > ITEM_GAP_PX) out.push(`spacing ${pad}/${gap} out of range`);
+  if (!m.fits && neededPx(items, cssPerArt, minPad, MIN_SPACING_PX, ts) <= viewH) out.push('shares the rows although tighter spacing would hold 44 CSS px rows');
+  if (!m.fits && (pad !== minPad || gap !== MIN_SPACING_PX)) out.push(`shares the rows with spacing ${pad}/${gap} left over`);
   if (m.fits && pad < PANEL_PAD_PX && gap !== MIN_SPACING_PX) out.push(`the padding shrank to ${pad} before the gaps (${gap})`);
-  if (m.fits && gap < ITEM_GAP_PX && pad === PANEL_PAD_PX && neededPx(items, cssPerArt, pad, gap + 1, ts) <= viewH) out.push(`gaps of ${gap} px where ${gap + 1} would fit`);
-  if (m.fits && pad < PANEL_PAD_PX && neededPx(items, cssPerArt, pad + 1, gap, ts) <= viewH) out.push(`padding of ${pad} px where ${pad + 1} would fit`);
+  if (m.fits && gap < ITEM_GAP_PX && pad === PANEL_PAD_PX && neededPx(items, cssPerArt, pad, gap + 1, ts) <= room) out.push(`gaps of ${gap} px where ${gap + 1} would fit`);
+  if (m.fits && pad < PANEL_PAD_PX && neededPx(items, cssPerArt, pad + 1, gap, ts) <= room) out.push(`padding of ${pad} px where ${pad + 1} would fit`);
+  if (place.framed === true) {
+    const inner: Rect = { x: m.panel.x + PANEL_FRAME_PX, y: m.panel.y + PANEL_FRAME_PX, w: m.panel.w - 2 * PANEL_FRAME_PX, h: m.panel.h - 2 * PANEL_FRAME_PX };
+    m.items.forEach((placed, i) => {
+      if (!inside(placed.rect, inner)) out.push(`item ${i} ${JSON.stringify(placed.rect)} reaches into the plate's frame ${JSON.stringify(m.panel)}`);
+    });
+  }
   const view: Rect = { x: 0, y: 0, w: viewW, h: viewH };
   const touch = MIN_TOUCH_CSS_PX - 1e-9;
 
@@ -141,7 +169,11 @@ function problems(m: MenuLayout, items: readonly MenuItem[], viewW: number, view
     if (!inside(m.panel, view)) out.push(`the panel ${JSON.stringify(m.panel)} leaves the view`);
   }
   if (Math.abs(m.panel.x - (viewW - m.panel.x - m.panel.w)) > 1) out.push('the panel is not centred across');
-  if (Math.abs(m.panel.y - (viewH - m.panel.y - m.panel.h)) > 1) out.push('the panel is not centred down');
+  // Centred down; a menu that keeps off the top bar lies lower by as much as that needs and the view allows.
+  const centredY = Math.floor((viewH - m.panel.h) / 2);
+  const wantY = clearTop > 0 ? Math.max(centredY, Math.min(clearTop, viewH - m.panel.h)) : centredY;
+  if (m.panel.y !== wantY) out.push(`the panel is at y = ${m.panel.y}, not ${wantY}`);
+  if (room < viewH && m.panel.y < clearTop) out.push(`the panel is over the top ${clearTop} px although its rows fit under them`);
   if (m.items.length !== items.length) out.push('not one placed item per item');
 
   let lastBottom = -Infinity;
@@ -254,17 +286,125 @@ describe('menuLayout: the sizes of docs/ART-AND-SOUND.md section 9 at the smalle
   });
 });
 
+describe('menuLayout clearTop: the pause menu keeps off the top bar where the view has room', () => {
+  const pause = SCREENS.pause ?? [];
+  const pauseKeys = SCREENS.pauseKeys ?? [];
+  const tab = (w: number, h: number, dpr: number): { viewW: number; viewH: number; c: number } => {
+    const v = chooseView(w, h, dpr, { left: 0, right: 0, top: 0, bottom: 0 }, R11);
+    return { viewW: v.viewW, viewH: v.viewH, c: cssPerArtPx(v, dpr) };
+  };
+
+  it('568 x 320 at 2 with keys: centred, the 141 px panel began at 9, across the 14 px bar; it now begins under the bar', () => {
+    const centred = menuLayout(284, 160, 2, pauseKeys);
+    expect({ y: centred.panel.y, h: centred.panel.h }).toEqual({ y: 9, h: 141 });
+    const clear = menuLayout(284, 160, 2, pauseKeys, PAUSE_PLACE);
+    expect(clear.panel).toEqual({ ...centred.panel, y: STRIP_H });
+    // Everything else moves down with it, unchanged in size.
+    expect(clear.items.map((p) => p.rect)).toEqual(centred.items.map((p) => ({ ...p.rect, y: p.rect.y + STRIP_H - 9 })));
+    expect(clear.panel.y + clear.panel.h).toBeLessThanOrEqual(160);
+    expect(problems(clear, pauseKeys, 284, 160, 2, PAUSE_PLACE)).toEqual([]);
+  });
+
+  it('a panel already clear of the bar stays centred: the touch pause menu at 568 x 320, and 1280 x 720', () => {
+    expect(menuLayout(284, 160, 2, pause, PAUSE_PLACE)).toEqual(menuLayout(284, 160, 2, pause));
+    expect(menuLayout(320, 180, 4, pauseKeys, PAUSE_PLACE)).toEqual(menuLayout(320, 180, 4, pauseKeys));
+  });
+
+  it('where the room under the bar is short, the gaps give way before the panel goes over the bar', () => {
+    // 150 px: centred, the 141 px panel began at 4; with the gaps at 3 it could only sit on the bottom edge, at 9.
+    const m = menuLayout(284, 150, 2, pauseKeys, PAUSE_PLACE);
+    expect(m.panel.y).toBe(STRIP_H);
+    expect(spacingOf(m)).toEqual({ pad: PANEL_PAD_PX, gaps: [2, 2, 2, 2, 2] });
+    expect(problems(m, pauseKeys, 284, 150, 2, PAUSE_PLACE)).toEqual([]);
+    // A phone's browser tab, 673 x 310 at 2.625 (the re-check's window): 162 px, rows of 24. The 149 px panel lay on
+    // the bottom edge, its top row on the bar's last; with gaps of 2 it is 144 px and begins under the bar.
+    const t = tab(673, 310, 2.625);
+    expect({ viewH: t.viewH, rowPx: menuRowPx(t.c) }).toEqual({ viewH: 162, rowPx: 24 });
+    const phone = menuLayout(t.viewW, t.viewH, t.c, pauseKeys, PAUSE_PLACE);
+    expect({ y: phone.panel.y, h: phone.panel.h }).toEqual({ y: STRIP_H, h: 144 });
+    expect(problems(phone, pauseKeys, t.viewW, t.viewH, t.c, PAUSE_PLACE)).toEqual([]);
+  });
+
+  it('740 x 280 at 2.75 with keys (2x text): the panel began at y = 4, its frame across the bar\'s words; the padding gives way too, and it begins under the bar', () => {
+    const t = tab(740, 280, 2.75);
+    const m = menuLayout(t.viewW, t.viewH, t.c, pauseKeys, PAUSE_PLACE);
+    expect({ viewH: t.viewH, textScale: m.textScale, fits: m.fits }).toEqual({ viewH: 192, textScale: 2, fits: true });
+    expect({ y: m.panel.y, h: m.panel.h }).toEqual({ y: STRIP_H, h: 177 });
+    expect(spacingOf(m)).toEqual({ pad: PANEL_FRAME_PX, gaps: [1, 1, 1, 1, 1] });
+    expect(problems(m, pauseKeys, t.viewW, t.viewH, t.c, PAUSE_PLACE)).toEqual([]);
+  });
+
+  it('a menu whose rows cannot fit under the bar is laid out in the whole view, as low as it goes; one taller than the view stays centred', () => {
+    // 130 px: even at the tightest spacing the keys menu needs 125 px, and 116 lie under the bar.
+    const low = menuLayout(284, 130, 2, pauseKeys, PAUSE_PLACE);
+    expect(low.panel.y + low.panel.h).toBe(130);
+    expect(low.fits).toBe(true);
+    expect(problems(low, pauseKeys, 284, 130, 2, PAUSE_PLACE)).toEqual([]);
+    const tall = menuLayout(300, 100, 1, pause, { framed: true });
+    expect(menuLayout(300, 100, 1, pause, PAUSE_PLACE).panel).toEqual(tall.panel);
+  });
+
+  it('on every window of the device table: never above centred, never out of the view, clear of the bar wherever its rows fit under it', () => {
+    for (const items of [pause, pauseKeys]) {
+      for (const [cssW, cssH, dpr, left, right] of DEVICES) {
+        const v = chooseView(cssW, cssH, dpr, { left, right, top: 0, bottom: 0 }, R11);
+        const c = cssPerArtPx(v, dpr);
+        const centred = menuLayout(v.viewW, v.viewH, c, items, { framed: true });
+        const m = menuLayout(v.viewW, v.viewH, c, items, PAUSE_PLACE);
+        const where = `${cssW} x ${cssH} @${dpr}, ${items.length} items`;
+        expect(m.panel.y, where).toBeGreaterThanOrEqual(centred.panel.y);
+        if (centred.panel.y >= 0) expect(m.panel.y + m.panel.h, where).toBeLessThanOrEqual(v.viewH);
+        if (neededPx(items, c, PANEL_FRAME_PX, MIN_SPACING_PX, m.textScale) <= v.viewH - STRIP_H) expect(m.panel.y, where).toBeGreaterThanOrEqual(STRIP_H);
+        // The text scale, the rows and whether they fit do not depend on the bar.
+        expect({ textScale: m.textScale, rowPx: m.rowPx, fits: m.fits }, where).toEqual({ textScale: centred.textScale, rowPx: centred.rowPx, fits: centred.fits });
+        expect(problems(m, items, v.viewW, v.viewH, c, PAUSE_PLACE), where).toEqual([]);
+      }
+    }
+  });
+});
+
+describe('menuLayout framed: a menu on the ui_panel plate keeps its items inside the frame', () => {
+  const pauseKeys = SCREENS.pauseKeys ?? [];
+
+  it('a short window at 1 CSS px per art px with keys (568 x 232 at 2, 540 x 360 at 1: 224 px): 2x text only fit padded by 1 px, across the frame; it is drawn at 1x inside it', () => {
+    for (const [w, h, dpr] of [[568, 232, 2], [540, 360, 1]] as const) {
+      const v = chooseView(w, h, dpr, { left: 0, right: 0, top: 0, bottom: 0 }, R11);
+      const c = cssPerArtPx(v, dpr);
+      expect({ viewH: v.viewH, c }).toEqual({ viewH: 224, c: 1 });
+      // Without the plate (as the title draws its menus) the tightest spacing is allowed, and 2x text fits with it.
+      const bare = menuLayout(v.viewW, v.viewH, c, pauseKeys);
+      expect({ textScale: bare.textScale, pad: spacingOf(bare).pad }).toEqual({ textScale: 2, pad: MIN_SPACING_PX });
+      const m = menuLayout(v.viewW, v.viewH, c, pauseKeys, PAUSE_PLACE);
+      expect({ textScale: m.textScale, rowPx: m.rowPx, fits: m.fits }).toEqual({ textScale: 1, rowPx: 44, fits: true });
+      expect(spacingOf(m).pad).toBeGreaterThanOrEqual(PANEL_FRAME_PX);
+      expect(problems(m, pauseKeys, v.viewW, v.viewH, c, PAUSE_PLACE)).toEqual([]);
+    }
+  });
+
+  it('the padding gives way only down to the frame: where it would have to go further, the rows share the height', () => {
+    const pause = SCREENS.pause ?? [];
+    const framedTightest = neededPx(pause, 1, PANEL_FRAME_PX, MIN_SPACING_PX);
+    expect(menuLayout(NARROW_1X, framedTightest, 1, pause, { framed: true }).fits).toBe(true);
+    expect(spacingOf(menuLayout(NARROW_1X, framedTightest, 1, pause, { framed: true })).pad).toBe(PANEL_FRAME_PX);
+    const shared = menuLayout(NARROW_1X, framedTightest - 1, 1, pause, { framed: true });
+    expect(shared.fits).toBe(false);
+    expect(problems(shared, pause, NARROW_1X, framedTightest - 1, 1, { framed: true })).toEqual([]);
+    // Without the plate the same view still holds 44 CSS px rows, padded by less.
+    expect(menuLayout(NARROW_1X, framedTightest - 1, 1, pause).fits).toBe(true);
+  });
+});
+
 describe('menuLayout on every window of the device table', () => {
   for (const [name, items] of Object.entries(SCREENS)) {
     it(`${name}: rows of at least 44 CSS px (the menu fits every window), never below 22 art px, nothing outside the view, nothing overlapping`, () => {
       for (const [cssW, cssH, dpr, left, right] of DEVICES) {
         const v = chooseView(cssW, cssH, dpr, { left, right, top: 0, bottom: 0 }, R11);
         const c = cssPerArtPx(v, dpr);
-        const m = menuLayout(v.viewW, v.viewH, c, items);
+        const m = menuLayout(v.viewW, v.viewH, c, items, placeOf(name));
         const where = `${cssW} x ${cssH} @${dpr}`;
         expect(m.fits, where).toBe(true);
         expect(m.rowPx * c, where).toBeGreaterThanOrEqual(MIN_TOUCH_CSS_PX - 1e-9);
-        expect(problems(m, items, v.viewW, v.viewH, c), where).toEqual([]);
+        expect(problems(m, items, v.viewW, v.viewH, c, placeOf(name)), where).toEqual([]);
       }
     });
   }
@@ -278,12 +418,13 @@ describe('menuLayout on every window of the device table', () => {
   ])('in a phone browser tab of %i x %i at ratio %f the pause menu gets rows of 44 CSS px (the review\'s windows: 43.5 before)', (cssW, cssH, dpr) => {
     const v = chooseView(cssW, cssH, dpr, { left: 0, right: 0, top: 0, bottom: 0 }, R11);
     const c = cssPerArtPx(v, dpr);
-    const pause = SCREENS.pause ?? [];
-    const m = menuLayout(v.viewW, v.viewH, c, pause);
-    expect(m.fits).toBe(true);
-    expect(m.rowPx * c).toBeGreaterThanOrEqual(MIN_TOUCH_CSS_PX - 1e-9);
-    expect(m.panel.h).toBeLessThanOrEqual(v.viewH);
-    expect(problems(m, pause, v.viewW, v.viewH, c)).toEqual([]);
+    for (const pause of [SCREENS.pause ?? [], SCREENS.pauseKeys ?? []]) {
+      const m = menuLayout(v.viewW, v.viewH, c, pause, PAUSE_PLACE);
+      expect(m.fits).toBe(true);
+      expect(m.rowPx * c).toBeGreaterThanOrEqual(MIN_TOUCH_CSS_PX - 1e-9);
+      expect(m.panel.h).toBeLessThanOrEqual(v.viewH);
+      expect(problems(m, pause, v.viewW, v.viewH, c, PAUSE_PLACE)).toEqual([]);
+    }
   });
 
   it('gives up the gaps first, then the padding, and only then shares the rows', () => {
@@ -319,10 +460,10 @@ describe('menuLayout on every window of the device table', () => {
       expect(c).toBeLessThan(LARGE_TEXT_BELOW);
       for (const name of ['pause', 'title', 'gameOver']) {
         const items = SCREENS[name] ?? [];
-        const m = menuLayout(v.viewW, v.viewH, c, items);
+        const m = menuLayout(v.viewW, v.viewH, c, items, placeOf(name));
         expect(m.textScale, `${name} at ${w} x ${h}`).toBe(2);
         expect(m.fits).toBe(true);
-        expect(problems(m, items, v.viewW, v.viewH, c)).toEqual([]);
+        expect(problems(m, items, v.viewW, v.viewH, c, placeOf(name))).toEqual([]);
       }
     }
   });
@@ -333,13 +474,13 @@ describe('menuLayout on every window of the device table', () => {
       const c = cssPerArtPx(v, dpr);
       for (const name of ['pause', 'gameOver', 'win']) {
         const items = SCREENS[name] ?? [];
-        const m = menuLayout(v.viewW, v.viewH, c, items);
+        const m = menuLayout(v.viewW, v.viewH, c, items, placeOf(name));
         const scales = items.map((item) => (item.kind === 'text' ? drawnScale(item.scale, m.textScale) : m.textScale));
         const heading = scales[0] ?? 0;
         expect({ name, w, h, textScale: m.textScale, heading }).toEqual({ name, w, h, textScale: 2, heading: 3 });
         expect(Math.max(...scales.slice(1)), `${name}: the heading is the largest line`).toBeLessThan(heading);
         expect(m.fits).toBe(true);
-        expect(problems(m, items, v.viewW, v.viewH, c)).toEqual([]);
+        expect(problems(m, items, v.viewW, v.viewH, c, placeOf(name))).toEqual([]);
       }
     }
     // The title's first word stays 3x over 2x text: it is larger than everything else already.
@@ -388,8 +529,8 @@ describe('menuLayout: properties over a sweep of windows', () => {
             const c = cssPerArtPx(v, dpr);
             for (const [name, items] of Object.entries(SCREENS)) {
               if (found.length >= 5) continue;
-              const m = menuLayout(v.viewW, v.viewH, c, items);
-              for (const p of problems(m, items, v.viewW, v.viewH, c)) found.push(`${name} ${cssW} x ${cssH} @${dpr}: ${p}`);
+              const m = menuLayout(v.viewW, v.viewH, c, items, placeOf(name));
+              for (const p of problems(m, items, v.viewW, v.viewH, c, placeOf(name))) found.push(`${name} ${cssW} x ${cssH} @${dpr}: ${p}`);
               const rows = items.filter((item) => item.kind !== 'text').length;
               if (!m.fits && m.rowPx > MIN_ROW_PX && v.viewH - m.panel.h >= rows) {
                 // Rows that do not reach 44 CSS px must at least use all the height there is.

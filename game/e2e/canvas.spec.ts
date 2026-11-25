@@ -46,9 +46,24 @@ async function playRoom(page: Page, id: string): Promise<void> {
   await expect.poll(async () => (await state(page))?.mode, { timeout: 5000 }).toBe('running');
 }
 
-/** A screenshot of the canvas (frozen while it is taken), as PNG bytes. */
+/**
+ * A screenshot of the canvas (frozen while it is taken), as PNG bytes. Phaser takes a key as it comes, so the hook's
+ * menu() can show the focus moved before any frame has drawn it; the game is frozen two animation frames later, once
+ * Phaser has drawn what changed (its own step comes first in each frame). Frozen at once, the shot was at times the
+ * frame before the key (1 run of 10; 7 of 40 when frozen in the same task as reading the focus).
+ */
 async function canvasShot(page: Page, clip?: { x: number; y: number; width: number; height: number }): Promise<Buffer> {
-  await page.evaluate(() => window.__E2E__?.freeze(true));
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            window.__E2E__?.freeze(true);
+            resolve();
+          });
+        });
+      }),
+  );
   const png = clip ? await page.screenshot({ clip }) : await page.locator('#game canvas').screenshot();
   await page.evaluate(() => window.__E2E__?.freeze(false));
   return png;

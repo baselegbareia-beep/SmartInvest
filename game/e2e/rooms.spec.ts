@@ -202,41 +202,52 @@ const BUTTON_LIST: readonly Button[] = ['left', 'right', 'jump', 'fire', 'thrust
 const BITS: Readonly<Record<Button, number>> = { left: 1, right: 2, jump: 4, fire: 8, thrust: 16 };
 
 /**
+ * Lets the frozen game go on and arms its next stop (`freezeAtTick`) in the same call inside the page, and
+ * resolves with the tick the game froze on. One call, because with `pace(1)` a run one tick long lasts one
+ * rendered frame: a stop armed by a second round trip after the resume can come after its tick, and on a busy
+ * machine it does. No frame runs inside one call (`freeze(false)` only clears Phaser's pause flag), so the stop
+ * sees every tick from the resume on. A tick already reached freezes the game at once and is reported as it is.
+ */
+const resumeUntil = (page: Page, tick: number): Promise<number | undefined> =>
+  page.evaluate((t) => {
+    const hook = window.__E2E__;
+    hook?.freeze(false);
+    return hook?.freezeAtTick(t);
+  }, tick);
+
+/**
  * Plays a script's runs with real input: `set(bits)` presses and lets go of real keys (or touches the pad).
  * Each run's buttons change on the tick the script names. For that the Play scene steps exactly one tick per
  * rendered frame (`pace(1)`: a loaded machine would otherwise run several ticks in one frame), and the page
  * freezes the game the moment the tick is reached (`freezeAtTick`, checked inside the page after every frame)
- * while the input changes. The input itself goes through the browser, the keyboard plugin or the pad, and
- * `Controls`, as a player's does. The script starts on the tick the game is at when this is called. Returns
- * that tick, and how many runs found the tick already past their first tick.
+ * while the input changes. Each stop is armed in the same call that lets the game go (`resumeUntil`). The input
+ * itself goes through the browser, the keyboard plugin or the pad, and `Controls`, as a player's does. The script
+ * starts on the tick the game is at when this is called. Returns that tick, and how many runs found the tick
+ * already past their first tick. The game is left frozen on the last run's first tick: no stop is armed past it,
+ * so none waits for a tick after the win.
  */
 async function playRuns(page: Page, runs: InputScript['runs'], set: (bits: number) => Promise<void>): Promise<{ base: number; late: number }> {
   await page.evaluate(() => {
     window.__E2E__?.pace(1);
   });
+  // Frozen here, on tick base: the first run starts on it.
   const base = (await page.evaluate(() => window.__E2E__?.freezeAtTick(0))) ?? 0;
   let k = 0;
   let late = 0;
-  for (const [bits, length] of runs) {
-    const at = await page.evaluate((t) => window.__E2E__?.freezeAtTick(t), base + k);
+  let at = base;
+  for (const [i, [bits, length]] of runs.entries()) {
     if (at !== base + k) late += 1;
     await set(bits);
-    await page.evaluate(() => {
-      window.__E2E__?.freeze(false);
-    });
     k += length;
+    if (i + 1 < runs.length) at = (await resumeUntil(page, base + k)) ?? -1;
   }
   return { base, late };
 }
 
-/** The state on `tick` exactly: frozen there, read, let go. Needs pace(1). */
+/** The state on `tick` exactly: the frozen game goes on to it (resumeUntil) and is read there. It stays frozen. Needs pace(1). */
 async function stateAt(page: Page, tick: number): Promise<Awaited<ReturnType<typeof now>>> {
-  await page.evaluate((t) => window.__E2E__?.freezeAtTick(t), tick);
-  const state = await now(page);
-  await page.evaluate(() => {
-    window.__E2E__?.freeze(false);
-  });
-  return state;
+  await resumeUntil(page, tick);
+  return now(page);
 }
 
 test('the movement room is won with real key presses, on the tick Node finds', async ({ page }) => {
@@ -259,6 +270,7 @@ test('the movement room is won with real key presses, on the tick Node finds', a
   const end = await stateAt(page, base + script.winTick);
   await page.evaluate(() => {
     window.__E2E__?.pace(null);
+    window.__E2E__?.freeze(false);
   });
   expect(late, 'runs whose keys changed late').toBe(0);
   expect(before).toMatchObject({ levelId: 'test', phase: 'playing', hasTrophy: true, tick: base + script.winTick - 1 });

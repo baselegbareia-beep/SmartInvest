@@ -46,12 +46,18 @@ test('level 1 starts from the title the way a player does, and waits at the read
   expect(later?.tick ?? 0).toBeGreaterThan(gate?.tick ?? 0);
   expect(later?.player).toEqual(gate?.player);
 
-  // The picture: on a tick where the waiting hero is on the shown half of his blink ((tick >> 3) & 1 is 0).
-  const from = (later?.tick ?? 0) + 2;
-  const shownTick = (from + 15) & ~15;
-  await page.evaluate((t) => window.__E2E__?.freezeAtTick(t), shownTick);
+  // The picture: on a tick where the waiting hero is on the shown half of his blink ((tick >> 3) & 1 is 0), the next
+  // multiple of 16. It is worked out from the tick inside the page and armed in the same call, at one tick a frame
+  // (pace(1)): a tick read by one round trip and a stop armed by a second can be passed on a busy machine.
+  const shownTick = await page.evaluate(() => {
+    const hook = window.__E2E__;
+    hook?.pace(1);
+    return hook?.freezeAtTick(((hook.state()?.tick ?? 0) + 16) & ~15);
+  });
+  expect(((shownTick ?? 8) >> 3) & 1, `frozen on tick ${shownTick}, on the shown half of the blink`).toBe(0);
   await page.screenshot({ path: SCREENSHOT });
   await page.evaluate(() => {
+    window.__E2E__?.pace(null);
     window.__E2E__?.freeze(false);
   });
 

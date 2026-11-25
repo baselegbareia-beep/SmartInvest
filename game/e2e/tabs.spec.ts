@@ -129,3 +129,41 @@ test("a sound switched off in one tab is not switched back on by the other's nex
   expect(problemsB).toEqual([]);
   await context.close();
 });
+
+test('with a store that can be read but not written (a full quota), turning SOUND off after BUZZ leaves BUZZ off', async ({ page }) => {
+  // Saved by an earlier visit: both on. Then every write is refused, as by a full store (one origin shared by many pages).
+  const problems = await open(page);
+  await write(page, SETTINGS_KEY, { v: 1, sound: true, vibration: true } satisfies SettingsData);
+  await page.reload();
+  await page.waitForFunction(() => window.__E2E__ !== undefined && window.__GAME_READY__ === true);
+  await page.evaluate(() => {
+    Storage.prototype.setItem = () => {
+      throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+    };
+  });
+  await page.evaluate(() => {
+    window.__E2E__?.startLevel('test');
+  });
+  await expect.poll(async () => (await state(page))?.mode, { timeout: 5000 }).toBe('running');
+  await page.keyboard.press('Escape');
+  const flip = async (words: string): Promise<void> => {
+    await expect.poll(() => labels(page)).toContain(words);
+    const item = (await page.evaluate(() => window.__E2E__?.menu() ?? [])).find((i) => i.label === words);
+    if (!item) throw new Error(`no ${words}`);
+    await page.mouse.click(Math.round(item.x + item.w / 2), Math.round(item.y + item.h / 2));
+  };
+  await flip('BUZZ ON');
+  await expect.poll(() => label(page)).toContain('BUZZ OFF');
+  await flip('SOUND ON');
+  await expect.poll(() => label(page)).toContain('SOUND OFF');
+  // The store still holds the earlier visit's settings: it took none of this. BUZZ stays as the player left it.
+  expect(await read<SettingsData>(page, SETTINGS_KEY)).toEqual({ v: 1, sound: true, vibration: true });
+  expect(await label(page)).toContain('BUZZ OFF');
+  // The menu opened again is drawn from the settings as they are now.
+  await page.keyboard.press('Escape');
+  await expect.poll(async () => (await page.evaluate(() => window.__E2E__?.scenes() ?? [])).includes('Pause')).toBe(false);
+  await page.keyboard.press('Escape');
+  await expect.poll(() => labels(page)).toContain('RESUME');
+  expect((await labels(page)).slice(-2)).toEqual(['SOUND OFF', 'BUZZ OFF']);
+  expect(problems).toEqual([]);
+});

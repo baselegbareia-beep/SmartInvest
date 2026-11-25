@@ -51,7 +51,7 @@ export type MenuEntry =
   | { readonly kind: 'switches'; readonly switches: readonly MenuSwitch[] };
 
 export interface MenuOptions {
-  /** Draw the `ui_panel` plate behind the menu. */
+  /** Draw the `ui_panel` plate behind the menu (its items then keep inside the plate's frame: menuLayout `framed`). */
   readonly panel: boolean;
   /** Dim the game under the menu. */
   readonly dim: boolean;
@@ -64,6 +64,8 @@ export interface MenuOptions {
   readonly onFocus?: (target: number) => void;
   /** After a switch was drawn again because its setting changed elsewhere (the M key, another tab). */
   readonly onSwitchesChanged?: () => void;
+  /** Art px at the top of the view the panel keeps off where there is room (menuLayout `clearTop`): the pause menu's top bar. */
+  readonly clearTop?: number;
 }
 
 /** Opacity of the dim layer under a menu. */
@@ -136,6 +138,7 @@ export class Menu {
   private armed: boolean;
   private readonly onFocus: ((target: number) => void) | undefined;
   private readonly onSwitchesChanged: (() => void) | undefined;
+  private readonly clearTop: number;
   private readonly targets: Target[] = [];
   private placed: readonly Rect[] = [];
   /** The scale 1x lines and labels are drawn at now (menuLayout's textScale). */
@@ -152,6 +155,7 @@ export class Menu {
     this.armed = options.armed ?? true;
     this.onFocus = options.onFocus;
     this.onSwitchesChanged = options.onSwitchesChanged;
+    this.clearTop = options.clearTop ?? 0;
     const depth = options.depth ?? 0;
     this.items = entries.map((entry): MenuItem => {
       if (entry.kind === 'text') return { kind: 'text', text: entry.text, scale: entry.scale ?? 1 };
@@ -358,7 +362,7 @@ export class Menu {
   /** Lays the menu out for the view as it is now. Registered for Scale RESIZE. */
   readonly layout = (): void => {
     const { width, height } = this.scene.scale;
-    const placed = menuLayout(width, height, cssPerArt(), this.items);
+    const placed = menuLayout(width, height, cssPerArt(), this.items, { clearTop: this.clearTop, framed: this.panel !== null });
     this.placed = placed.items.map((item) => item.rect);
     const ts = placed.textScale;
     this.textScale = ts;

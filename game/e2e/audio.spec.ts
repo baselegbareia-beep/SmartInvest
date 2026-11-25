@@ -3,15 +3,16 @@ import type { Page } from '@playwright/test';
 
 import { LOOP_HOLD, SILENCE, compare, pitchEnds } from '../src/audio/offline.ts';
 import type { EffectRender } from '../src/audio/offline.ts';
-import { EFFECT_NAMES, RECIPES, THRUST_LOOP, effectLength } from '../src/audio/recipes.ts';
-import type { EffectName } from '../src/audio/recipes.ts';
+import { EFFECT_NAMES, GEM_LADDER, GEM_RECIPES, RECIPES, THRUST_LOOP, effectLength } from '../src/audio/recipes.ts';
+import type { EffectName, Recipe } from '../src/audio/recipes.ts';
 
 /**
  * Every sound of the game, rendered in a real browser and checked by numbers
  * (Node has no Web Audio): not silent, not clipping, as long and as loud as
  * its recipe says, and sounding the way docs/ART-AND-SOUND.md section 12
- * describes it (rising for pickups, falling for the death, and so on). And,
- * in the real game, the audio starting on the first tap and the M key.
+ * describes it (rising for pickups, falling for the death, every step of the
+ * crystal ladder on its own note, and so on). And, in the real game, the
+ * audio starting on the first tap and the M key.
  *
  * THE HOOK THIS TEST NEEDS. `window.__E2E__.renderEffect`, installed by the
  * shell's test hook (src/shell/e2eHook.ts) when the page is opened with
@@ -19,11 +20,13 @@ import type { EffectName } from '../src/audio/recipes.ts';
  * unchanged (it is loaded as its own chunk on first use, so the game's
  * bundle does not carry it).
  *
- * It takes one effect name or a list of names (rendered together, all
- * starting at the same moment) and resolves to an `EffectRender`: plain
- * numbers. It renders through an OfflineAudioContext with the game's own
- * `scheduleEffect` and master chain, so it needs no tap, makes no sound and
- * does not touch the game's AudioContext or its state.
+ * It takes one name or a list of names (rendered together, all starting at
+ * the same moment) and resolves to an `EffectRender`: plain numbers. A name is
+ * an effect of RECIPES or a step of the crystal ladder, `gem:0` to `gem:5`
+ * (GEM_RECIPES; RECIPES holds only the first step). It renders through an
+ * OfflineAudioContext with the game's own `scheduleEffect` and master chain,
+ * so it needs no tap, makes no sound and does not touch the game's
+ * AudioContext or its state.
  */
 
 interface HookWindow {
@@ -73,13 +76,22 @@ async function renderAll(page: Page): Promise<Record<EffectName, EffectRender>> 
 const ms = (seconds: number): string => `${(seconds * 1000).toFixed(1)} ms`;
 const hz = (value: number): string => `${value.toFixed(0)} Hz`;
 
-test('every effect renders: not silent, not clipping, as loud and as long as its recipe says', async ({ page }) => {
-  const problems = await openGame(page);
-  const heard = await renderAll(page);
+/**
+ * Every recipe the game can play: each effect of RECIPES by its name, and each
+ * step of the crystal ladder (GEM_RECIPES) as renderEffect knows it, `gem:0`
+ * (D5) to `gem:5` (D6).
+ */
+const EVERY_RECIPE: readonly { readonly name: string; readonly recipe: Recipe }[] = [
+  ...EFFECT_NAMES.map((name) => ({ name, recipe: RECIPES[name] })),
+  ...GEM_RECIPES.map((recipe, step) => ({ name: `gem:${step}`, recipe })),
+];
 
-  for (const name of EFFECT_NAMES) {
-    const recipe = RECIPES[name];
-    const sound = heard[name];
+test('every recipe renders, the crystal ladder too: not silent, not clipping, as loud and as long as it says', async ({ page }) => {
+  const problems = await openGame(page);
+
+  for (const { name, recipe } of EVERY_RECIPE) {
+    const sound = await render(page, name);
+    expect.soft(sound.name, 'the render names what it rendered').toBe(name);
 
     // Not silent, before and after the master chain.
     expect.soft(sound.dryPeak, `${name}: peak before the master gain`).toBeGreaterThan(0.02);
@@ -95,13 +107,16 @@ test('every effect renders: not silent, not clipping, as loud and as long as its
     expect.soft(sound.dryPeak, `${name}: peak against the recipe's gain of ${recipe.gain}`).toBeLessThanOrEqual(recipe.gain * 1.02);
     expect.soft(sound.dryPeak, `${name}: peak against the recipe's gain of ${recipe.gain}`).toBeGreaterThanOrEqual(recipe.gain * 0.5);
 
-    // As long as the recipe says, and silent afterwards.
+    // As long as the recipe says, and silent afterwards. The last of a fade is
+    // quieter than SILENCE, so a sound is heard a little shorter than its
+    // recipe: measured, 0.3 ms (uiMove) to 14.7 ms (enemyDown, whose noise
+    // closes down to 200 Hz as it fades). 20 ms is the most any recipe may
+    // lose, however long it is: one that goes quiet earlier has lost part of
+    // what its recipe plays.
     const wanted = recipe.kind === 'shot' ? effectLength(recipe) : LOOP_HOLD + recipe.fadeOut;
     expect.soft(sound.recipeLength, `${name}: the length the render was told`).toBeCloseTo(wanted, 9);
     expect.soft(sound.length, `${name}: heard for ${ms(sound.length)}, recipe ${ms(wanted)}`).toBeLessThanOrEqual(wanted + 0.012);
-    expect
-      .soft(sound.length, `${name}: heard for ${ms(sound.length)}, recipe ${ms(wanted)}`)
-      .toBeGreaterThanOrEqual(wanted - Math.max(0.02, wanted * 0.1));
+    expect.soft(sound.length, `${name}: heard for ${ms(sound.length)}, recipe ${ms(wanted)}`).toBeGreaterThanOrEqual(wanted - 0.02);
     expect.soft(sound.tailPeak, `${name}: sound after its end`).toBeLessThan(SILENCE);
   }
 
@@ -254,9 +269,55 @@ test('each effect sounds the way the guide describes it', async ({ page }) => {
   expect(problems).toEqual([]);
 });
 
+test('every step of the crystal ladder plays its own note, for all of its length', async ({ page }) => {
+  const problems = await openGame(page);
+
+  // A note is one square tone that fades out over its last 85 ms, so it is
+  // heard to within a millisecond of its recipe: measured, 89.2 ms of 90 on
+  // all six. 5 ms catches a note that goes quiet early, which the 20 ms every
+  // recipe is allowed in the first test would let through.
+  const NOTE_SHORT_BY = 0.005;
+
+  // The pitch is read two ways that share no method: the zero crossings of the
+  // waveform (40 ms windows) and the strongest line of its spectrum (2048
+  // samples, 46 ms). Each is read at both ends of the note: the median of its
+  // first four and of its last four frames (pitchEnds; a 90 ms note has nine
+  // frames, 10 ms apart). Measured on the six notes: every reading within
+  // 0.1 % of its note. The tolerance, 1 %, is a sixth of a semitone: a note
+  // one semitone off is 6 % off and fails.
+  for (const [step, wanted] of GEM_LADDER.entries()) {
+    const name = `gem:${step}`;
+    const recipe = GEM_RECIPES[step];
+    if (!recipe) throw new Error(`the crystal ladder has a note for step ${step} but no recipe`);
+    const sound = await render(page, name);
+    const length = effectLength(recipe);
+    expect
+      .soft(sound.length, `${name}: heard for ${ms(sound.length)}, recipe ${ms(length)}`)
+      .toBeGreaterThanOrEqual(length - NOTE_SHORT_BY);
+    const crossings = pitchEnds(sound.pitch);
+    const strongest = pitchEnds(sound.dominant);
+    const readings: readonly (readonly [string, number])[] = [
+      ['zero crossings, start', crossings.first],
+      ['zero crossings, end', crossings.last],
+      ['strongest line, start', strongest.first],
+      ['strongest line, end', strongest.last],
+    ];
+    for (const [how, value] of readings) {
+      expect
+        .soft(Math.abs(value - wanted), `${name} by ${how}: ${value.toFixed(1)} Hz, wanted ${hz(wanted)}`)
+        .toBeLessThanOrEqual(wanted * 0.01);
+    }
+    expect.soft(sound.noisiness, `${name} is one clean tone`).toBeLessThan(0.15);
+  }
+
+  expect(problems).toEqual([]);
+});
+
 test('renderEffect refuses a name that is not an effect', async ({ page }) => {
   await openGame(page);
   await expect(render(page, 'kazoo')).rejects.toThrow(/no effect called "kazoo"/);
+  // The ladder has six steps, gem:0 to gem:5.
+  await expect(render(page, 'gem:6')).rejects.toThrow(/no effect called "gem:6"/);
 });
 
 const sound = (page: Page): Promise<{ state: string; muted: boolean; plays: number } | null> =>

@@ -4,7 +4,9 @@ import type { Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { COLOR } from '../src/art/palette.ts';
 import type { InputScript, SaveData } from '../src/core/types.ts';
+import { STRIP_H } from '../src/shell/hudModel.ts';
 
 /**
  * Menus that guard a choice a player makes by accident (docs/ART-AND-SOUND.md section 9, docs/ARCHITECTURE.md 11.5):
@@ -71,6 +73,92 @@ const menu = (page: Page) => page.evaluate(() => window.__E2E__?.menu() ?? []);
 const labels = async (page: Page): Promise<string[]> => (await menu(page)).map((i) => i.label);
 const texts = (page: Page) => page.evaluate(() => window.__E2E__?.menuText() ?? []);
 const label = (page: Page): Promise<string> => page.locator('#game canvas').evaluate((c) => c.getAttribute('aria-label') ?? '');
+
+/** How many pixels of a PNG have any of `colours` (give or take 3 a channel), in its rows `fromRow` to `toRow` (all of them if left out). */
+async function colourCount(page: Page, png: Buffer, colours: readonly number[], fromRow = 0, toRow = Number.MAX_SAFE_INTEGER): Promise<number> {
+  return page.evaluate(
+    async ({ b64, wanted, from, to }) => {
+      const img = new Image();
+      img.src = `data:image/png;base64,${b64}`;
+      await img.decode();
+      const c = document.createElement('canvas');
+      c.width = img.width;
+      c.height = img.height;
+      const ctx = c.getContext('2d');
+      if (!ctx) return -1;
+      ctx.drawImage(img, 0, 0);
+      const d = ctx.getImageData(0, 0, img.width, img.height).data;
+      let n = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        const row = Math.floor(i / 4 / img.width);
+        if (row < from || row > to) continue;
+        const near = (w: number): boolean =>
+          Math.abs((d[i] ?? 0) - ((w >> 16) & 255)) <= 3 && Math.abs((d[i + 1] ?? 0) - ((w >> 8) & 255)) <= 3 && Math.abs((d[i + 2] ?? 0) - (w & 255)) <= 3;
+        if (wanted.some(near)) n += 1;
+      }
+      return n;
+    },
+    { b64: png.toString('base64'), wanted: [...colours], from: fromRow, to: toRow },
+  );
+}
+
+/**
+ * The pause panel's frame in a PNG of the canvas, `scale` image px per art px: the plate's top row is a run of
+ * `earthlight` and the glow under it a run of `amber` (src/art/sprites/ui.ts). Counts the pixels of `white` (headings,
+ * labels) and `lightSteel` (the key line) inside the frame's 3 px at the top and its 4 px at the bottom, between its
+ * sides. A count of -1 means no panel was found.
+ */
+async function lettersOnFrame(page: Page, png: Buffer, scale: number): Promise<{ top: number; bottom: number }> {
+  return page.evaluate(
+    async ({ b64, k, earth, amber, white, steel }) => {
+      const img = new Image();
+      img.src = `data:image/png;base64,${b64}`;
+      await img.decode();
+      const c = document.createElement('canvas');
+      c.width = img.width;
+      c.height = img.height;
+      const ctx = c.getContext('2d');
+      if (!ctx) return { top: -1, bottom: -1 };
+      ctx.drawImage(img, 0, 0);
+      const d = ctx.getImageData(0, 0, img.width, img.height).data;
+      const is = (x: number, y: number, w: number): boolean => {
+        const i = (y * img.width + x) * 4;
+        return Math.abs((d[i] ?? 0) - ((w >> 16) & 255)) <= 3 && Math.abs((d[i + 1] ?? 0) - ((w >> 8) & 255)) <= 3 && Math.abs((d[i + 2] ?? 0) - (w & 255)) <= 3;
+      };
+      /** The longest run of `colour` in row y: [start, end) in image px. */
+      const run = (y: number, colour: number): [number, number] => {
+        let best: [number, number] = [0, 0];
+        let start = -1;
+        for (let x = 0; x <= img.width; x++) {
+          const on = x < img.width && is(x, y, colour);
+          if (on && start < 0) start = x;
+          if (!on && start >= 0) {
+            if (x - start > best[1] - best[0]) best = [start, x];
+            start = -1;
+          }
+        }
+        return best;
+      };
+      const long = 60 * k;
+      let top = -1;
+      for (let y = 0; y < img.height && top < 0; y++) if (run(y, earth)[1] - run(y, earth)[0] >= long) top = y;
+      let glow = -1;
+      for (let y = img.height - 1; y >= 0 && glow < 0; y--) if (run(y, amber)[1] - run(y, amber)[0] >= long) glow = y;
+      if (top < 0 || glow < 0) return { top: -1, bottom: -1 };
+      // The top row is cut by 1 px at each end; the sides are 3 px of frame.
+      const [x0, x1] = run(top, earth);
+      const left = x0 - k + 3 * k;
+      const right = x1 + k - 3 * k;
+      const count = (fromY: number, toY: number, colours: readonly number[]): number => {
+        let n = 0;
+        for (let y = fromY; y <= toY; y++) for (let x = left; x < right; x++) if (colours.some((w) => is(x, y, w))) n += 1;
+        return n;
+      };
+      return { top: count(top, top + 3 * k - 1, [white]), bottom: count(glow - 4 * k + 1, glow, [white, steel]) };
+    },
+    { b64: png.toString('base64'), k: scale, earth: COLOR.earthlight, amber: COLOR.amber, white: COLOR.white, steel: COLOR.lightSteel },
+  );
+}
 
 /** Clicks the menu item with these words where the hook says it is (whether or not the menu takes picks yet). */
 async function click(page: Page, words: string): Promise<void> {
@@ -327,6 +415,72 @@ test.describe('pause menu', () => {
     expect(await label(page)).toContain(KEYS_LINE);
     expect(problems).toEqual([]);
   });
+
+  /** Opens the pause menu over the test room with keys, freezes a drawn frame, and returns the canvas as a PNG and the view's height. */
+  async function pausedShot(page: Page): Promise<{ png: Buffer; viewH: number }> {
+    await playRoom(page, 'test');
+    await page.keyboard.press('Escape');
+    await expect.poll(async () => (await texts(page)).map((t) => t.text)).toContain(KEYS_LINE);
+    const canvas = page.locator('#game canvas');
+    const viewH = await canvas.evaluate((c) => (c as HTMLCanvasElement).height);
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              window.__E2E__?.freeze(true);
+              resolve();
+            });
+          });
+        }),
+    );
+    const png = await canvas.screenshot();
+    await page.evaluate(() => window.__E2E__?.freeze(false));
+    return { png, viewH };
+  }
+  /** Image px per art px of a PNG of the canvas (its height is in the PNG header). */
+  const scaleOf = (png: Buffer, viewH: number): number => png.readUInt32BE(20) / viewH;
+
+  // The key line makes the panel 141 px tall: centred in a view 160 or 167 px tall, its top edge cut across the dimmed
+  // top bar (LEVEL 1 and the score). In a phone's browser tab the room under the bar is shorter still: at 673 x 310
+  // (162 px, rows of 24) the panel's top row lay on the bar's last, and at 740 x 280 (2x text, 192 px) its frame cut
+  // across the bar's words at y = 4. There its gaps, and at 740 x 280 its padding, give way so that it begins under
+  // the bar. The panel's frame is earthlight and light steel; nothing under the 60 % dim is.
+  for (const [w, h, dpr] of [[568, 320, 2], [844, 390, 3], [673, 310, 2.625], [740, 280, 2.75]] as const) {
+    test.describe(`at ${w} x ${h} (ratio ${dpr})`, () => {
+      test.use({ viewport: { width: w, height: h }, deviceScaleFactor: dpr });
+
+      test('in keyboard play the panel, key line and all, keeps off the top bar', async ({ page }) => {
+        const problems = await open(page);
+        const { png, viewH } = await pausedShot(page);
+        const k = scaleOf(png, viewH);
+        const frame = [COLOR.earthlight, COLOR.lightSteel];
+        expect(await colourCount(page, png, frame), 'the panel\'s frame is drawn').toBeGreaterThan(100);
+        expect(await colourCount(page, png, frame, 0, Math.round(STRIP_H * k) - 1), 'pixels of the panel\'s frame over the top bar').toBe(0);
+        expect(problems).toEqual([]);
+      });
+    });
+  }
+
+  // A short window at 1 CSS px per art px (224 px): 2x text fit there only with the panel padded by 1 px, so the 3x
+  // PAUSED and the 2x key line were drawn across the plate's frame. The padding now stops at the frame, and the menu
+  // is drawn at 1x inside it.
+  for (const [w, h, dpr] of [[540, 360, 1], [568, 232, 2]] as const) {
+    test.describe(`at ${w} x ${h} (ratio ${dpr})`, () => {
+      test.use({ viewport: { width: w, height: h }, deviceScaleFactor: dpr });
+
+      test('in keyboard play no letter of the pause menu is drawn on the panel\'s frame', async ({ page }) => {
+        const problems = await open(page);
+        const { png, viewH } = await pausedShot(page);
+        const k = scaleOf(png, viewH);
+        expect(k, 'whole image px per art px').toBe(Math.round(k));
+        const on = await lettersOnFrame(page, png, k);
+        expect(on.top, 'the panel is found').toBeGreaterThanOrEqual(0);
+        expect(on, 'letter pixels on the frame (top: white; bottom: white and light steel)').toEqual({ top: 0, bottom: 0 });
+        expect(problems).toEqual([]);
+      });
+    });
+  }
 
   test.describe('on a touch screen', () => {
     test.use({ hasTouch: true, isMobile: true });

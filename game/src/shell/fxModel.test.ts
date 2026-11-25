@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { levelFromRows } from '../core/testkit';
+import { REFERENCE_TUNING, levelFromRows } from '../core/testkit';
 
 import {
   EMBER_EVERY_TICKS,
@@ -8,15 +8,20 @@ import {
   FlashTimer,
   POPUP_FRAMES,
   POPUP_H,
+  POPUP_HEAD_PX,
+  POPUP_MIN_FRAMES,
+  POPUP_POOL,
   POPUP_RISE_PX,
   PopupBoard,
   ShakeTimer,
   emberDue,
   fireCells,
+  heroSweep,
   popupAnchor,
   popupClampY,
   popupRise,
 } from './fxModel';
+import type { HeroMotion } from './fxModel';
 import { POPUP_TOP, POPUP_TOP_UNDER_TOAST, STRIP_H, TOAST_BAND_BOTTOM } from './hudModel';
 
 describe('score pop-ups', () => {
@@ -108,28 +113,229 @@ describe('the pop-up board: never on each other, on the hero, on the score or on
     expect(watch(board, camY, false, heroAt)).toEqual([]);
   });
 
-  it('under reduced motion a pop-up stays where it was first drawn (placed off the hero when it appears); when he comes onto it, it is taken down, not moved', () => {
-    const camY = 0;
-    const board = new PopupBoard(true);
-    board.spawn(17, 108, 80, camY, false);
-    board.place(camY, false, { x: 100, y: 90, w: 16, h: 16 });
-    const first = board.shown().map((p) => ({ x: p.drawX, y: p.drawY }));
-    expect(first[0]?.y, 'off the hero from the start').toBeLessThanOrEqual(90 - POPUP_H);
-    let gone = -1;
-    for (let f = 0; f < POPUP_FRAMES - 1; f++) {
-      board.advance(1);
-      // He rises a px a frame toward it (rows 80 to 87): on frame 2 his sprite's top row, 87, reaches it.
-      const hero = { x: 100 + f, y: 89 - f, w: 16, h: 16 };
-      board.place(camY, false, hero);
-      const now = boxes(board);
-      for (const b of now) expect(meet(b, hero), `frame ${f}: on the hero`).toBe(false);
-      if (now.length === 0) {
-        if (gone < 0) gone = f;
-        continue;
-      }
-      expect(board.shown().map((p) => ({ x: p.drawX, y: p.drawY })), `frame ${f}: where it was first drawn`).toEqual(first);
+  /**
+   * Under reduced motion: `heroAt(f)` and `motion(f)` give the hero on each frame (f = 0 when the pop-up appears); every
+   * frame is placed with where he is going (`heroSweep`). Answers each pop-up's frames shown, its moves (frame and px),
+   * and the faults: on him, on another one.
+   */
+  const stillRun = (board: PopupBoard, heroAt: (f: number) => Box, motion: (f: number) => HeroMotion, frames: number) => {
+    const shownFor = new Map<number, number>();
+    const moves: string[] = [];
+    const faults: string[] = [];
+    const last = new Map<number, { x: number; y: number }>();
+    for (let f = 0; f < frames; f++) {
+      if (f > 0) board.advance(1);
+      const hero = heroAt(f);
+      board.place(0, false, hero, heroSweep(hero, motion(f), FALL, POPUP_MIN_FRAMES, POPUP_HEAD_PX, { x: 0, y: 0, w: 0, h: 0 }));
+      const now = board.shown();
+      now.forEach((p, i) => {
+        const b = { x: p.drawX, y: p.drawY, w: p.w, h: POPUP_H };
+        shownFor.set(p.seq, (shownFor.get(p.seq) ?? 0) + 1);
+        if (meet(b, hero)) faults.push(`frame ${f}: #${p.seq} on the hero`);
+        for (const q of now.slice(i + 1)) if (meet(b, { x: q.drawX, y: q.drawY, w: q.w, h: POPUP_H })) faults.push(`frame ${f}: #${p.seq} on #${q.seq}`);
+        const was = last.get(p.seq);
+        if (was && (was.x !== p.drawX || was.y !== p.drawY)) moves.push(`frame ${f}: #${p.seq} ${p.drawX - was.x},${p.drawY - was.y}`);
+        last.set(p.seq, { x: p.drawX, y: p.drawY });
+      });
     }
-    expect(gone, 'taken down the frame he reaches it').toBe(2);
+    return { shownFor: [...shownFor.values()], moves, faults };
+  };
+  const FALL = { rise: REFERENCE_TUNING.gravity.gravityRise, fall: REFERENCE_TUNING.gravity.gravityFall, maxFall: REFERENCE_TUNING.gravity.maxFallSpeed };
+  const walking = (vx: number): HeroMotion => ({ vx, vy: 0, airborne: false });
+
+  it("under reduced motion a pop-up appears off the way of a hero walking at 1.5 px a frame, and is not taken down: it stays, still (level 1, tick 397: '+10' against his side, gone the next frame)", () => {
+    const board = new PopupBoard(true);
+    // He walks left on his row; a crystal just taken puts its +10 right against his left side, at his head's height.
+    board.spawn(17, 468, 56, 0, false);
+    const hero = (f: number): Box => ({ x: 477 - Math.floor(1.5 * f), y: 59, w: 16, h: 16 });
+    const run = stillRun(board, hero, () => walking(-1.5), POPUP_FRAMES + 1);
+    expect(run.faults).toEqual([]);
+    expect(run.shownFor, 'frames shown: all of its life').toEqual([POPUP_FRAMES]);
+    expect(run.moves, 'it never moves').toEqual([]);
+  });
+
+  it("under reduced motion a pop-up does not appear under a falling hero's feet (level 1, tick 653: gone the next frame)", () => {
+    const board = new PopupBoard(true);
+    // He falls straight down, faster each frame; the +10 would appear right under his feet.
+    board.spawn(17, 120, 79, 0, false);
+    let y = 63;
+    let vy = 2;
+    const track: { y: number; vy: number }[] = [];
+    for (let f = 0; f <= POPUP_FRAMES; f++) {
+      track.push({ y: Math.floor(y), vy });
+      vy = Math.min(vy + FALL.fall, FALL.maxFall);
+      y += vy;
+    }
+    const run = stillRun(
+      board,
+      (f) => ({ x: 113, y: track[f]?.y ?? 0, w: 16, h: 16 }),
+      (f) => ({ vx: 0, vy: track[f]?.vy ?? 0, airborne: true }),
+      POPUP_FRAMES + 1,
+    );
+    expect(run.faults).toEqual([]);
+    expect(run.shownFor).toEqual([POPUP_FRAMES]);
+    expect(run.moves).toEqual([]);
+  });
+
+  it('under reduced motion a pop-up the hero comes onto before it has shown POPUP_MIN_FRAMES frames (he turned) moves once, at once, out of his way; one he comes onto later is taken down', () => {
+    expect(POPUP_MIN_FRAMES, 'a third of a second at least, and less than a whole life').toBeGreaterThanOrEqual(20);
+    expect(POPUP_MIN_FRAMES).toBeLessThan(POPUP_FRAMES);
+    // He walks right, away from a +10 placed behind him, then turns at frame 4 and walks back through it.
+    const turnAt = 4;
+    const xAt = (f: number): number => (f <= turnAt ? 100 + Math.floor(1.5 * f) : 106 - Math.floor(1.5 * (f - turnAt)));
+    const young = new PopupBoard(true);
+    young.spawn(17, 90, 60, 0, false);
+    const a = stillRun(young, (f) => ({ x: xAt(f), y: 60, w: 16, h: 16 }), (f) => walking(f < turnAt ? 1.5 : -1.5), POPUP_FRAMES + 1);
+    expect(a.faults).toEqual([]);
+    expect(a.shownFor, 'shown all its life').toEqual([POPUP_FRAMES]);
+    expect(a.moves.length, `one move: ${a.moves.join('; ')}`).toBe(1);
+    // The same turn after the pop-up has shown POPUP_MIN_FRAMES frames: taken down when he reaches it.
+    const late = POPUP_MIN_FRAMES + 2;
+    const xLate = (f: number): number => (f <= late ? 100 : 100 - Math.floor(1.5 * (f - late)));
+    const old = new PopupBoard(true);
+    old.spawn(17, 90, 60, 0, false);
+    const b = stillRun(old, (f) => ({ x: xLate(f), y: 60, w: 16, h: 16 }), (f) => (f < late ? walking(0) : walking(-1.5)), POPUP_FRAMES + 1);
+    expect(b.faults).toEqual([]);
+    expect(b.moves).toEqual([]);
+    expect(b.shownFor[0], 'taken down when he reaches it, after it was read').toBeGreaterThanOrEqual(POPUP_MIN_FRAMES);
+    expect(b.shownFor[0]).toBeLessThan(POPUP_FRAMES);
+  });
+
+  it('under reduced motion a young pop-up moves each time he comes onto it before POPUP_MIN_FRAMES, never left on him nor taken down early (twice here; on the proofs at most once, src/shell/routeView.test.ts)', () => {
+    // He walks right past a +10, turns back at frame 2, jumps at 4 and turns right again at 6: it moves out of his way at
+    // frame 4 to just behind him, where his second turn brings him onto it again.
+    const heroes: Box[] = [];
+    const motions: HeroMotion[] = [];
+    let x = 100;
+    let y = 60;
+    let vx = 1.5;
+    let vy = 0;
+    let air = false;
+    for (let f = 0; f <= POPUP_FRAMES; f++) {
+      if (f === 2 || f === 6) vx = -vx;
+      if (f === 4) {
+        vy = -5;
+        air = true;
+      }
+      if (f > 0) {
+        x += vx;
+        if (air) {
+          vy = Math.min(vy + (vy < 0 ? FALL.rise : FALL.fall), FALL.maxFall);
+          y += vy;
+          if (y >= 60) {
+            y = 60;
+            vy = 0;
+            air = false;
+          }
+        }
+      }
+      heroes.push({ x: Math.floor(x), y: Math.floor(y), w: 16, h: 16 });
+      motions.push({ vx, vy, airborne: air });
+    }
+    const board = new PopupBoard(true);
+    board.spawn(17, 90, 50, 0, false);
+    const run = stillRun(board, (f) => heroes[f] as Box, (f) => motions[f] as HeroMotion, POPUP_FRAMES + 1);
+    expect(run.faults).toEqual([]);
+    expect(run.shownFor, 'shown all its life').toEqual([POPUP_FRAMES]);
+    expect(run.moves.length, `two moves: ${run.moves.join('; ')}`).toBe(2);
+  });
+
+  it('under reduced motion, over random walks, turns and jumps: every pop-up shows POPUP_MIN_FRAMES frames or more, never on him or on another', () => {
+    let seed = 7;
+    const rnd = (): number => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed / 2147483648;
+    };
+    let moved = 0;
+    let pops = 0;
+    for (let trial = 0; trial < 300; trial++) {
+      // A hero on a floor at y 200: he walks, turns and jumps at random moments; pop-ups appear by him now and then.
+      const board = new PopupBoard(true);
+      let x = 200;
+      let y = 200;
+      let vx = rnd() < 0.5 ? 1.5 : -1.5;
+      let vy = 0;
+      let air = false;
+      const heroes: Box[] = [];
+      const motions: HeroMotion[] = [];
+      const spawns = new Map<number, { x: number; y: number }>();
+      for (let f = 0; f < 90; f++) {
+        if (rnd() < 0.05) vx = -vx;
+        if (!air && rnd() < 0.04) {
+          vy = -5;
+          air = true;
+        }
+        if (air) {
+          vy = Math.min(vy + (vy < 0 ? FALL.rise : FALL.fall), FALL.maxFall);
+          y += vy;
+          if (y >= 200) {
+            y = 200;
+            vy = 0;
+            air = false;
+          }
+        }
+        x += vx;
+        heroes.push({ x: Math.floor(x), y: Math.floor(y), w: 16, h: 16 });
+        motions.push({ vx, vy, airborne: air });
+        if (f < 60 && rnd() < 0.08) spawns.set(f, { x: Math.floor(x) + 8 + Math.floor(rnd() * 24) - 12, y: Math.floor(y) - Math.floor(rnd() * 20) });
+      }
+      const shownFor = new Map<number, number>();
+      const last = new Map<number, { x: number; y: number }>();
+      for (let f = 0; f < 90; f++) {
+        if (f > 0) board.advance(1);
+        const s = spawns.get(f);
+        // (Never more than the pool holds: a seventh would reuse the oldest's slot and cut it short.)
+        if (s && board.shown().length < POPUP_POOL) board.spawn(17, s.x, s.y, 0, false);
+        const hero = heroes[f] as Box;
+        board.place(0, false, hero, heroSweep(hero, motions[f] as HeroMotion, FALL, POPUP_MIN_FRAMES, POPUP_HEAD_PX, { x: 0, y: 0, w: 0, h: 0 }));
+        const now = board.shown();
+        now.forEach((p, i) => {
+          const b = { x: p.drawX, y: p.drawY, w: p.w, h: POPUP_H };
+          expect(meet(b, hero), `trial ${trial} frame ${f}: on the hero`).toBe(false);
+          for (const q of now.slice(i + 1)) expect(meet(b, { x: q.drawX, y: q.drawY, w: q.w, h: POPUP_H }), `trial ${trial} frame ${f}: on another`).toBe(false);
+          shownFor.set(p.seq, (shownFor.get(p.seq) ?? 0) + 1);
+          const was = last.get(p.seq);
+          if (was && (was.x !== p.drawX || was.y !== p.drawY)) moved += 1;
+          last.set(p.seq, { x: p.drawX, y: p.drawY });
+        });
+      }
+      // Each appeared by frame 59 of 90: all of its life lies in the trial.
+      for (const [seq, n] of shownFor) {
+        pops += 1;
+        expect(n, `trial ${trial}: #${seq} shown`).toBeGreaterThanOrEqual(POPUP_MIN_FRAMES);
+      }
+    }
+    expect(pops, 'pop-ups seen through').toBeGreaterThan(300);
+    // A quarter of a move per pop-up here (he turns or jumps at random every 20 frames or so; a few move twice, as in
+    // the test above); placed without looking ahead, 0.77 moves a pop-up.
+    expect(moved / pops, 'moves per pop-up: few of them move').toBeLessThan(0.35);
+  });
+
+  it("never past the view's side edges: a pop-up by a hero against the view's right edge is drawn inside it (120 Hz, level 4: 3 px past it)", () => {
+    // The view is 320 px wide from x 160; he stands at its right edge, and a +10 appears on him.
+    const view = { x: 160, w: 320 };
+    for (const reduced of [false, true]) {
+      const board = new PopupBoard(reduced);
+      board.spawn(17, 456, 140, 0, false);
+      for (let f = 0; f < POPUP_FRAMES; f++) {
+        if (f > 0) board.advance(1);
+        // He sinks 1 px a frame, walking left: his right side is 16 px from the view's right edge.
+        const hero = { x: 448 - (f >> 1), y: 138 + f, w: 16, h: 16 };
+        board.place(0, false, hero, null, view);
+        for (const p of board.shown()) {
+          expect(p.drawX, `reduced ${reduced}, frame ${f}: the left edge`).toBeGreaterThanOrEqual(view.x);
+          expect(p.drawX + p.w, `reduced ${reduced}, frame ${f}: the right edge`).toBeLessThanOrEqual(view.x + view.w);
+          expect(meet({ x: p.drawX, y: p.drawY, w: p.w, h: POPUP_H }, hero), `reduced ${reduced}, frame ${f}: on him`).toBe(false);
+        }
+      }
+    }
+    // A pop-up the view scrolls past is held at the edge, like the top bar holds one.
+    const board = new PopupBoard(false);
+    board.spawn(17, 170, 100, 0, false);
+    board.place(0, false, null, null, { x: 160, w: 320 });
+    board.advance(1);
+    board.place(0, false, null, null, { x: 175, w: 320 });
+    expect(board.shown()[0]?.drawX).toBe(175);
   });
 
   /** Frames on which a pop-up moved `min` px or more (across plus up or down) since the frame before; and flips round him. */

@@ -8,9 +8,15 @@
  * row is `max(22, ceil(44 / cssPerArt))` art px tall (at least 44 CSS px) and the panel grows with its
  * rows, centred in the view. If the rows do not fit the view's height, the spacing gives way first:
  * the gaps between items, then the panel's padding above and below them, one pixel at a time down to
- * MIN_SPACING_PX. Only if the rows still do not fit do they share the height evenly (with the spacing
- * at its smallest), never below 22 art px. Small switches drawn as 12 px icons get a hit area of at
- * least 44 CSS px too.
+ * MIN_SPACING_PX (PANEL_FRAME_PX for a menu drawn on the `ui_panel` plate: its items keep inside the plate's
+ * frame). Only if the rows still do not fit do they share the height evenly (with the spacing at its
+ * smallest), never below 22 art px. Small switches drawn as 12 px icons get a hit area of at least 44 CSS
+ * px too.
+ *
+ * A menu over the top bar (the pause menu) keeps off its strip (`clearTop`): the panel moves down under it,
+ * and where that leaves too little room the spacing gives way as above, so that the panel fits under the
+ * strip. Only a menu whose rows cannot fit under the strip at all is laid out in the whole view, as low as
+ * it goes.
  *
  * A menu is a list of items from top to bottom: text lines, buttons, and rows of small switches. The
  * scene builds the list with its real strings (docs/ART-AND-SOUND.md section 9 lists them), gets
@@ -23,8 +29,8 @@
  * toolbars, zoom 2 at ratio 2: 1.0 CSS px), a 1x letter is only 5 x 7 CSS px, about a millimetre on the
  * glass, inside buttons 44 CSS px tall. There every 1x line and label is drawn at 2x (`textScale`) and a
  * 2x heading (`PAUSED`, `GAME OVER`) at 3x, so it keeps its lead over the text under it, provided the whole
- * menu still fits the view at full row height, its heading included; otherwise the menu stays at 1x with
- * its heading at 2x.
+ * menu still fits the view at full row height, its heading included (and on a plate, inside its frame);
+ * otherwise the menu stays at 1x with its heading at 2x.
  *
  * Pure: no Phaser, no DOM.
  */
@@ -45,6 +51,12 @@ export const PANEL_PAD_PX = 7;
 export const ITEM_GAP_PX = 3;
 /** Where 44 CSS px rows would not fit, the gaps and then the padding above and below shrink, down to this. */
 export const MIN_SPACING_PX = 1;
+/**
+ * The padding of a menu on the `ui_panel` plate shrinks only down to this: the plate's frame is 3 px of steel
+ * at the top and 4 px at the bottom with the glow row under it (src/art/sprites/ui.ts). Padded by 1 px, the 3x
+ * `PAUSED` and the 2x key line were drawn across the frame in a 224 px view.
+ */
+export const PANEL_FRAME_PX = 4;
 /** The switch icons `btn_sound` and `btn_vibe` are 12 x 12 (docs/ART-AND-SOUND.md section 4). */
 export const SWITCH_ICON_PX = 12;
 /** Space between a switch icon and its label. */
@@ -93,7 +105,7 @@ export interface PlacedItem {
 }
 
 export interface MenuLayout {
-  /** The panel, centred in the view. Draw `ui_panel` here (the title screen draws no panel). */
+  /** The panel, centred in the view (lower where it keeps off `clearTop`). Draw `ui_panel` here (the title screen draws no panel). */
   readonly panel: Rect;
   /** Height of every button and switch row, art px. */
   readonly rowPx: number;
@@ -146,18 +158,31 @@ export function menuRowPx(cssPerArt: number): number {
   return Math.max(MIN_ROW_PX, touchPx(cssPerArt));
 }
 
+/** Where a menu is drawn: what it keeps off, and whether it sits on the `ui_panel` plate. */
+export interface MenuPlace {
+  /**
+   * Art px at the top of the view that the panel keeps off (the top bar under the pause menu): the panel is
+   * centred, then moved down as far as it needs, and the spacing gives way where the room under them is short
+   * (see the header). 0 (left out): always centred.
+   */
+  readonly clearTop?: number;
+  /** The menu is drawn on the `ui_panel` plate: its padding never shrinks below PANEL_FRAME_PX. */
+  readonly framed?: boolean;
+}
+
 /**
  * Lays out a menu centred in a view of `viewW` x `viewH` art px.
  *
  * @param cssPerArt CSS px per art px: `zoom / devicePixelRatio` (`cssPerArtPx(view, dpr)` in chooseView.ts)
  * @param items     the menu, top to bottom
+ * @param place     what the panel keeps off and whether it is drawn on the plate (MenuPlace); left out: neither
  */
-export function menuLayout(viewW: number, viewH: number, cssPerArt: number, items: readonly MenuItem[]): MenuLayout {
+export function menuLayout(viewW: number, viewH: number, cssPerArt: number, items: readonly MenuItem[], place: MenuPlace = {}): MenuLayout {
   if (cssPerArt > 0 && cssPerArt < LARGE_TEXT_BELOW) {
-    const large = layoutAt(viewW, viewH, cssPerArt, items, 2);
+    const large = layoutAt(viewW, viewH, cssPerArt, items, 2, place);
     if (large.fits && large.panel.w <= viewW && large.contentW + 2 * PANEL_PAD_PX <= viewW) return large.layout;
   }
-  return layoutAt(viewW, viewH, cssPerArt, items, 1).layout;
+  return layoutAt(viewW, viewH, cssPerArt, items, 1, place).layout;
 }
 
 /**
@@ -175,6 +200,7 @@ function layoutAt(
   cssPerArt: number,
   items: readonly MenuItem[],
   textScale: 1 | 2,
+  place: MenuPlace,
 ): { layout: MenuLayout; contentW: number; fits: boolean; panel: Rect } {
   const scaleOf = (item: MenuItem): number => (item.kind === 'text' ? drawnScale(item.scale, textScale) : textScale);
   const rows = items.filter((item) => item.kind !== 'text').length;
@@ -182,13 +208,18 @@ function layoutAt(
   const fixedWith = (pad: number, gap: number): number => 2 * pad + textHeight + Math.max(0, items.length - 1) * gap;
 
   // Rows of at least 44 CSS px if they fit, giving up spacing first (the gaps, then the padding above
-  // and below, down to MIN_SPACING_PX); otherwise they share the height, never below 22 art px.
+  // and below, down to MIN_SPACING_PX, or the plate's frame); otherwise they share the height, never below
+  // 22 art px. The rows are fitted under `clearTop` wherever they can be, else into the whole view.
   const wanted = menuRowPx(cssPerArt);
-  const fitsWith = (pad: number, gap: number): boolean => rows === 0 || fixedWith(pad, gap) + rows * wanted <= viewH;
+  const minPad = place.framed === true ? PANEL_FRAME_PX : MIN_SPACING_PX;
+  const clearTop = Math.max(0, Math.floor(place.clearTop ?? 0));
+  const fitsIn = (room: number, pad: number, gap: number): boolean => rows === 0 || fixedWith(pad, gap) + rows * wanted <= room;
+  const room = clearTop > 0 && fitsIn(viewH - clearTop, minPad, MIN_SPACING_PX) ? viewH - clearTop : viewH;
+  const fitsWith = (pad: number, gap: number): boolean => fitsIn(room, pad, gap);
   let gap = ITEM_GAP_PX;
   let padY = PANEL_PAD_PX;
   while (!fitsWith(padY, gap) && gap > MIN_SPACING_PX) gap--;
-  while (!fitsWith(padY, gap) && padY > MIN_SPACING_PX) padY--;
+  while (!fitsWith(padY, gap) && padY > minPad) padY--;
   const fits = fitsWith(padY, gap);
   const fixed = fixedWith(padY, gap);
   const rowPx = fits ? wanted : Math.max(MIN_ROW_PX, Math.floor((viewH - fixed) / rows));
@@ -216,7 +247,9 @@ function layoutAt(
   const contentW = items.reduce((w, item) => Math.max(w, itemW(item)), 0);
   const panelW = Math.min(Math.max(PANEL_MIN_W_PX, contentW + 2 * PANEL_PAD_PX), Math.max(1, viewW));
   const panelH = fixed + rows * rowPx;
-  const panel: Rect = { x: Math.floor((viewW - panelW) / 2), y: Math.floor((viewH - panelH) / 2), w: panelW, h: panelH };
+  // Centred, or lower by as much as keeps it off the top `clearTop` px, never past the view's bottom edge.
+  const panelY = Math.max(Math.floor((viewH - panelH) / 2), Math.min(clearTop, viewH - panelH));
+  const panel: Rect = { x: Math.floor((viewW - panelW) / 2), y: panelY, w: panelW, h: panelH };
 
   const placed: PlacedItem[] = [];
   const buttons: Rect[] = [];

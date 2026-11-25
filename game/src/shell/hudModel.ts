@@ -5,7 +5,7 @@
  *
  * Pure: no Phaser, no DOM. Positions are art px in view coordinates; clocks count 60 Hz frames.
  */
-import { textWidth } from '../art/font';
+import { FONT_ADVANCE, FONT_CELL_H, textWidth } from '../art/font';
 import { spriteSpec } from '../art/manifest';
 
 /** The level intro card (docs/ART-AND-SOUND.md section 9). */
@@ -206,39 +206,86 @@ export const POPUP_TOP = STRIP_H + 2;
 export const POPUP_TOP_UNDER_TOAST = TOAST_BAND_BOTTOM + 2;
 /**
  * While the hero is drawn under the toast's band (level 10's cog is taken in flight, high in the view: the band and
- * the gold words covered most of him for half of the toast's 1.5 s), the band and its words are drawn at this
- * opacity: he shows through, and the words still read as a shadow of themselves.
+ * the gold words covered most of him for half of the toast's 1.5 s), the band is drawn at this opacity, and so is
+ * each word drawn over him: he shows through, and that word still reads as a shadow of itself. The other words stay
+ * solid. Faded all together, the words were faint for 64 of the toast's 90 frames at 568 x 320 with the touch pad.
  */
 export const TOAST_SEE_THROUGH = 0.25;
 /** ...and they stay so until he has been clear of it for this many frames, so a hero bobbing at its edge makes no flicker. */
 export const TOAST_CLEAR_FRAMES = 12;
 
 /**
- * Whether the toast is drawn see-through now (TOAST_SEE_THROUGH): from the frame the hero's drawn box meets its band
- * until he has been clear of it for TOAST_CLEAR_FRAMES frames. Fed by the HUD every rendered frame (`hero`) and
- * every whole 60 Hz frame of its clock (`advance`, which stands still under the pause menu).
+ * Whether the toast's band and each of its words is drawn see-through now (TOAST_SEE_THROUGH): from the frame the
+ * hero's drawn box meets it until he has been clear of it for TOAST_CLEAR_FRAMES frames. Fed by the HUD every
+ * rendered frame (`hero`) and every whole 60 Hz frame of its clock (`advance`, which stands still under the pause menu).
  */
 export class ToastFade {
   private clearFor = TOAST_CLEAR_FRAMES;
+  /** Per word of the toast (toastWords), as `clearFor`; a word not listed has never met him. */
+  private wordClearFor: number[] = [];
 
-  /** The hero as drawn this frame (view px; null: not drawn) against the toast's band (null: no toast). */
-  hero(hero: Rect | null, band: Rect | null): void {
-    if (hero !== null && band !== null && rectsMeet(hero, band)) this.clearFor = 0;
+  /**
+   * The hero as drawn this frame (view px; null: not drawn) against the toast's band (null: no toast) and the boxes
+   * of its words (toastWords).
+   */
+  hero(hero: Rect | null, band: Rect | null, words: readonly Rect[] = []): void {
+    if (hero === null || band === null) return;
+    if (rectsMeet(hero, band)) this.clearFor = 0;
+    words.forEach((word, i) => {
+      if (rectsMeet(hero, word)) this.wordClearFor[i] = 0;
+    });
   }
 
   /** `frames` 60 Hz frames went by. */
   advance(frames: number): void {
-    if (frames > 0) this.clearFor = Math.min(TOAST_CLEAR_FRAMES, this.clearFor + frames);
+    if (frames <= 0) return;
+    this.clearFor = Math.min(TOAST_CLEAR_FRAMES, this.clearFor + frames);
+    this.wordClearFor = this.wordClearFor.map((n) => Math.min(TOAST_CLEAR_FRAMES, n + frames));
   }
 
-  /** The opacity of the band and its words now: 1, or TOAST_SEE_THROUGH while the hero is (or just was) under it. */
+  /** The opacity of the band now: 1, or TOAST_SEE_THROUGH while the hero is (or just was) under it. */
   get alpha(): number {
     return this.clearFor < TOAST_CLEAR_FRAMES ? TOAST_SEE_THROUGH : 1;
   }
 
+  /** The opacity of word `index` now: 1, or TOAST_SEE_THROUGH while the hero is (or just was) drawn over it. */
+  wordAlpha(index: number): number {
+    return (this.wordClearFor[index] ?? TOAST_CLEAR_FRAMES) < TOAST_CLEAR_FRAMES ? TOAST_SEE_THROUGH : 1;
+  }
+
   reset(): void {
     this.clearFor = TOAST_CLEAR_FRAMES;
+    this.wordClearFor = [];
   }
+
+  /** Other words in the toast: none of them has met the hero yet (the band keeps its state: it lies in the same row). */
+  resetWords(): void {
+    this.wordClearFor = [];
+  }
+}
+
+/** One word of the toast: its letters, where it starts in the toast's text, and the box it is drawn in (view px). */
+export interface ToastWord {
+  readonly text: string;
+  /** Characters before it in the toast's text. */
+  readonly index: number;
+  /** Its letters' cells and their 1 px shadow, right and below: the text's own bounds as Phaser gives them. */
+  readonly box: Rect;
+}
+
+/**
+ * The toast's words, each drawn as its own text where it falls in the whole line (`band` from toastBand, the words
+ * at TOAST_Y), so that each can be see-through on its own (ToastFade.wordAlpha).
+ */
+export function toastWords(text: string, band: Rect): ToastWord[] {
+  const x0 = band.x + TOAST_PAD;
+  const words: ToastWord[] = [];
+  let index = 0;
+  for (const word of text.split(' ')) {
+    if (word.length > 0) words.push({ text: word, index, box: { x: x0 + index * FONT_ADVANCE, y: TOAST_Y, w: textWidth(word) + 1, h: FONT_CELL_H + 1 } });
+    index += word.length + 1;
+  }
+  return words;
 }
 
 /** A rectangle in view px (top-left corner and size). */

@@ -16,9 +16,12 @@ import {
   peakOf,
   pitchEnds,
   powerSpectrum,
+  recipeNamed,
   renderEffect,
   rmsOf,
 } from './offline';
+import type { RenderName } from './offline';
+import { EFFECT_NAMES, GEM_RECIPES, RECIPES } from './recipes';
 import type { EffectName } from './recipes';
 import { noiseSamples } from './synth';
 
@@ -266,5 +269,28 @@ describe('offline: renderEffect', () => {
     const inherited = 'toString' as EffectName;
     await expect(renderEffect(['jump', inherited])).rejects.toThrow(/no effect called "toString"/);
     await expect(renderEffect([])).rejects.toThrow(/no effect was named/);
+  });
+
+  it('takes every step of the crystal ladder by its place, gem:0 to gem:5', async () => {
+    expect(GEM_RECIPES.length).toBe(6);
+    for (const [step, recipe] of GEM_RECIPES.entries()) {
+      // The name passes, so it gets as far as rendering, which Node cannot do.
+      await expect(renderEffect(`gem:${step}`), `gem:${step}`).rejects.toThrow(/needs a browser/);
+      expect(recipeNamed(`gem:${step}`), `gem:${step}`).toBe(recipe);
+    }
+    await expect(renderEffect(['cog', 'gem:5'])).rejects.toThrow(/needs a browser/);
+    // The first step sounds as the game's `gem`; every effect of RECIPES still comes by its own name.
+    expect(recipeNamed('gem:0')).toEqual(RECIPES.gem);
+    for (const name of EFFECT_NAMES) expect(recipeNamed(name), name).toBe(RECIPES[name]);
+  });
+
+  it('refuses a ladder step that does not exist, or one written any other way', async () => {
+    const wrong = ['gem:6', 'gem:-1', 'gem:01', 'gem:1.0', 'gem:1e0', 'gem: 1', 'gem:1 ', 'gem:', 'gem:x', 'GEM:1', 'gem1', 'gem:0x1'];
+    for (const name of wrong) {
+      expect(() => recipeNamed(name), name).toThrow(`no effect called "${name}"`);
+      await expect(renderEffect(name as RenderName), name).rejects.toThrow(`no effect called "${name}"`);
+    }
+    // One wrong step in a list stops the whole render before anything is rendered.
+    await expect(renderEffect(['gem:2', 'gem:9'])).rejects.toThrow(/no effect called "gem:9"/);
   });
 });

@@ -14,7 +14,10 @@
  *   pace(n)        the Play scene steps exactly n frames per rendered frame from the controls (null: the
  *                  real stepper), so a test can change real keys between two given ticks on a busy machine
  *   freezeAtTick(t) resolves once run.tick reaches t, with the game frozen at that moment (checked after
- *                  every rendered frame inside the page, so no round trip lets a tick slip by)
+ *                  every rendered frame inside the page). A test arms the next stop in the same page.evaluate
+ *                  that resumes the game, freeze(false) and then freezeAtTick(t): no frame runs between the two.
+ *                  Armed by a second round trip, the stop can come after its tick on a busy machine. Armed
+ *                  first, a tick already reached freezes at once and the freeze(false) after it lets the game run on
  *   scenes()       the keys of the running scenes, in draw order
  *   menu()         the buttons of the menu on screen (the words drawn), where to tap them (CSS px), and whether
  *                  the menu takes picks yet (an end screen's lights its buttons after a moment)
@@ -32,8 +35,7 @@
  */
 import type * as Phaser from 'phaser';
 
-import type { EffectRender } from '../audio/offline';
-import type { EffectName } from '../audio/recipes';
+import type { EffectRender, RenderName } from '../audio/offline';
 import type { GameState, Input, InputScript, ReplayResult, RunPhase, SessionStatus } from '../core/types';
 import { findLevel } from '../levels';
 
@@ -85,7 +87,11 @@ export interface E2EHook {
   freeze(on: boolean): void;
   /** The Play scene steps exactly this many frames per rendered frame, from the controls; null: the real stepper. */
   pace(framesPerRender: number | null): void;
-  /** Resolves with run.tick once it has reached `tick`, the game frozen (freeze(true)) at that moment. */
+  /**
+   * Resolves with run.tick once it has reached `tick`, the game frozen (freeze(true)) at that moment. To go on from a
+   * frozen game, call freeze(false) and then this in one page.evaluate, so the stop is armed before any frame runs.
+   * In that order: for a tick already reached, this pauses at once and a freeze(false) after it lets the game run on.
+   */
   freezeAtTick(tick: number): Promise<number>;
   scenes(): string[];
   /**
@@ -237,7 +243,7 @@ export function installE2EHook(game: Phaser.Game): void {
     async renderEffect(what) {
       // Its own chunk: the analysis code is not part of the game.
       const offline = await import('../audio/offline');
-      return offline.renderEffect(what as EffectName | readonly EffectName[]);
+      return offline.renderEffect(what as RenderName | readonly RenderName[]);
     },
     freeze(on) {
       if (on) game.pause();

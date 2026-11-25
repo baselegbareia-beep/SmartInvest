@@ -34,6 +34,7 @@ import {
   pauseReservePx,
   pipLit,
   toastBand,
+  toastWords,
   topBarLayout,
 } from './hudModel';
 
@@ -314,6 +315,51 @@ describe('the toast never hides the hero', () => {
     fade.hero({ x: 101, y: 14, w: 16, h: 16 }, null);
     fade.hero(null, band);
     expect(fade.alpha).toBe(1);
+  });
+
+  it('fades only the words drawn over him: at tick 1000 of level 10 (568 x 320) FOUND! goes, COG, AIRLOCK and OPEN stay solid', () => {
+    const words = toastWords('COG FOUND! AIRLOCK OPEN', band);
+    // Each word where it falls in the whole line, with its 1 px shadow.
+    expect(words.map((w) => [w.text, w.box.x, w.box.w])).toEqual([
+      ['COG', 73, 18],
+      ['FOUND!', 97, 36],
+      ['AIRLOCK', 139, 42],
+      ['OPEN', 187, 24],
+    ]);
+    expect(words.every((w) => w.box.y === TOAST_Y && w.box.h === 9)).toBe(true);
+    const boxes = words.map((w) => w.box);
+    const fade = new ToastFade();
+    fade.hero({ x: 101, y: 14, w: 16, h: 16 }, band, boxes);
+    expect(fade.alpha).toBe(TOAST_SEE_THROUGH);
+    expect([0, 1, 2, 3].map((i) => fade.wordAlpha(i))).toEqual([1, TOAST_SEE_THROUGH, 1, 1]);
+    // He flies right, over AIRLOCK: FOUND! stays see-through a while (no flicker), then is solid again.
+    fade.advance(1);
+    fade.hero({ x: 134, y: 14, w: 16, h: 16 }, band, boxes);
+    expect([0, 1, 2, 3].map((i) => fade.wordAlpha(i))).toEqual([1, TOAST_SEE_THROUGH, TOAST_SEE_THROUGH, 1]);
+    fade.advance(TOAST_CLEAR_FRAMES - 1);
+    fade.hero({ x: 140, y: 14, w: 16, h: 16 }, band, boxes);
+    expect([0, 1, 2, 3].map((i) => fade.wordAlpha(i))).toEqual([1, 1, TOAST_SEE_THROUGH, 1]);
+    // In the band but below the letters' cells (row 25): the band fades, no word does.
+    const low = new ToastFade();
+    low.hero({ x: 101, y: 25, w: 16, h: 16 }, band, boxes);
+    expect(low.alpha).toBe(TOAST_SEE_THROUGH);
+    expect([0, 1, 2, 3].map((i) => low.wordAlpha(i))).toEqual([1, 1, 1, 1]);
+    // Other words in the toast start solid; the band keeps its state.
+    fade.resetWords();
+    expect([0, 1, 2, 3].map((i) => fade.wordAlpha(i))).toEqual([1, 1, 1, 1]);
+    expect(fade.alpha).toBe(TOAST_SEE_THROUGH);
+    fade.reset();
+    expect(fade.alpha).toBe(1);
+  });
+
+  it('a hint of several spaces keeps its words where they fall in the line', () => {
+    const hint = 'HOLD Z OR SHIFT TO THRUST';
+    const b = toastBand(284, textWidth(hint));
+    const words = toastWords(hint, b);
+    expect(words.map((w) => w.text)).toEqual(['HOLD', 'Z', 'OR', 'SHIFT', 'TO', 'THRUST']);
+    expect(words.map((w) => w.box.x - (b.x + TOAST_PAD))).toEqual([0, 30, 42, 60, 96, 114]);
+    const last = words[words.length - 1];
+    expect((last?.box.x ?? 0) + (last?.box.w ?? 0) - 1).toBe(b.x + TOAST_PAD + textWidth(hint));
   });
 
   it('is clearly see-through, not merely lighter', () => {

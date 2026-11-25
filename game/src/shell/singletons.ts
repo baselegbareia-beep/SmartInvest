@@ -71,9 +71,11 @@ class Listeners {
 }
 
 /**
- * The sound and vibration switches (`${GAME_ID}:settings`). Changing one applies it and saves it, over the settings
- * as stored now: another tab may have changed the other switch meanwhile (its sound switched off came back on with
- * this tab's next change). A change saved by another tab is applied here too (`readStored`, on the 'storage' event).
+ * The sound and vibration switches (`${GAME_ID}:settings`). Changing one applies it and saves it with the other as
+ * this copy has it. That copy is current: a change saved by another tab is applied here as it comes (`readStored`, on
+ * the 'storage' event), so another tab's sound switched off is not switched back on by this tab's next change. It is
+ * not read back from the store for a change: a store that can be read but not written (a full quota) still holds the
+ * older value, and BUZZ switched off came back ON when SOUND was switched off next.
  */
 class SettingsStore {
   private data: SettingsData = loadSettings();
@@ -84,7 +86,7 @@ class SettingsStore {
   }
 
   setSound(on: boolean): void {
-    this.data = { ...this.stored(), sound: on };
+    this.data = { ...this.data, sound: on };
     sfx.setMuted(!on);
     saveSettings(this.data);
   }
@@ -94,7 +96,7 @@ class SettingsStore {
   }
 
   setVibration(on: boolean): void {
-    this.data = { ...this.stored(), vibration: on };
+    this.data = { ...this.data, vibration: on };
     haptics.setEnabled(on);
     saveSettings(this.data);
   }

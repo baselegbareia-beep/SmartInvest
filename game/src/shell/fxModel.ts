@@ -66,7 +66,21 @@ export const POPUP_PUSH_PX = 3;
 export const POPUP_LOOK_FRAMES = 8;
 /** A step aside this long or longer is never followed by one as long back the other way on the next frame. */
 export const POPUP_FLIP_PX = 10;
-/** A pop-up's height as drawn: a 7 px glyph row and its 1 px drop shadow (the font's cell). */
+/**
+ * Under reduced motion a pop-up shows for at least this many 60 Hz frames, a third of a second: time to look at it and
+ * read three characters. One the hero came onto was taken down on the next frame: on the 568 x 320 phone 30 of 175
+ * showed for one or two frames, a flicker (the route watch's second re-check).
+ */
+export const POPUP_MIN_FRAMES = 20;
+/** ...so it appears clear of where he will be over that time, and this far above his head (a jump's first two frames). */
+export const POPUP_HEAD_PX = 8;
+/**
+ * A pop-up's height as drawn: a 7 px glyph row and its 1 px drop shadow (the font's cell). Its width on the board is the
+ * text's (`textWidth`, 17 px for `+10`): the shadow's extra column on the right (an 18th) is left out, so a pop-up just
+ * left of a hero facing right can lay it on his first column, a dark pixel or two on his aerial's bulb in the run and
+ * jump frames (11 to 27 frames over the twelve routes in the browser). Counting it moved more pop-ups (frames with a
+ * step 450 to 471, more than 32 px from their place 10 to 30, docs/ART-AND-SOUND.md section 13), so it is left out.
+ */
 export const POPUP_H = FONT_CELL_H;
 /** At most this many score pop-ups at once (the oldest is reused). */
 export const POPUP_POOL = 6;
@@ -91,7 +105,7 @@ export interface PopupSlot {
   /** Where to draw it this frame (world px), set by `place`. */
   drawX: number;
   drawY: number;
-  /** Where it was first drawn (world px, its top); NaN until placed. Under reduced motion it stays there. */
+  /** Where it was first drawn (world px, its top); NaN until placed. Under reduced motion: where it stays, as last moved. */
   firstY: number;
   /** How far it is drawn from where its own rise would put it (world px), kept from frame to frame. */
   offX: number;
@@ -101,14 +115,62 @@ export interface PopupSlot {
   stepY: number;
 }
 
+/** The view across, world px: its left edge and its width. */
+export interface ViewSpan {
+  readonly x: number;
+  readonly w: number;
+}
+
+/** How the hero moves on this tick: px per 60 Hz frame, and whether he is in the air (then he falls on). */
+export interface HeroMotion {
+  readonly vx: number;
+  readonly vy: number;
+  readonly airborne: boolean;
+}
+
+/** The fall `heroSweep` assumes: the pull going up and coming down (px per frame, per frame) and the fastest fall (px per frame). */
+export interface FallModel {
+  readonly rise: number;
+  readonly fall: number;
+  readonly maxFall: number;
+}
+
+/**
+ * Where the hero's sprite `hero` (world px) will be over the next `frames` 60 Hz frames if he goes on as he moves now: carried
+ * across at his speed and, in the air, rising and falling under `fall` (the lighter pull while he rises, so the sweep
+ * reaches at least as high as he can); and `head` px more above. One rectangle that holds every place, into `out`.
+ */
+export function heroSweep(hero: PxRect, m: HeroMotion, fall: FallModel, frames: number, head: number, out: { x: number; y: number; w: number; h: number }): PxRect {
+  const across = Math.round(m.vx * frames);
+  let top = hero.y;
+  let bottom = hero.y;
+  if (m.airborne) {
+    let y = hero.y;
+    let vy = m.vy;
+    for (let f = 0; f < frames; f++) {
+      vy = Math.min(vy + (vy < 0 ? fall.rise : fall.fall), fall.maxFall);
+      y += vy;
+      top = Math.min(top, y);
+      bottom = Math.max(bottom, y);
+    }
+  }
+  out.x = hero.x + Math.min(0, across);
+  out.y = Math.floor(top) - head;
+  out.w = hero.w + Math.abs(across);
+  out.h = Math.ceil(bottom) + hero.h - out.y;
+  return out;
+}
+
 const rectsMeet = (a: PxRect, b: PxRect): boolean => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 
 /**
  * Where the score pop-ups are drawn (docs/ART-AND-SOUND.md section 13), as numbers: Effects draws one text per
  * slot at (`drawX`, `drawY`). Each pop-up rises POPUP_RISE_PX over POPUP_FRAMES from where it appeared, and is
- * placed, every frame, oldest first, by three rules:
+ * placed, every frame, oldest first, by four rules:
  * - never into the top bar: its top stays at POPUP_TOP or lower in the view, and at POPUP_TOP_UNDER_TOAST while the
  *   cog's toast shows (the score and the toast's words are never covered);
+ * - never past the view's left or right edge (one stepping aside from a hero by a side wall was drawn 3 px past the
+ *   edge at 120 Hz: the route watch's second re-check);
  * - never over another pop-up already placed;
  * - never over the hero's sprite (and the fuel bar over it) as drawn on that frame.
  * Where its own place breaks a rule when it appears, it takes the nearest free place that keeps them: pushed down
@@ -117,8 +179,10 @@ const rectsMeet = (a: PxRect, b: PxRect): boolean => a.x < b.x + b.w && b.x < a.
  * walking into it pushes it along at his own pace. (Before, every pop-up was placed afresh each frame from where it
  * would have been: one beside a moving hero hopped round him from frame to frame, '+50' left and right of him on
  * alternate frames, 36 px each time; the route watch's second re-check.)
- * Under reduced motion a pop-up is placed so once, when it appears, and then stays (moved down only if the view
- * scrolls it into the bar); if the hero then comes onto it, it is taken down at once rather than moved.
+ * Under reduced motion a pop-up is placed so once, when it appears, and then stays (moved only as far as the bar's
+ * rule and the view's edges ask as it scrolls). It appears clear of where the hero will be over its first POPUP_MIN_FRAMES frames if he
+ * goes on as he moves (`heroSweep`), where it can. If he still comes onto it in that time (he turned, or jumped), it
+ * moves at once to the nearest free place, so that it can be read; after that time it is taken down instead.
  */
 export class PopupBoard {
   readonly slots: PopupSlot[];
@@ -132,6 +196,8 @@ export class PopupBoard {
   private heroNext: PxRect | null = null;
   /** And the ground he covers over the next POPUP_LOOK_FRAMES frames at that pace (null with `heroNext`). */
   private heroPath: PxRect | null = null;
+  /** The view across on this frame (null: no side edges). */
+  private view: ViewSpan | null = null;
 
   constructor(
     private readonly reducedMotion: boolean,
@@ -199,31 +265,49 @@ export class PopupBoard {
 
   /**
    * Places every pop-up for this frame (`drawX`, `drawY`): risen by its age, then by the rules above, for the
-   * view's scroll `camY`, the toast (`toastUp`) and the hero's sprite `hero` as drawn on this frame (world px; null:
-   * not drawn). Under reduced motion a pop-up the hero comes onto is taken down (its slot freed).
+   * view's scroll `camY`, the toast (`toastUp`), the hero's sprite `hero` as drawn on this frame (world px; null:
+   * not drawn) and the view across, `view` (null: no side edges). `ahead` (under reduced motion): where the hero's
+   * sprite will be over the next POPUP_MIN_FRAMES frames (`heroSweep`); a pop-up appears clear of it where it can.
+   * Under reduced motion a pop-up the hero comes onto moves if it has shown fewer than POPUP_MIN_FRAMES frames, and is
+   * taken down (its slot freed) after that.
    */
-  place(camY: number, toastUp: boolean, hero: PxRect | null): void {
+  place(camY: number, toastUp: boolean, hero: PxRect | null, ahead: PxRect | null = null, view: ViewSpan | null = null): void {
     const minTop = camY + (toastUp ? POPUP_TOP_UNDER_TOAST : POPUP_TOP);
     const placed = this.placed;
     placed.length = 0;
+    this.view = view;
     this.pace(hero);
+    const sweep = this.reducedMotion ? ahead : null;
     for (const s of this.shown()) {
       const risen = s.y - this.rise(s.age);
       let at: PxRect;
       if (Number.isNaN(s.firstY)) {
-        // Appearing: its own place, or the nearest free one.
-        at = this.free({ x: s.x, y: Math.max(risen, minTop), w: s.w, h: POPUP_H }, minTop, hero, 0, 0);
+        // Appearing: its own place, or the nearest free one (under reduced motion, off his way too, where it can).
+        at = this.free(this.inView({ x: s.x, y: Math.max(risen, minTop), w: s.w, h: POPUP_H }), minTop, hero, 0, 0, sweep);
       } else if (this.reducedMotion) {
-        // Under reduced motion it stays where it was first drawn (ART-AND-SOUND section 13), moved only down, and only
-        // as far as the bar's rule asks; one the hero comes onto is taken down rather than moved.
-        at = { x: s.drawX, y: Math.max(s.firstY, minTop), w: s.w, h: POPUP_H };
+        // Under reduced motion it stays where it is (ART-AND-SOUND section 13): moved only down and across, only as far
+        // as the bar's rule, the view's edges and an older one held under the bar ask, and then it stays there. (Two held
+        // under the bar as the view followed a fall were drawn on each other; one held under the toast's band went back
+        // up 9 px on screen when the toast ended, level 4.)
+        at = this.inView({ x: s.drawX, y: Math.max(s.firstY, minTop), w: s.w, h: POPUP_H });
+        if (placed.some((q) => rectsMeet(at, q))) at = this.pushDown(at, null);
         if (hero !== null && rectsMeet(at, hero)) {
-          s.age = POPUP_FRAMES;
-          continue;
+          if (s.age >= POPUP_MIN_FRAMES) {
+            // Read by now: taken down rather than moved.
+            s.age = POPUP_FRAMES;
+            continue;
+          }
+          // Not shown long enough to be read: it moves at once to the nearest free place, clear of the younger pop-ups too
+          // (they stay where they are); again if he comes onto it again in that time (on the proofs none moves twice).
+          const older = placed.length;
+          for (const o of this.shown()) if (o.seq > s.seq && !Number.isNaN(o.firstY)) placed.push({ x: o.drawX, y: o.drawY, w: o.w, h: POPUP_H });
+          at = this.free(at, minTop, hero, 0, 0, sweep);
+          placed.length = older;
         }
+        s.firstY = at.y;
       } else {
         // Where it was drawn, risen on; kept while it breaks no rule, else the nearest free place from there.
-        const keep = { x: s.x + s.offX, y: Math.max(risen + s.offY, minTop), w: s.w, h: POPUP_H };
+        const keep = this.inView({ x: s.x + s.offX, y: Math.max(risen + s.offY, minTop), w: s.w, h: POPUP_H });
         at = this.free(keep, minTop, hero, s.stepX, s.stepY);
         s.stepX = at.x - keep.x;
         s.stepY = at.y - keep.y;
@@ -255,17 +339,28 @@ export class PopupBoard {
     this.heroPath = { x: Math.min(hero.x, hero.x + k * dx), y: hero.y - k * Math.abs(dy), w: hero.w + k * Math.abs(dx), h: hero.h + 2 * k * Math.abs(dy) };
   }
 
-  /** The free place nearest `want` (no higher than `minTop`, clear of the hero and of the pop-ups placed so far). */
-  private free(want: PxRect, minTop: number, hero: PxRect | null, stepX: number, stepY: number): PxRect {
+  /** `r` moved across into the view, if the view is known and `r` reaches past one of its edges. */
+  private inView(r: PxRect): PxRect {
+    const v = this.view;
+    if (v === null) return r;
+    const x = Math.max(v.x, Math.min(r.x, v.x + v.w - r.w));
+    return x === r.x ? r : { ...r, x };
+  }
+
+  /**
+   * The free place nearest `want` (no higher than `minTop`, inside the view across, clear of the hero and of the pop-ups
+   * placed so far); and clear of `sweep` (where the hero is going) too where that costs less than going on top of it.
+   */
+  private free(want: PxRect, minTop: number, hero: PxRect | null, stepX: number, stepY: number, sweep: PxRect | null = null): PxRect {
     const blocked = (r: PxRect): boolean => (hero !== null && rectsMeet(r, hero)) || this.placed.some((q) => rectsMeet(r, q));
-    if (!blocked(want)) return want;
+    if (!blocked(want) && (sweep === null || !rectsMeet(want, sweep))) return want;
     const starts: PxRect[] = [want];
-    if (hero) {
+    for (const by of hero && sweep ? [hero, sweep] : hero ? [hero] : sweep ? [sweep] : []) {
       starts.push(
-        { ...want, x: hero.x - want.w },
-        { ...want, x: hero.x + hero.w },
-        { ...want, y: Math.max(minTop, hero.y - want.h) },
-        { ...want, y: hero.y + hero.h },
+        { ...want, x: by.x - want.w },
+        { ...want, x: by.x + by.w },
+        { ...want, y: Math.max(minTop, by.y - want.h) },
+        { ...want, y: by.y + by.h },
       );
     }
     let best: PxRect | null = null;
@@ -273,7 +368,7 @@ export class PopupBoard {
     const next = this.heroNext;
     const path = this.heroPath;
     for (const start of starts) {
-      const r = this.pushDown(start, hero);
+      const r = this.pushDown(this.inView(start), hero);
       if (blocked(r)) continue;
       // A hero moving fast (POPUP_PUSH_PX a frame or more) would push a pop-up left in his way on every frame, a jump
       // each time: it steps out of his way once instead, off the ground he is about to cover where it can.
@@ -283,7 +378,12 @@ export class PopupBoard {
       // A step aside of POPUP_FLIP_PX or more is not followed by another as large on the next frame that does not carry
       // on the same way: it would flip round him.
       const back = move >= POPUP_FLIP_PX && Math.abs(stepX) + Math.abs(stepY) >= POPUP_FLIP_PX && mx * stepX + my * stepY <= 0;
-      const cost = move + (back ? 2000 : 0) + (next !== null && rectsMeet(r, next) ? 1000 : 0) + (path !== null && rectsMeet(r, path) ? 500 : 0);
+      const cost =
+        move +
+        (back ? 2000 : 0) +
+        (next !== null && rectsMeet(r, next) ? 1000 : 0) +
+        (path !== null && rectsMeet(r, path) ? 500 : 0) +
+        (sweep !== null && rectsMeet(r, sweep) ? 1000 : 0);
       if (cost < bestCost) {
         best = r;
         bestCost = cost;

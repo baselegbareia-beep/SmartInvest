@@ -10,7 +10,8 @@ import { distFolder, readBuild, serveBuild } from '../src/pwa/serveBuild.ts';
 import { TUNING } from '../src/tuning.ts';
 
 /**
- * docs/SPEC.md: "Nothing is sent anywhere. ... the game uses no network once it has loaded." Watched here over
+ * docs/SPEC.md: "Nothing is sent anywhere ... Once it has loaded, the game asks the network only for its own files,
+ * from the folder it came from. ... Nothing goes to any other address." Watched here over
  * a whole play session: the title, a new game started with a key, the pause menu with the sound switched off and
  * on again, RESTART LEVEL from the pause menu until the lives run out, a while on the GAME OVER screen, TITLE,
  * then the ten campaign levels replayed from their scripts through the test hook, as e2e/levels.spec.ts does, to
@@ -36,8 +37,10 @@ import { TUNING } from '../src/tuning.ts';
  *   update) and what the game loads later (the test hook's chunk). Anything else fails, on the same origin too:
  *   another path in the folder or on the site, a query on a file of the build, or a POST.
  * Both rules hold whether the offline worker has installed, is installing or has not started, so the test never
- * waits for it. Not watched: a timer set for more than a day later, and timers or WebTransport inside a worker (the
- * clock and the count are the page's).
+ * waits for it. Not watched: a timer set for more than a day later, or set again by one that fires in the jump (the
+ * clock's fastForward fires each due timer at most once), timers or WebTransport inside a worker (the clock and the
+ * count are the page's), and a DNS prefetch or preconnect to a host name (no request event shows one). Touch mode
+ * and QUIT TO TITLE are not driven.
  */
 
 const SUB = '/SmartInvest/game/';

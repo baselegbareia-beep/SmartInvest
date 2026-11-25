@@ -3,10 +3,11 @@
  * `RESUME`, `RESTART LEVEL -1 LIFE`, `QUIT TO TITLE`, and the SOUND and BUZZ switches side by side,
  * laid out by `menuLayout` for fingers (docs/ARCHITECTURE.md 11.5): rows of at least 44 CSS px.
  *
- * Launched by `PlayScene.pauseGame()` (Esc, P, PAUSE on the pad, blur, hidden, pagehide, the phone held
- * upright). It never resumes by itself: RESUME, Esc or P call `PlayScene.resumeGame()`, which shuts the
- * core's ready gate again (`holdReady`), resets the stepper and lets go of every control. RESTART LEVEL
- * costs a life (`PlayScene.restartLevel`, which keeps what the core keeps); QUIT TO TITLE costs nothing
+ * Launched by `PlayScene.pauseGame()` (Esc, P, PAUSE on the pad, blur, hidden, pagehide, a lost WebGL
+ * context, the phone held upright). It never resumes by itself: RESUME, Esc or P call
+ * `PlayScene.resumeGame()`, which shuts the core's ready gate again (`holdReady`), resets the stepper and
+ * lets go of every control. RESTART LEVEL costs a life (`PlayScene.restartLevel`, which keeps what the
+ * core keeps); QUIT TO TITLE costs nothing
  * (`PlayScene.quitToTitle`: the save already holds the level's starting point).
  *
  * - On the last life RESTART LEVEL would end the game (it costs a life, like a death), so there it reads
@@ -14,12 +15,17 @@
  *   CONTINUE, restarts the level for free).
  * - In keyboard play (touch mode off) a line under the switches names the keys no screen names otherwise:
  *   `SPACE JUMP  X FIRE  Z THRUST`. A touch screen shows its own FIRE and THRUST buttons.
+ * - The panel keeps off the top bar (STRIP_H) where the view has room under it: with the key line it is 141 px
+ *   tall, and centred in the smallest view (160 px) its top edge cut across the bar's LEVEL 1 and score. Where the
+ *   room under the bar is shorter (a phone's browser tab), its gaps and padding give way first (menuLayout), and its
+ *   items keep inside the plate's frame.
  * - The switches follow their settings while the menu is up (M toggles the sound from the Play scene's keys, and
  *   another tab may change them): the menu draws them again and the canvas is named again.
  */
 import * as Phaser from 'phaser';
 
 import { COLOR } from '../../art/palette';
+import { STRIP_H } from '../hudModel';
 import { app, haptics, settings } from '../singletons';
 
 import { Menu } from './menu';
@@ -95,6 +101,7 @@ export class PauseScene extends Phaser.Scene {
       {
         panel: true,
         dim: true,
+        clearTop: STRIP_H, // off the top bar where the view has room (see the header)
         onSwitchesChanged: () => {
           this.name();
         },
